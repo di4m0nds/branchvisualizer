@@ -24,6 +24,8 @@ export interface RenderOptions {
   hoveredSha: string | null;
   highlightedShas: Set<string> | null; // null = no filter active
   showMessages: boolean;
+  /** Pass 'light' to switch canvas colors for the light theme */
+  theme?: 'dark' | 'light';
 }
 
 // ─── Text truncation cache ─────────────────────────────────────────────────
@@ -58,18 +60,63 @@ function truncate(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
 
 // ─── Main render function ─────────────────────────────────────────────────
 
+// ─── Theme-aware color palette ────────────────────────────────────────────
+interface ThemeColors {
+  bg:         string;
+  text:       string;
+  textMuted:  string;
+  rail:       string;
+  railAlpha:  number;
+  tagBg:      string;
+  tagText:    string;
+  branchBg:   string;
+  branchText: string;
+  selectedRing: string;
+}
+
+function getThemeColors(theme: 'dark' | 'light'): ThemeColors {
+  if (theme === 'light') {
+    return {
+      bg:           '#f6f7fb',
+      text:         '#1e293b',
+      textMuted:    '#64748b',
+      rail:         '#000000',
+      railAlpha:    0.06,
+      tagBg:        '#fef3c7',
+      tagText:      '#92400e',
+      branchBg:     '#ede9fe',
+      branchText:   '#5b21b6',
+      selectedRing: '#6366f1',
+    };
+  }
+  return {
+    bg:           '#080b11',
+    text:         '#e2e8f0',
+    textMuted:    '#64748b',
+    rail:         '#ffffff',
+    railAlpha:    0.05,
+    tagBg:        '#422006',
+    tagText:      '#fcd34d',
+    branchBg:     '#1e1b4b',
+    branchText:   '#a5b4fc',
+    selectedRing: '#6366f1',
+  };
+}
+
 export function renderGraph(
   ctx: CanvasRenderingContext2D,
   graph: GraphData,
   opts: RenderOptions,
 ): void {
   const { width, height, scale, offsetX, offsetY, selectedSha, hoveredSha, highlightedShas } = opts;
+  const theme = opts.theme ?? 'dark';
+  const colors = getThemeColors(theme);
 
   // ── Clear
   ctx.clearRect(0, 0, width, height);
 
-  // ── Background
-  ctx.fillStyle = '#0d1117';
+  // ── Background (theme-aware)
+  ctx.fillStyle = colors.bg;
   ctx.fillRect(0, 0, width, height);
 
   ctx.save();
@@ -83,17 +130,17 @@ export function renderGraph(
   const maxRow = Math.min(graph.rowCount - 1, Math.ceil((graphBottom - GRAPH_PADDING_TOP) / ROW_HEIGHT) + 1);
 
   // ── Lane rails (faint vertical lines behind everything)
-  drawLaneRails(ctx, graph, minRow, maxRow);
+  drawLaneRails(ctx, graph, minRow, maxRow, colors);
 
   // ── Edges
   drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas);
 
   // ── Nodes
-  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas);
+  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors);
 
   // ── Labels (branch / tag / commit message)
   if (scale > 0.35) {
-    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts);
+    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors);
   }
 
   ctx.restore();

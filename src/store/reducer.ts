@@ -27,6 +27,8 @@ export const initialState: AppState = {
   viewport: { offsetX: 0, offsetY: 0, scale: 1 },
   token: '',
   rateLimit: null,
+  viewMode: 'canvas',
+  theme: 'dark',
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -89,6 +91,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_RATE_LIMIT':
       return { ...state, rateLimit: action.rateLimit };
+
+    case 'SET_VIEW_MODE':
+      return { ...state, viewMode: action.viewMode, selectedNode: null };
+
+    case 'SET_THEME':
+      return { ...state, theme: action.theme };
 
     default:
       return state;
