@@ -1,23 +1,3 @@
-import path from 'path';
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
-
-export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-  ],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
-  build: {
-    target: 'es2020',
-    minify: 'esbuild',
-  },
-  server: {
-    port: 5173,
-  },
-});
+// Config moved to vite.config.mts — required for ESM-only @tailwindcss/vite plugin.
+// Vite picks up .mts first when both exist, so this file is effectively ignored.
+export {};

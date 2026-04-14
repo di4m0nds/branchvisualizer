@@ -159,20 +159,15 @@ body {
 /* ─── Tailwind CSS variable bridge ───────────────────────────────────────── */
 /* Map CSS vars to Tailwind utility classes via @layer */
 @layer utilities {
-  .bg-background  { background-color: hsl(var(--background)); }
+  /* bg-background and other shadcn tokens use full color values (oklch) — use var() directly */
   .bg-surface     { background-color: hsl(var(--surface)); }
   .bg-surface-2   { background-color: hsl(var(--surface-2)); }
 
-  .text-foreground { color: hsl(var(--fg)); }
   .text-muted-fg   { color: hsl(var(--muted-fg)); }
 
-  .border-border   { border-color: hsl(var(--border)); }
   .border-subtle   { border-color: hsl(var(--border-subtle)); }
 
-  .text-primary    { color: hsl(var(--primary)); }
-  .bg-primary      { background-color: hsl(var(--primary)); }
   .text-success    { color: hsl(var(--success)); }
-  .text-destructive{ color: hsl(var(--destructive)); }
   .text-warning    { color: hsl(var(--warning)); }
 
   /* Primary gradient */

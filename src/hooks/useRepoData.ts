@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { toast } from '@/services/toast';
 import { parseGitHubURL } from '../lib/parser';
 import { fetchFullRepository, setToken } from '../lib/github';
 import { buildGraphData } from '../graph/layout';
@@ -10,12 +11,16 @@ export function useRepoData() {
   const loadRepo = useCallback(async (url: string) => {
     const parsed = parseGitHubURL(url);
     if (!parsed) {
-      dispatch({ type: 'LOAD_ERROR', message: 'Invalid GitHub repository URL. Try: https://github.com/owner/repo' });
+      const msg = 'Invalid GitHub repository URL. Try: https://github.com/owner/repo';
+      dispatch({ type: 'LOAD_ERROR', message: msg });
+      toast.error('Invalid URL', { description: msg });
       return;
     }
 
     setToken(state.token);
     dispatch({ type: 'LOAD_START' });
+
+    const loadToastId = toast.loading(`Loading ${parsed.owner}/${parsed.repo}…`);
 
     try {
       const { repoInfo, branches, tags, commits, rateLimit } = await fetchFullRepository(
@@ -28,14 +33,17 @@ export function useRepoData() {
 
       if (rateLimit) {
         dispatch({ type: 'SET_RATE_LIMIT', rateLimit });
+        // Warn if rate limit is getting low
+        if (rateLimit.remaining < 10) {
+          toast.warning('GitHub rate limit low', {
+            description: `Only ${rateLimit.remaining} API requests remaining. Add a token to increase limits.`,
+          });
+        }
       }
 
       dispatch({ type: 'SET_LOAD_STATE', state: { message: 'Building graph…', progress: 90 } });
 
-      // Graph layout is synchronous but fast (< 50ms for most repos)
-      // For very large repos this could be deferred to a microtask
       const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
-        // Yield to browser for one frame so the progress message renders
         requestAnimationFrame(() => {
           try {
             resolve(buildGraphData(commits, branches, tags));
@@ -53,9 +61,16 @@ export function useRepoData() {
         tags,
         allCommits: commits,
       });
+
+      toast.dismiss(loadToastId);
+      toast.success(`${parsed.owner}/${parsed.repo}`, {
+        description: `${commits.length.toLocaleString()} commits · ${branches.length} branches · ${tags.length} tags`,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       dispatch({ type: 'LOAD_ERROR', message: msg });
+      toast.dismiss(loadToastId);
+      toast.error('Failed to load repository', { description: msg });
     }
   }, [state.token, dispatch]);
 

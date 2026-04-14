@@ -144,6 +144,7 @@ export default function GraphCanvas() {
     const ctx = ctxRef.current;
     if (!ctx) return;
 
+    const theme = state.theme ?? 'dark';
     const opts: RenderOptions = {
       width:          canvasSize.w,
       height:         canvasSize.h,
@@ -154,12 +155,13 @@ export default function GraphCanvas() {
       hoveredSha:     hoveredNode?.commit.sha  ?? null,
       highlightedShas,
       showMessages:   viewport.scale > 0.6,
+      theme,
     };
 
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       if (!graphData) {
-        ctx.fillStyle = '#0d1117';
+        ctx.fillStyle = theme === 'light' ? '#f6f7fb' : '#080b11';
         ctx.fillRect(0, 0, canvasSize.w, canvasSize.h);
       } else {
         renderGraph(ctx, graphData, opts);
@@ -169,7 +171,7 @@ export default function GraphCanvas() {
     return () => cancelAnimationFrame(rafRef.current);
   // Note: `state` is intentionally NOT a dep — we list individual stable values
   // so that token/loadState changes don't trigger unnecessary redraws.
-  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize]);
+  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme]);
 
   // ── Minimap ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -219,31 +221,40 @@ export default function GraphCanvas() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div ref={containerRef} className="graph-canvas-container">
-      <canvas ref={canvasRef} className="graph-canvas" />
+    <div ref={containerRef} className="relative w-full h-full overflow-hidden">
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
       {/* Minimap — only shown when graph is large enough to need navigation */}
       {graphData && graphData.rowCount > 50 && (
-        <div className="minimap-container">
-          <canvas ref={minimapRef} className="minimap-canvas" width={8} height={120} />
+        <div className="absolute top-3 right-3 rounded-md overflow-hidden border border-border/50
+                        shadow-md opacity-60 hover:opacity-100 transition-opacity">
+          <canvas ref={minimapRef} className="block" width={8} height={120} />
         </div>
       )}
 
       {/* Zoom controls */}
-      <div className="zoom-controls">
+      <div className="absolute bottom-3 right-3 flex flex-col gap-1
+                      bg-card/90 backdrop-blur-sm border border-border rounded-lg shadow-md
+                      p-1 text-xs">
         <button
-          className="zoom-btn"
+          className="w-7 h-7 flex items-center justify-center rounded
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors font-mono"
           title="Zoom in (+)"
           onClick={() => dispatch({ type: 'SET_VIEWPORT', viewport: { scale: Math.min(3, viewport.scale * 1.25) } })}
         >+</button>
-        <span className="zoom-level">{Math.round(viewport.scale * 100)}%</span>
+        <span className="text-center text-[10px] text-muted-foreground tabular-nums py-0.5 leading-none">
+          {Math.round(viewport.scale * 100)}%
+        </span>
         <button
-          className="zoom-btn"
+          className="w-7 h-7 flex items-center justify-center rounded
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors font-mono"
           title="Zoom out (−)"
           onClick={() => dispatch({ type: 'SET_VIEWPORT', viewport: { scale: Math.max(0.15, viewport.scale * 0.8) } })}
         >−</button>
+        <div className="h-px bg-border mx-1" />
         <button
-          className="zoom-btn zoom-fit"
+          className="w-7 h-7 flex items-center justify-center rounded
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-base"
           title="Fit to view (F)"
           onClick={() => fitToView(canvasSize.w, canvasSize.h)}
         >⊞</button>
@@ -251,21 +262,19 @@ export default function GraphCanvas() {
 
       {/* Empty state */}
       {!graphData && state.loadState.phase === 'idle' && (
-        <div className="canvas-empty-state">
-          <div className="canvas-empty-icon">
-            <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
-              <circle cx="28" cy="12" r="6" stroke="#30363d" strokeWidth="2"/>
-              <circle cx="14" cy="36" r="6" stroke="#30363d" strokeWidth="2"/>
-              <circle cx="42" cy="36" r="6" stroke="#30363d" strokeWidth="2"/>
-              <line x1="28" y1="18" x2="14" y2="30" stroke="#30363d" strokeWidth="2"/>
-              <line x1="28" y1="18" x2="42" y2="30" stroke="#30363d" strokeWidth="2"/>
-            </svg>
-          </div>
-          <p className="canvas-empty-text">
-            Paste a GitHub repository URL above to visualize its commit graph
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-8">
+          <svg width="52" height="52" viewBox="0 0 56 56" fill="none" className="opacity-20">
+            <circle cx="28" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
+            <circle cx="14" cy="36" r="6" stroke="currentColor" strokeWidth="2"/>
+            <circle cx="42" cy="36" r="6" stroke="currentColor" strokeWidth="2"/>
+            <line x1="28" y1="18" x2="14" y2="30" stroke="currentColor" strokeWidth="2"/>
+            <line x1="28" y1="18" x2="42" y2="30" stroke="currentColor" strokeWidth="2"/>
+          </svg>
+          <p className="text-sm text-muted-foreground">
+            Enter a GitHub repository URL to visualize its commit graph
           </p>
-          <p className="canvas-empty-hint">
-            Try: <code>torvalds/linux</code> · <code>facebook/react</code> · <code>microsoft/vscode</code>
+          <p className="text-xs text-muted-foreground/60 font-mono">
+            torvalds/linux · facebook/react · microsoft/vscode
           </p>
         </div>
       )}

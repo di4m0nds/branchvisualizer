@@ -1,9 +1,9 @@
-import { useState, type FormEvent, useRef, useEffect } from 'react';
+import { useState, type FormEvent, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppContext } from '@/store/AppContext';
 import { useRepoData } from '@/hooks/useRepoData';
-import { validateRepoInput, parseRepoInput } from '@/services/validation';
+import { validateRepoInput, parseRepoInput, tokenSchema } from '@/services/validation';
 import { toast } from '@/services/toast';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -29,6 +29,29 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [showToken, setShowToken] = useState(false);
+  const tokenToastRef = useRef<string | number | undefined>(undefined);
+
+  const handleTokenChange = useCallback((newToken: string) => {
+    dispatch({ type: 'SET_TOKEN', token: newToken });
+
+    // Dismiss previous toast
+    if (tokenToastRef.current !== undefined) toast.dismiss(tokenToastRef.current);
+
+    if (!newToken) return;
+
+    const result = tokenSchema.safeParse(newToken);
+    if (!result.success) {
+      tokenToastRef.current = toast.warning('Token format not recognised', {
+        description: 'Expected ghp_… (classic) or github_pat_… (fine-grained)',
+        duration: 4000,
+      }) as string | number;
+    } else {
+      tokenToastRef.current = toast.success('Token saved', {
+        description: 'Rate limit raised to 5,000 requests/hour',
+        duration: 3000,
+      }) as string | number;
+    }
+  }, [dispatch]);
 
   const isLoading = ['fetching-repo', 'fetching-branches', 'fetching-commits', 'building-graph', 'validating']
     .includes(state.loadState.phase);
@@ -152,7 +175,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                   <input
                     type="password"
                     value={state.token}
-                    onChange={e => dispatch({ type: 'SET_TOKEN', token: e.target.value })}
+                    onChange={e => handleTokenChange(e.target.value)}
                     placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
                     autoComplete="off"
                     className={cn(

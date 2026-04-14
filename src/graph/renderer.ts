@@ -153,14 +153,15 @@ function drawLaneRails(
   graph: GraphData,
   minRow: number,
   maxRow: number,
+  colors: ThemeColors,
 ): void {
   if (graph.laneCount === 0) return;
   const yTop = GRAPH_PADDING_TOP + minRow * ROW_HEIGHT;
   const yBottom = GRAPH_PADDING_TOP + maxRow * ROW_HEIGHT;
 
   ctx.save();
-  ctx.globalAlpha = 0.06;
-  ctx.strokeStyle = '#ffffff';
+  ctx.globalAlpha = colors.railAlpha;
+  ctx.strokeStyle = colors.rail;
   ctx.lineWidth = 1;
 
   for (let lane = 0; lane < graph.laneCount; lane++) {
@@ -243,6 +244,7 @@ function drawNodes(
   selectedSha: string | null,
   hoveredSha: string | null,
   highlightedShas: Set<string> | null,
+  colors: ThemeColors,
 ): void {
   ctx.save();
 
@@ -273,14 +275,14 @@ function drawNodes(
     }
 
     // Node fill
-    ctx.fillStyle = isSelected ? '#ffffff' : node.color;
+    ctx.fillStyle = isSelected ? colors.selectedRing : node.color;
     ctx.beginPath();
     ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
     ctx.fill();
 
     // Node stroke
     if (isSelected || isHovered) {
-      ctx.strokeStyle = '#ffffff';
+      ctx.strokeStyle = colors.selectedRing;
       ctx.lineWidth = isSelected ? 2 : 1.5;
       ctx.stroke();
     } else if (node.commit.isMerge) {
@@ -295,7 +297,7 @@ function drawNodes(
     const hasBranches = graph.branchMap.has(sha);
     if ((hasTags || hasBranches) && isHighlighted) {
       ctx.globalAlpha = 1;
-      ctx.fillStyle = hasTags ? '#facc15' : '#34d399';
+      ctx.fillStyle = hasTags ? colors.tagText : '#34d399';
       ctx.beginPath();
       ctx.arc(node.x + radius, node.y - radius, 2.5, 0, Math.PI * 2);
       ctx.fill();
@@ -318,6 +320,7 @@ function drawLabels(
   selectedSha: string | null,
   highlightedShas: Set<string> | null,
   opts: RenderOptions,
+  colors: ThemeColors,
 ): void {
   const labelStartX = GRAPH_PADDING_LEFT + graph.laneCount * LANE_WIDTH + 14;
   const maxLabelWidth = 360;
@@ -347,7 +350,7 @@ function drawLabels(
         const padding = 5;
 
         // pill background
-        ctx.fillStyle = branch.isDefault ? '#1d4ed8' : '#1e3a5f';
+        ctx.fillStyle = colors.branchBg;
         const rx = bx - padding;
         const ry = y - 8;
         const rw = tw + padding * 2;
@@ -355,7 +358,7 @@ function drawLabels(
         roundRect(ctx, rx, ry, rw, rh, 3);
         ctx.fill();
 
-        ctx.fillStyle = branch.isDefault ? '#93c5fd' : '#60a5fa';
+        ctx.fillStyle = colors.branchText;
         ctx.fillText(label, bx, y);
         bx += rw + 4;
       }
@@ -374,11 +377,11 @@ function drawLabels(
         const tw = ctx.measureText(label).width;
         const padding = 5;
 
-        ctx.fillStyle = '#422006';
+        ctx.fillStyle = colors.tagBg;
         roundRect(ctx, tx - padding, y - 8, tw + padding * 2, 16, 3);
         ctx.fill();
 
-        ctx.fillStyle = '#fbbf24';
+        ctx.fillStyle = colors.tagText;
         ctx.fillText(label, tx, y);
         tx += tw + padding * 2 + 4;
       }
@@ -395,7 +398,7 @@ function drawLabels(
         msgX = labelStartX + estimateBadgeWidth(ctx, nodeBranches ?? [], nodeTags ?? []) + 8;
       }
 
-      ctx.fillStyle = isSelected ? '#f0f6fc' : '#8b949e';
+      ctx.fillStyle = isSelected ? colors.text : colors.textMuted;
       const msg = truncate(ctx, node.commit.subject, maxLabelWidth - (msgX - labelStartX));
       ctx.fillText(msg, msgX, y);
     }

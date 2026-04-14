@@ -46,10 +46,14 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  loading = false,
+  children,
+  disabled,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
-    asChild?: boolean
+    asChild?: boolean;
+    loading?: boolean;
   }) {
   const Comp = asChild ? Slot.Root : "button"
 
@@ -58,9 +62,26 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      disabled={disabled ?? loading}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {loading ? (
+        <>
+          <svg
+            className="animate-spin"
+            style={{ width: '0.85em', height: '0.85em' }}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+          >
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/>
+          </svg>
+          {children}
+        </>
+      ) : children}
+    </Comp>
   )
 }
 
