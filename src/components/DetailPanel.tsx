@@ -2,6 +2,7 @@ import { useAppContext } from '@/store/AppContext';
 import { AuthorCard } from '@/components/AuthorPopup';
 import { cn, copyToClipboard } from '@/lib/utils';
 import { useState } from 'react';
+import { CheckIcon, CopyIcon } from 'lucide-react';
 
 export default function DetailPanel() {
   const { state, dispatch } = useAppContext();
@@ -11,8 +12,8 @@ export default function DetailPanel() {
   if (!selectedNode) return null;
 
   const { commit, color } = selectedNode;
-  const tags      = graphData?.tagMap.get(commit.sha)    ?? [];
-  const branches  = graphData?.branchMap.get(commit.sha) ?? [];
+  const tags = graphData?.tagMap.get(commit.sha) ?? [];
+  const branches = graphData?.branchMap.get(commit.sha) ?? [];
   const parentNodes = commit.parents
     .map(pSha => graphData?.commitMap.get(pSha))
     .filter((n): n is NonNullable<typeof n> => !!n);
@@ -51,10 +52,10 @@ export default function DetailPanel() {
               {commit.shortSha}
             </code>
             <span className={cn(
-              'text-[10px] transition-all',
+              'text-[10px] transition-all scale-120',
               copied ? 'text-green-500' : 'text-muted-foreground opacity-0 group-hover:opacity-100'
             )}>
-              {copied ? '✓' : '⎘'}
+              {copied ? <CheckIcon className="w-3 h-3" /> : <CopyIcon className="w-3 h-3" />}
             </span>
           </button>
 
@@ -107,8 +108,8 @@ export default function DetailPanel() {
           aria-label="Close detail panel"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <line x1="1" y1="1" x2="9" y2="9"/>
-            <line x1="9" y1="1" x2="1" y2="9"/>
+            <line x1="1" y1="1" x2="9" y2="9" />
+            <line x1="9" y1="1" x2="1" y2="9" />
           </svg>
         </button>
       </div>
@@ -184,9 +185,9 @@ export default function DetailPanel() {
                       fill="none" stroke="currentColor" strokeWidth="2"
                       style={{ color: pn.color }}
                     >
-                      <line x1="8" y1="14" x2="8" y2="2"/>
-                      <line x1="4" y1="6" x2="8" y2="2"/>
-                      <line x1="12" y1="6" x2="8" y2="2"/>
+                      <line x1="8" y1="14" x2="8" y2="2" />
+                      <line x1="4" y1="6" x2="8" y2="2" />
+                      <line x1="12" y1="6" x2="8" y2="2" />
                     </svg>
                     <div className="flex flex-col min-w-0">
                       <code className="text-xs font-mono" style={{ color: pn.color }}>
@@ -212,7 +213,7 @@ export default function DetailPanel() {
                          hover:text-foreground transition-colors group"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
+                stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                 <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61
                          c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1
                          S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77
@@ -220,9 +221,9 @@ export default function DetailPanel() {
               </svg>
               View on GitHub
               <svg width="9" height="9" viewBox="0 0 12 12" fill="none"
-                   stroke="currentColor" strokeWidth="1.5"
-                   className="opacity-60 group-hover:opacity-100 transition-opacity">
-                <path d="M2 10L10 2M10 2H5M10 2v5"/>
+                stroke="currentColor" strokeWidth="1.5"
+                className="opacity-60 group-hover:opacity-100 transition-opacity">
+                <path d="M2 10L10 2M10 2H5M10 2v5" />
               </svg>
             </a>
           </div>

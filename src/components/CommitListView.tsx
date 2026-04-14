@@ -28,9 +28,9 @@ function applyFilter(
   const hasFilter = filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
   if (!hasFilter) return commits;
 
-  const search   = filter.search.toLowerCase();
+  const search = filter.search.toLowerCase();
   const dateFrom = filter.dateFrom ? new Date(filter.dateFrom).getTime() : 0;
-  const dateTo   = filter.dateTo   ? new Date(filter.dateTo + 'T23:59:59').getTime() : Infinity;
+  const dateTo = filter.dateTo ? new Date(filter.dateTo + 'T23:59:59').getTime() : Infinity;
 
   let branchReachable: Set<string> | null = null;
   if (filter.branch) {
@@ -101,13 +101,13 @@ interface CommitRowProps {
   isDimmed: boolean;
   onSelect: (node: GraphNode) => void;
   branchMap: Map<string, { name: string; isDefault: boolean; isRemote: boolean }[]>;
-  tagMap:    Map<string, { name: string }[]>;
+  tagMap: Map<string, { name: string }[]>;
 }
 
 function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: CommitRowProps) {
   const { commit, color } = node;
   const nodeBranches = branchMap.get(commit.sha) ?? [];
-  const nodeTags     = tagMap.get(commit.sha)    ?? [];
+  const nodeTags = tagMap.get(commit.sha) ?? [];
 
   const handleClick = useCallback(() => onSelect(node), [node, onSelect]);
 
@@ -117,7 +117,7 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: 
         'group flex items-center gap-3 px-4 py-2.5 border-b border-border/60',
         'cursor-pointer hover:bg-accent/30 transition-colors duration-100',
         isSelected && 'bg-accent/50 hover:bg-accent/60',
-        isDimmed   && 'opacity-30',
+        isDimmed && 'opacity-30',
       )}
       style={{ '--row-color': color } as CSSProperties}
       onClick={handleClick}
@@ -144,11 +144,11 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: 
         <div className="flex-shrink-0 w-4 h-4 rounded-sm flex items-center justify-center
                         bg-purple-500/15 text-purple-400" title="Merge commit">
           <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
-            <circle cx="1.5" cy="1.5" r="1.5"/>
-            <circle cx="6.5" cy="1.5" r="1.5"/>
-            <circle cx="1.5" cy="6.5" r="1.5"/>
-            <path d="M1.5 3v.5C1.5 5.43 3.07 7 5 7h1.5" stroke="currentColor" strokeWidth="1" fill="none"/>
-            <line x1="6.5" y1="3" x2="1.5" y2="3" stroke="currentColor" strokeWidth="1"/>
+            <circle cx="1.5" cy="1.5" r="1.5" />
+            <circle cx="6.5" cy="1.5" r="1.5" />
+            <circle cx="1.5" cy="6.5" r="1.5" />
+            <path d="M1.5 3v.5C1.5 5.43 3.07 7 5 7h1.5" stroke="currentColor" strokeWidth="1" fill="none" />
+            <line x1="6.5" y1="3" x2="1.5" y2="3" stroke="currentColor" strokeWidth="1" />
           </svg>
         </div>
       )}

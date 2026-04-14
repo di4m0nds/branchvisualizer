@@ -24,14 +24,14 @@ function HomePage() {
       {/* Hero */}
       <div className="flex flex-col items-center gap-4 text-center max-w-2xl">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/40 text-xs text-muted-foreground font-mono mb-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
           GitHub Commit Graph Visualizer
         </div>
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-foreground">
           Explore any repository's
-          <span className="block text-gradient">branch history</span>
+          <span className="block text-green-300">branch history</span>
         </h1>
-        <p className="text-base text-muted-foreground max-w-lg leading-relaxed">
+        <p className="text-base text-muted-foreground max-w-lg leading-relaxed opacity-70">
           Enter any public GitHub repository to render an interactive commit graph —
           branches, merges, tags, and authors, all at a glance.
         </p>
@@ -76,7 +76,7 @@ function RepoPage() {
     if (isLoading) return;
     if (current?.owner === owner && current?.repo === repo) return;
     loadRepo(`https://github.com/${owner}/${repo}`);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, repo]);
 
   return (
@@ -159,18 +159,6 @@ function AppShell() {
         </Routes>
       </div>
 
-      {/* Footer */}
-      <footer className="flex items-center justify-center gap-3 px-6 py-3 border-t border-border
-                         text-xs text-muted-foreground bg-background/80 backdrop-blur-sm flex-shrink-0">
-        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('privacy')}>Privacy</button>
-        <span className="opacity-30">·</span>
-        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('terms')}>Terms</button>
-        <span className="opacity-30">·</span>
-        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('cookies')}>Cookies</button>
-        <span className="opacity-30">·</span>
-        <span>© {new Date().getFullYear()} BranchVisualizer</span>
-      </footer>
-
       {/* Toaster */}
       <Toaster
         position="bottom-right"
@@ -189,6 +177,18 @@ function AppShell() {
       {legalTab && (
         <LegalPage initialTab={legalTab} onClose={() => setLegalTab(null)} />
       )}
+
+      {/* Footer */}
+      <footer className="flex items-center justify-center gap-3 px-6 py-3 border-t border-border
+                         text-xs text-muted-foreground bg-background/80 backdrop-blur-sm flex-shrink-0">
+        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('privacy')}>Privacy</button>
+        <span className="opacity-30">·</span>
+        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('terms')}>Terms</button>
+        <span className="opacity-30">·</span>
+        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('cookies')}>Cookies</button>
+        <span className="opacity-30">·</span>
+        <span>© {new Date().getFullYear()} BranchVisualizer</span>
+      </footer>
     </div>
   );
 }
