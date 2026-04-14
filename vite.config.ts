@@ -1,18 +1,3 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  build: {
-    target: 'es2020',
-    minify: 'esbuild',
-    rollupOptions: {
-      output: {
-        manualChunks: undefined,
-      },
-    },
-  },
-  server: {
-    port: 5173,
-  },
-})
+// Config moved to vite.config.mts — required for ESM-only @tailwindcss/vite plugin.
+// Vite picks up .mts first when both exist, so this file is effectively ignored.
+export {};

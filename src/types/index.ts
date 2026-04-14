@@ -86,6 +86,11 @@ export interface GraphData {
   rowCount: number;
 }
 
+// ─── UI state ──────────────────────────────────────────────────────────────
+
+export type ViewMode = 'canvas' | 'list';
+export type Theme = 'dark' | 'light';
+
 // ─── App state ─────────────────────────────────────────────────────────────
 
 export type LoadPhase =
@@ -132,6 +137,8 @@ export interface AppState {
   viewport: ViewportState;
   token: string;
   rateLimit: RateLimit | null;
+  viewMode: ViewMode;
+  theme: Theme;
 }
 
 export interface RateLimit {
@@ -153,4 +160,6 @@ export type AppAction =
   | { type: 'HOVER_NODE'; node: GraphNode | null }
   | { type: 'SET_FILTER'; filter: Partial<FilterState> }
   | { type: 'SET_VIEWPORT'; viewport: Partial<ViewportState> }
-  | { type: 'SET_RATE_LIMIT'; rateLimit: RateLimit };
+  | { type: 'SET_RATE_LIMIT'; rateLimit: RateLimit }
+  | { type: 'SET_VIEW_MODE'; viewMode: ViewMode }
+  | { type: 'SET_THEME'; theme: Theme };

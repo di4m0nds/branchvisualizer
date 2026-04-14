@@ -1,160 +1,158 @@
 # BranchVisualizer
 
-An interactive, high-performance web app that renders any public GitHub repository as a live commit and branch graph — built with Vite + React 18 + TypeScript and a raw Canvas 2D renderer.
+An interactive GitHub repository commit graph visualizer. Enter any public GitHub repository URL and explore its full branch history as an interactive DAG — branches, merges, tags, and authors, all at a glance.
 
-![BranchVisualizer screenshot placeholder](https://placehold.co/900x500/0d1117/60a5fa?text=BranchVisualizer)
+## Features
 
----
+- **Interactive commit graph** — canvas-rendered DAG with pan, zoom, and fit-to-view
+- **List view** — scrollable commit timeline with branch/tag pills and author info
+- **Branch & tag filters** — filter by author, date range, branch, or commit message
+- **Commit detail panel** — SHA, stats, parents, GitHub link, author popup
+- **Dark / light theme** — system-aware with manual toggle
+- **GitHub PAT support** — optional token raises rate limit from 60 → 5,000 req/hr
+- **API response cache** — 5-minute localStorage TTL to reduce redundant requests
+- **Shareable URLs** — `/:owner/:repo` routes that auto-load on navigation
+- **Toast notifications** — success, error, and rate-limit warnings via Sonner
 
-## Quick start
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| UI framework | React 18 + TypeScript |
+| Routing | React Router v7 |
+| Styling | Tailwind CSS v4 (`@tailwindcss/vite`) |
+| Animations | Framer Motion |
+| Notifications | Sonner |
+| Validation | Zod |
+| UI primitives | Radix UI (via shadcn) |
+| Canvas rendering | HTML5 Canvas 2D API |
+| Build tool | Vite 5 |
+| Font | Geist Variable |
+
+## Getting Started
 
 ```bash
-# 1. Install dependencies (one time)
-npm install
+# Install dependencies (uses pnpm)
+pnpm install
 
-# 2. Start the dev server
-npm run dev
-# → http://localhost:5173
+# Start dev server
+pnpm dev
 
-# 3. Build for production
-npm run build
-npm run preview
+# Type-check
+pnpm typecheck
+
+# Production build
+pnpm build
 ```
 
-No environment variables are required. GitHub's public API works without a token for most repos (60 requests/hour). For large or frequently-loaded repos, add a [Personal Access Token](https://github.com/settings/tokens) via the 🔑 button in the UI to raise the limit to 5,000 requests/hour.
+The dev server starts on [http://localhost:5173](http://localhost:5173).
 
----
+## GitHub Token
 
-## Usage
+For repositories with large histories (e.g. `torvalds/linux`, `microsoft/vscode`) the unauthenticated rate limit of 60 req/hr is quickly exhausted. Add a [GitHub Personal Access Token](https://github.com/settings/tokens) via the **Add token** button on the home page.
 
-1. Paste any GitHub URL into the input bar — full URL, SSH URL, or `owner/repo` shorthand.
-2. Click **Visualize** (or press Enter).
-3. The app fetches metadata, branches, tags, and commit history, then renders the graph.
+A fine-grained token with **no scopes** is sufficient for public repositories.
 
-### Graph interaction
-
-| Action | Effect |
-|--------|--------|
-| **Scroll / pinch** | Zoom in/out (centered on cursor) |
-| **Drag** | Pan the graph |
-| **Click a commit** | Open the detail panel |
-| **Hover** | Highlight a commit |
-| `F` | Fit the entire graph to the viewport |
-| `+` / `−` | Zoom in / zoom out |
-| `0` | Reset zoom to 100% |
-| `Esc` | Close the detail panel |
-
-### Filters
-
-- **Search** — matches SHA prefix, commit message, author name, login, or email (200 ms debounce)
-- **Branch** — shows only commits reachable from the selected branch (full BFS traversal)
-- **Author** — filters by author identity
-- **Date range** — from / to date pickers
-
-Filtered-out commits are dimmed rather than hidden so the graph topology remains legible.
-
----
-
-## Architecture
+## Project Structure
 
 ```
 src/
-├── types/index.ts          Core data model (Commit, Branch, Tag, GraphNode, GraphEdge, …)
-├── lib/
-│   ├── parser.ts           GitHub URL parsing & validation (regex, no deps)
-│   ├── github.ts           GitHub REST API v3 client (fetch, CORS-safe, paginated)
-│   └── cache.ts            localStorage cache with TTL and auto-pruning
+├── App.tsx                     # Root shell: router, theme sync, footer, modals
+├── main.tsx                    # Entry point, providers, cache prune
+│
+├── components/
+│   ├── layout/
+│   │   └── Navbar.tsx          # Top bar: brand, breadcrumb, view/theme toggle
+│   ├── repo/
+│   │   └── RepoSearch.tsx      # URL input, token panel, example repos
+│   ├── ui/                     # shadcn primitives (button, badge, tooltip, …)
+│   ├── GraphCanvas.tsx         # Canvas-based commit graph
+│   ├── CommitListView.tsx      # Virtualised list view
+│   ├── DetailPanel.tsx         # Selected commit side panel
+│   ├── RepoHeader.tsx          # Repo metadata strip
+│   ├── SearchFilter.tsx        # Filter bar (search, branch, author, dates)
+│   ├── ErrorBanner.tsx         # Dismissible error banner
+│   ├── LoadingOverlay.tsx      # Progress overlay during fetch
+│   ├── AuthorPopup.tsx         # Portal-rendered author hover card
+│   ├── LegalPage.tsx           # Legal modal (Privacy / Terms / Cookies tabs)
+│   ├── PolicyModal.tsx         # First-visit policy acceptance modal
+│   └── ErrorBoundary.tsx       # React error boundary
+│
 ├── graph/
-│   ├── colors.ts           Lane colour palette + layout constants
-│   ├── layout.ts           DAG layout: topological sort → lane assignment → node/edge positions
-│   └── renderer.ts         Canvas 2D renderer: viewport culling, edges, nodes, labels, minimap
+│   ├── layout.ts               # DAG layout: lane assignment, edge routing
+│   ├── renderer.ts             # Canvas draw calls: rails, nodes, labels
+│   └── colors.ts               # Branch colour palette + lane colour helpers
+│
 ├── hooks/
-│   ├── useRepoData.ts      Async data-fetch orchestrator; drives load-state machine
-│   └── useCanvas.ts        Pan, zoom (mouse/wheel/touch/pinch), hit-test, fitToView
+│   ├── useRepoData.ts          # Fetch + build graph, dispatch toasts
+│   └── useCanvas.ts            # Canvas pan/zoom interaction + fit-to-view
+│
+├── lib/
+│   ├── github.ts               # GitHub REST API client (branches, tags, commits)
+│   ├── parser.ts               # GitHub URL / slug parsing
+│   ├── cache.ts                # localStorage TTL cache
+│   └── utils.ts                # cn, timeAgo, hashColor, getInitials, …
+│
+├── services/
+│   ├── toast.ts                # Sonner wrapper (import here, not from sonner directly)
+│   └── validation.ts           # Zod schemas: repo URL, token format
+│
 ├── store/
-│   ├── reducer.ts          Pure AppState reducer (useReducer; no external state lib)
-│   └── AppContext.tsx      React context provider
-└── components/
-    ├── RepoInput.tsx        URL input, token toggle, quick-example buttons
-    ├── GraphCanvas.tsx      Canvas host; memoized filter, rAF render loop, resize observer
-    ├── DetailPanel.tsx      Commit details sidebar (author, parents, links, SHA copy)
-    ├── SearchFilter.tsx     Filter bar with debounced search
-    ├── RepoHeader.tsx       Repo metadata strip (stars, forks, default branch)
-    ├── LoadingOverlay.tsx   Progress bar overlay during fetch
-    └── ErrorBanner.tsx      Dismissible error display
+│   ├── AppContext.tsx           # React context + useReducer provider
+│   └── reducer.ts              # AppState reducer + initial state
+│
+├── types/
+│   └── index.ts                # Shared TypeScript types
+│
+└── styles/
+    └── globals.css             # Tailwind v4 @theme, CSS tokens, base resets
 ```
 
-### Data flow
+## Design System
 
-```
-User types URL
-  → parseGitHubURL()            [lib/parser.ts]
-  → fetchFullRepository()       [lib/github.ts]   — GitHub REST API, paginated, cached
-  → buildGraphData()            [graph/layout.ts] — topoSort → assignLanes → nodes + edges
-  → dispatch LOAD_SUCCESS       [store/reducer.ts]
-  → GraphCanvas useMemo         [components/GraphCanvas.tsx] — filter → highlightedShas
-  → renderGraph() on rAF        [graph/renderer.ts] — viewport culled, Canvas 2D
-```
+The app uses **Tailwind CSS v4** with a custom `@theme` block and CSS design tokens. All colour, spacing, shadow, and typography values are defined in `src/styles/globals.css`.
 
-### Graph layout algorithm
+### Key tokens
 
-The layout is a classic **topological sort + lane assignment**:
+| Token | Purpose |
+|---|---|
+| `--background` / `bg-background` | Page background |
+| `--surface` / `bg-surface` | Card / panel background |
+| `--surface-2` / `bg-surface-2` | Input / secondary surface |
+| `--border` / `border-border` | Default border colour |
+| `--primary` / `text-primary` | Accent / interactive colour |
+| `--foreground` / `text-foreground` | Primary text |
+| `--muted-foreground` / `text-muted-foreground` | Subdued text |
+| `--destructive` | Error state |
+| `--success` / `text-success` | Success state |
 
-1. **`topoSort`** — Kahn's algorithm with a date-sorted ready queue. Produces newest-first order. Uses a pre-cached timestamp map and binary-insertion to keep the ready queue sorted in O(log k) per step instead of O(k log k) per iteration.
+### Themes
 
-2. **`assignLanes`** — walks sorted commits maintaining an `activeLanes` array where `activeLanes[i]` is the SHA the lane is currently waiting for. A commit claims the lane that was waiting for it (or opens a new one). Merge commits cause additional parent SHAs to open new lanes; empty lanes are reclaimed by subsequent branch-tip commits.
+Two themes are defined via `data-theme` attribute on `<html>`:
 
-3. **Pixel coordinates** — `x = PADDING_LEFT + lane × LANE_WIDTH`, `y = PADDING_TOP + row × ROW_HEIGHT`. No force-directed physics, no Dagre — just pure arithmetic.
+- `data-theme="dark"` (default) — deep blue-grey palette
+- `data-theme="light"` — clean off-white palette
 
-### Renderer design
+The `.dark` class is also toggled for Tailwind `dark:` variant compatibility.
 
-- **Canvas 2D** instead of SVG. For a 2,000-commit repo, SVG would create ~4,000+ DOM nodes; Canvas draws everything as pixels with zero DOM overhead.
-- **Viewport culling** — only rows within `[viewportTop − 1, viewportBottom + 1]` are drawn each frame. A 10,000-row graph draws ~30 rows at 100% zoom.
-- **Text truncation cache** — `ctx.measureText` results are memoised behind a 4,096-entry LRU-lite cache, evicting the oldest half when full.
-- **Single rAF per render** — the `useEffect` in `GraphCanvas` cancels any pending frame before scheduling a new one, so rapid state changes (pan, hover) never queue more than one draw.
-- **DPR-aware sizing** — the canvas physical size is `cssSize × devicePixelRatio`; the context is pre-scaled so all drawing code uses CSS pixel units directly.
+### Build system note
 
-### Performance characteristics
+`@tailwindcss/vite` is ESM-only and incompatible with Vite 5's default CJS config loader. The project uses `vite.config.mts` (native ESM) with explicit `--config vite.config.mts` flags in all npm scripts. Do not rename or merge into `vite.config.ts`.
 
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Topological sort | O(n log n) | n = commit count; sorted ready queue |
-| Lane assignment | O(n × k) | k = max concurrent lanes (typically < 20) |
-| Branch reachability filter | O(n) | BFS from tip, runs once per branch selection |
-| Search filter | O(n) | string scan; 200 ms debounce prevents hot-path thrashing |
-| Canvas render (per frame) | O(visible rows) | ~30–60 rows at normal zoom |
-| Hit test | O(row buffer) | ±2 rows around cursor; no spatial index needed |
+## Files Safe to Delete
 
-For 500 commits across 20 branches:
-- GitHub API: ~8–12 requests, ~1–3 s depending on connection
-- Layout computation: < 5 ms
-- First paint: < 1 ms after layout
+The following files are no longer imported or used:
 
-### Caching
+| File | Reason |
+|---|---|
+| `src/index.css` | Replaced by `src/styles/globals.css` |
+| `src/components/AnimatedBackground.tsx` | Removed feature, stubbed to null render |
+| `src/components/RepoInput.tsx` | Replaced by `src/components/repo/RepoSearch.tsx` |
+| `src/components/ThemeToggle.tsx` | Logic inlined into `Navbar.tsx` |
+| `src/components/ViewToggle.tsx` | Logic inlined into `Navbar.tsx` |
+| `src/components/ui/input.tsx` | Not imported anywhere |
+| `src/components/ui/sheet.tsx` | Not imported anywhere |
 
-All GitHub API responses are cached in `localStorage` with a 30–60 second TTL (configurable per call site in `github.ts`). Stale entries are pruned on startup via `cachePrune()`. This means repeated loads of the same repo are near-instant within the TTL window.
+## License
 
----
-
-## Limitations & known constraints
-
-- **Public repos only** by default. Private repos work if you supply a token with `repo` scope.
-- **Up to 40 branches and ~150 commits per branch** are fetched (configurable via `MAX_BRANCHES` / `MAX_COMMITS_PER_BRANCH` in `github.ts`). Deeper history can be loaded by raising these constants.
-- **No file-level diff view** — GitHub's REST API requires one additional request per commit for file stats; these are only fetched for commits where `stats` is already included in the list response (GitHub includes them on single-commit fetches, not on list endpoints).
-- **Branch filter** uses BFS ancestor traversal which is accurate but only covers the fetched window. Commits older than the fetch limit may be missing.
-- **Rate limit** — unauthenticated: 60 req/hr. Authenticated: 5,000 req/hr. A typical 40-branch repo uses ~45 requests.
-
----
-
-## Tech choices & trade-offs
-
-| Choice | Rationale |
-|--------|-----------|
-| **Vite** | Sub-100 ms HMR; native ESM; zero config for this stack |
-| **React 18** | Familiar, well-typed; concurrent features (`useTransition`) available if layout becomes async |
-| **Canvas 2D, not SVG** | 10–100× fewer DOM nodes; no layout thrashing; straightforward culling |
-| **No state library** | `useReducer` + context is sufficient; avoids Zustand/Redux bundle overhead |
-| **No UI component library** | Single `index.css` with CSS custom properties; zero runtime JS for styles |
-| **No d3-hierarchy** | The git graph layout is simple enough to hand-write (~120 LOC); avoids a 50 kB dep |
-| **GitHub REST API, not GraphQL** | REST is CORS-safe without a proxy; simpler to paginate; no schema introspection needed |
-| **localStorage cache** | Free, synchronous, no server needed; TTL keeps it from going stale |
+MIT

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 
 export type LegalTab = 'privacy' | 'terms' | 'cookies';
 
@@ -13,12 +14,22 @@ const TABS: { id: LegalTab; label: string }[] = [
   { id: 'cookies', label: 'Storage & Cookies' },
 ];
 
-// ─── Content sections ─────────────────────────────────────────────────────
+// ─── Shared prose styles ─────────────────────────────────────────────────────
+
+function Prose({ children }: { children: ReactNode }) {
+  return (
+    <div className="text-sm text-foreground leading-relaxed space-y-5 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground [&_h2]:mt-6 [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground [&_h3]:mt-4 [&_h3]:mb-1 [&_p]:text-muted-foreground [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1 [&_li]:text-muted-foreground [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-foreground [&_strong]:text-foreground [&_code]:font-mono [&_code]:text-xs [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded">
+      {children}
+    </div>
+  );
+}
+
+// ─── Content sections ─────────────────────────────────────────────────────────
 
 function PrivacyContent() {
   return (
-    <div className="legal-content">
-      <p className="legal-updated">Last updated: April 2025</p>
+    <Prose>
+      <p className="text-xs text-muted-foreground !mt-0">Last updated: April 2025</p>
 
       <h2>Overview</h2>
       <p>
@@ -65,15 +76,13 @@ function PrivacyContent() {
 
       <h2>Local Storage</h2>
       <p>
-        BranchVisualizer writes two types of data to your browser's{' '}
-        <code>localStorage</code>:
+        BranchVisualizer writes two types of data to your browser's <code>localStorage</code>:
       </p>
       <ul>
         <li>
           <strong>API response cache</strong> — GitHub API responses are cached with a
           time-to-live (TTL) of 5 minutes to reduce redundant network requests and respect
-          GitHub's rate limits. This data is keyed by repository and endpoint URL and
-          contains only public commit/branch metadata that GitHub already serves publicly.
+          GitHub's rate limits. This data contains only public commit/branch metadata.
         </li>
         <li>
           <strong>Policy acceptance flag</strong> — A single key (<code>bv:legal:accepted</code>)
@@ -82,9 +91,8 @@ function PrivacyContent() {
         </li>
       </ul>
       <p>
-        You can clear all BranchVisualizer data at any time by opening your browser's
-        developer tools and clearing the site's local storage, or by using your browser's
-        "Clear site data" feature.
+        You can clear all BranchVisualizer data at any time via your browser's developer
+        tools or "Clear site data" feature.
       </p>
 
       <h2>Third-Party Services</h2>
@@ -99,14 +107,14 @@ function PrivacyContent() {
         revised. Because we have no way to contact users directly, we encourage you to
         review this page periodically.
       </p>
-    </div>
+    </Prose>
   );
 }
 
 function TermsContent() {
   return (
-    <div className="legal-content">
-      <p className="legal-updated">Last updated: April 2025</p>
+    <Prose>
+      <p className="text-xs text-muted-foreground !mt-0">Last updated: April 2025</p>
 
       <h2>Acceptance of Terms</h2>
       <p>
@@ -131,8 +139,7 @@ function TermsContent() {
         and{' '}
         <a href="https://docs.github.com/en/rest/overview/rate-limits-for-the-rest-api" target="_blank" rel="noopener noreferrer">
           GitHub's API Rate Limits
-        </a>
-        . Specifically:
+        </a>. Specifically:
       </p>
       <ul>
         <li>Unauthenticated requests are limited to 60 per hour per IP address by GitHub.</li>
@@ -152,19 +159,16 @@ function TermsContent() {
 
       <h2>Intellectual Property</h2>
       <p>
-        BranchVisualizer is open-source software. The source code is available under the
-        terms of its open-source licence. Repository data displayed within the application
-        belongs to its respective owners and is retrieved via GitHub's public API under
-        GitHub's terms.
+        BranchVisualizer is open-source software. Repository data displayed within the
+        application belongs to its respective owners and is retrieved via GitHub's public
+        API under GitHub's terms.
       </p>
 
       <h2>Disclaimer of Warranties</h2>
       <p>
         BranchVisualizer is provided <strong>"as is"</strong> without warranty of any kind,
-        express or implied. We make no representations regarding accuracy, completeness,
-        reliability, or fitness for a particular purpose. Commit graphs are generated from
-        data returned by the GitHub API and may not reflect the complete history of a
-        repository (see API limits in github.ts).
+        express or implied. Commit graphs are generated from data returned by the GitHub API
+        and may not reflect the complete history of a repository.
       </p>
 
       <h2>Limitation of Liability</h2>
@@ -179,14 +183,14 @@ function TermsContent() {
         These terms may be updated at any time. Continued use of BranchVisualizer after
         changes are posted constitutes acceptance of the new terms.
       </p>
-    </div>
+    </Prose>
   );
 }
 
 function CookiesContent() {
   return (
-    <div className="legal-content">
-      <p className="legal-updated">Last updated: April 2025</p>
+    <Prose>
+      <p className="text-xs text-muted-foreground !mt-0">Last updated: April 2025</p>
 
       <h2>Cookies</h2>
       <p>
@@ -211,8 +215,7 @@ function CookiesContent() {
         <li>
           <strong><code>api:*</code> (prefixed cache keys)</strong> — Cached
           responses from the GitHub REST API. Each entry includes the response
-          payload and a timestamp. Entries expire after <strong>5 minutes</strong> and
-          are discarded automatically on the next read after expiry.
+          payload and a timestamp. Entries expire after <strong>5 minutes</strong>.
         </li>
       </ul>
 
@@ -224,9 +227,7 @@ function CookiesContent() {
       </ul>
 
       <h2>How to Clear Stored Data</h2>
-      <p>
-        You can remove all BranchVisualizer data from your browser at any time:
-      </p>
+      <p>You can remove all BranchVisualizer data from your browser at any time:</p>
       <ul>
         <li>
           <strong>Chrome / Edge:</strong> DevTools → Application → Storage →
@@ -245,16 +246,15 @@ function CookiesContent() {
         Clearing local storage will remove the policy acceptance flag, so the
         welcome modal will appear again on your next visit.
       </p>
-    </div>
+    </Prose>
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function LegalPage({ initialTab = 'privacy', onClose }: LegalPageProps) {
   const [activeTab, setActiveTab] = useState<LegalTab>(initialTab);
 
-  // Close on Escape key
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); },
     [onClose],
@@ -264,49 +264,81 @@ export default function LegalPage({ initialTab = 'privacy', onClose }: LegalPage
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Sync tab if parent changes initialTab after mount
   useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
 
+  // Lock background scroll
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   return (
-    <div className="legal-overlay" role="dialog" aria-modal="true" aria-label="Legal information">
-      <div className="legal-dialog">
+    /* Backdrop */
+    <div
+      className="fixed inset-0 z-[9998] flex items-center justify-center p-4 sm:p-6"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Legal information"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {/* Dialog */}
+      <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+
         {/* Header */}
-        <div className="legal-dialog-header">
-          <div className="legal-dialog-title">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 1L1 4v4c0 3.31 2.99 6.41 7 7 4.01-.59 7-3.69 7-7V4L8 1z" stroke="#58a6ff" strokeWidth="1.4" strokeLinejoin="round" fill="none"/>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 1L1 4v4c0 3.31 2.99 6.41 7 7 4.01-.59 7-3.69 7-7V4L8 1z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" fill="none" className="text-primary"/>
               <path d="M5.5 8l2 2 3-3" stroke="#3fb950" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Legal &amp; Compliance
+            <span className="font-semibold text-foreground text-sm">Legal &amp; Compliance</span>
           </div>
-          <button className="legal-close-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            <X size={15} />
+          </button>
         </div>
 
         {/* Tabs */}
-        <div className="legal-tabs" role="tablist">
+        <div className="flex items-center gap-1 px-6 pt-3 pb-0 flex-shrink-0" role="tablist">
           {TABS.map(t => (
             <button
               key={t.id}
               role="tab"
               aria-selected={activeTab === t.id}
-              className={`legal-tab${activeTab === t.id ? ' legal-tab--active' : ''}`}
               onClick={() => setActiveTab(t.id)}
+              className={[
+                'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap',
+                activeTab === t.id
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent',
+              ].join(' ')}
             >
               {t.label}
             </button>
           ))}
         </div>
 
-        {/* Content */}
-        <div className="legal-dialog-body" role="tabpanel">
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto px-6 py-5" role="tabpanel">
           {activeTab === 'privacy'  && <PrivacyContent />}
           {activeTab === 'terms'    && <TermsContent />}
           {activeTab === 'cookies'  && <CookiesContent />}
         </div>
 
         {/* Footer */}
-        <div className="legal-dialog-footer">
-          <button className="legal-done-btn" onClick={onClose}>Close</button>
+        <div className="flex items-center justify-end px-6 py-4 border-t border-border flex-shrink-0 bg-card">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>
