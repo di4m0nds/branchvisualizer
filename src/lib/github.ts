@@ -44,12 +44,20 @@ async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: 
   const rateLimit = parseRateLimit(res);
 
   if (!res.ok) {
-    if (res.status === 403 && rateLimit && rateLimit.remaining === 0) {
-      throw new GitHubError(
-        `GitHub API rate limit exceeded. Resets at ${rateLimit.resetAt.toLocaleTimeString()}. Add a token to increase limits.`,
-        403,
-        true,
-      );
+    if (res.status === 403) {
+      if (rateLimit && rateLimit.remaining === 0) {
+        throw new GitHubError(
+          `GitHub API rate limit exceeded. Resets at ${rateLimit.resetAt.toLocaleTimeString()}. Add a token to increase limits.`,
+          403,
+          true,
+        );
+      }
+      // Other 403s: private repo, org SSO required, insufficient token scope, etc.
+      const body = await res.text().catch(() => '');
+      const hint = body.includes('organization') || body.includes('SSO')
+        ? ' Your token may need SSO authorization for this organization.'
+        : ' The repository may be private, or your token lacks the required permissions.';
+      throw new GitHubError(`Access denied (403).${hint}`, 403);
     }
     if (res.status === 404) throw new GitHubError(`Repository not found or is private.`, 404);
     if (res.status === 401) throw new GitHubError(`GitHub token is invalid or expired.`, 401);

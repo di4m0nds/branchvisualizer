@@ -34,10 +34,14 @@ export function useRepoData() {
 
       // Graph layout is synchronous but fast (< 50ms for most repos)
       // For very large repos this could be deferred to a microtask
-      const graphData = await new Promise<ReturnType<typeof buildGraphData>>(resolve => {
+      const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
         // Yield to browser for one frame so the progress message renders
         requestAnimationFrame(() => {
-          resolve(buildGraphData(commits, branches, tags));
+          try {
+            resolve(buildGraphData(commits, branches, tags));
+          } catch (e) {
+            reject(e);
+          }
         });
       });
 
