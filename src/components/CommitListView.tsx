@@ -1,10 +1,13 @@
-import { useMemo, useCallback, useState, useRef, type CSSProperties } from 'react';
+import {
+  useMemo, useCallback, useState, useRef, useEffect,
+  type CSSProperties,
+} from 'react';
 import { useAppContext } from '@/store/AppContext';
 import AuthorPopup, { useAnchorRect } from '@/components/AuthorPopup';
 import type { GraphNode, Commit } from '@/types';
 import { hashColor, getInitials, timeAgo, cn } from '@/lib/utils';
 
-// ─── Branch/tag reachability (mirrors GraphCanvas logic) ──────────────────────
+// ─── Branch/tag reachability ───────────────────────────────────────────────────
 
 function reachableFromTip(tipSha: string, commitMap: Map<string, GraphNode>): Set<string> {
   const visited = new Set<string>();
@@ -56,7 +59,16 @@ function applyFilter(
   });
 }
 
-// ─── Author cell ──────────────────────────────────────────────────────────────
+// ─── Extract PR number from merge commit message ───────────────────────────────
+
+function extractPRNumber(subject: string, body: string): string | null {
+  const combined = `${subject} ${body}`;
+  // Match "Merge pull request #123", "(#456)", "PR #789", plain "#123"
+  const m = combined.match(/(?:pull\s+request\s+#|pr\s*#|\(#|(?:^|\s)#)(\d+)/i);
+  return m ? m[1] : null;
+}
+
+// ─── Author cell ───────────────────────────────────────────────────────────────
 
 function AuthorCell({ commit }: { commit: Commit }) {
   const [showPopup, setShowPopup] = useState(false);
@@ -93,7 +105,48 @@ function AuthorCell({ commit }: { commit: Commit }) {
   );
 }
 
-// ─── Single commit row ────────────────────────────────────────────────────────
+// ─── Merge icon (bigger, with optional PR link) ───────────────────────────────
+
+function MergeIcon({ prNumber, repoUrl }: { prNumber: string | null; repoUrl: string | null }) {
+  const iconSvg = (
+    <svg width="12" height="12" viewBox="0 0 10 10" fill="currentColor">
+      <circle cx="1.8" cy="1.8" r="1.6" />
+      <circle cx="8.2" cy="1.8" r="1.6" />
+      <circle cx="1.8" cy="8.2" r="1.6" />
+      <path d="M1.8 3.4v.6C1.8 5.8 3.4 7.2 5.2 7.2h3" stroke="currentColor" strokeWidth="1.1" fill="none" strokeLinecap="round"/>
+      <line x1="8.2" y1="3.4" x2="1.8" y2="3.4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+    </svg>
+  );
+
+  const classes = cn(
+    'flex-shrink-0 w-5 h-5 rounded flex items-center justify-center',
+    'bg-purple-500/15 text-purple-400',
+    prNumber && 'hover:bg-purple-500/30 transition-colors',
+  );
+
+  if (prNumber && repoUrl) {
+    return (
+      <a
+        href={`${repoUrl}/pull/${prNumber}`}
+        target="_blank"
+        rel="noreferrer"
+        onClick={e => e.stopPropagation()}
+        className={classes}
+        title={`View PR #${prNumber} on GitHub`}
+      >
+        {iconSvg}
+      </a>
+    );
+  }
+
+  return (
+    <div className={classes} title="Merge commit">
+      {iconSvg}
+    </div>
+  );
+}
+
+// ─── Single commit row ─────────────────────────────────────────────────────────
 
 interface CommitRowProps {
   node: GraphNode;
@@ -102,25 +155,36 @@ interface CommitRowProps {
   onSelect: (node: GraphNode) => void;
   branchMap: Map<string, { name: string; isDefault: boolean; isRemote: boolean }[]>;
   tagMap: Map<string, { name: string }[]>;
+  repoUrl: string | null;
 }
 
-function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: CommitRowProps) {
+function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, repoUrl }: CommitRowProps) {
   const { commit, color } = node;
   const nodeBranches = branchMap.get(commit.sha) ?? [];
   const nodeTags = tagMap.get(commit.sha) ?? [];
+  const prNumber = commit.isMerge ? extractPRNumber(commit.subject, commit.body) : null;
 
+  const [hovered, setHovered] = useState(false);
   const handleClick = useCallback(() => onSelect(node), [node, onSelect]);
+
+  const bgStyle: CSSProperties = {};
+  if (isSelected) {
+    bgStyle.backgroundColor = `${color}1a`;
+  } else if (hovered) {
+    bgStyle.backgroundColor = `${color}10`;
+  }
 
   return (
     <div
       className={cn(
-        'group flex items-center gap-3 px-4 py-2.5 border-b border-border/60',
-        'cursor-pointer hover:bg-accent/30 transition-colors duration-100',
-        isSelected && 'bg-accent/50 hover:bg-accent/60',
+        'flex items-center gap-3 px-4 py-2.5 border-b border-border/60',
+        'cursor-pointer transition-colors duration-75',
         isDimmed && 'opacity-30',
       )}
-      style={{ '--row-color': color } as CSSProperties}
+      style={bgStyle}
       onClick={handleClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       role="row"
       aria-selected={isSelected}
     >
@@ -133,7 +197,7 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: 
       {/* SHA */}
       <code
         className="text-[11px] font-mono text-muted-foreground/80 flex-shrink-0 w-14 tabular-nums
-                   group-hover:text-foreground transition-colors"
+                   hover:text-foreground transition-colors"
         title={commit.sha}
       >
         {commit.shortSha}
@@ -141,16 +205,7 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: 
 
       {/* Merge icon */}
       {commit.isMerge && (
-        <div className="flex-shrink-0 w-4 h-4 rounded-sm flex items-center justify-center
-                        bg-purple-500/15 text-purple-400" title="Merge commit">
-          <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
-            <circle cx="1.5" cy="1.5" r="1.5" />
-            <circle cx="6.5" cy="1.5" r="1.5" />
-            <circle cx="1.5" cy="6.5" r="1.5" />
-            <path d="M1.5 3v.5C1.5 5.43 3.07 7 5 7h1.5" stroke="currentColor" strokeWidth="1" fill="none" />
-            <line x1="6.5" y1="3" x2="1.5" y2="3" stroke="currentColor" strokeWidth="1" />
-          </svg>
-        </div>
+        <MergeIcon prNumber={prNumber} repoUrl={repoUrl} />
       )}
 
       {/* Subject */}
@@ -204,11 +259,90 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap }: 
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Pagination controls ───────────────────────────────────────────────────────
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+
+interface PaginationProps {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPage: (p: number) => void;
+  onPageSize: (ps: number) => void;
+}
+
+function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationProps) {
+  const totalPages = Math.ceil(total / pageSize);
+  const start = page * pageSize + 1;
+  const end   = Math.min((page + 1) * pageSize, total);
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 border-t border-border bg-muted/20 flex-shrink-0 flex-wrap">
+      {/* Count */}
+      <span className="text-xs text-muted-foreground tabular-nums flex-1 min-w-0">
+        {start}–{end} of {total.toLocaleString()} commits
+      </span>
+
+      {/* Page size selector */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] text-muted-foreground hidden sm:block">Per page:</span>
+        <div className="flex items-center rounded border border-border overflow-hidden">
+          {PAGE_SIZE_OPTIONS.map(size => (
+            <button
+              key={size}
+              className={cn(
+                'px-2 py-0.5 text-[11px] font-mono transition-colors',
+                pageSize === size
+                  ? 'bg-accent text-foreground font-semibold'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              )}
+              onClick={() => { onPageSize(size); onPage(0); }}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Prev / Next */}
+      <div className="flex items-center gap-1">
+        <button
+          className="w-7 h-6 flex items-center justify-center rounded border border-border
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors
+                     disabled:opacity-30 disabled:cursor-not-allowed text-xs"
+          onClick={() => onPage(page - 1)}
+          disabled={page === 0}
+          title="Previous page"
+        >
+          ‹
+        </button>
+        <span className="text-[11px] text-muted-foreground tabular-nums px-1">
+          {page + 1}/{totalPages}
+        </span>
+        <button
+          className="w-7 h-6 flex items-center justify-center rounded border border-border
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors
+                     disabled:opacity-30 disabled:cursor-not-allowed text-xs"
+          onClick={() => onPage(page + 1)}
+          disabled={page >= totalPages - 1}
+          title="Next page"
+        >
+          ›
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
 
 export default function CommitListView() {
   const { state, dispatch } = useAppContext();
-  const { graphData, filter, selectedNode, branches, allCommits } = state;
+  const { graphData, filter, selectedNode, branches, allCommits, repoInfo } = state;
+
+  const [page, setPage]         = useState(0);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const listRef                 = useRef<HTMLDivElement>(null);
 
   const filteredCommits = useMemo(() => {
     if (!graphData) return [];
@@ -220,6 +354,14 @@ export default function CommitListView() {
     if (!hasFilter) return null;
     return new Set(filteredCommits.map(c => c.sha));
   }, [filteredCommits, filter]);
+
+  // Reset to page 0 when filter changes
+  useEffect(() => { setPage(0); }, [filteredCommits.length, pageSize]);
+
+  // Scroll list to top when page changes
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [page]);
 
   const handleSelect = useCallback((node: GraphNode) => {
     dispatch({
@@ -237,7 +379,11 @@ export default function CommitListView() {
     );
   }
 
-  if (filteredCommits.length === 0) {
+  const nodes = filteredCommits
+    .map(c => graphData.commitMap.get(c.sha))
+    .filter((n): n is GraphNode => !!n);
+
+  if (nodes.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground py-16">
         <span className="text-3xl">🔍</span>
@@ -246,9 +392,11 @@ export default function CommitListView() {
     );
   }
 
-  const nodes = filteredCommits
-    .map(c => graphData.commitMap.get(c.sha))
-    .filter((n): n is GraphNode => !!n);
+  const totalPages = Math.ceil(nodes.length / pageSize);
+  const safePageSize = Math.min(pageSize, 50);
+  const safePage = Math.min(page, Math.max(0, totalPages - 1));
+  const pageNodes = nodes.slice(safePage * safePageSize, (safePage + 1) * safePageSize);
+  const repoUrl = repoInfo?.url ?? null;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -265,8 +413,8 @@ export default function CommitListView() {
       </div>
 
       {/* Scrollable list */}
-      <div className="flex-1 overflow-y-auto" role="grid">
-        {nodes.map(node => (
+      <div ref={listRef} className="flex-1 overflow-y-auto" role="grid">
+        {pageNodes.map(node => (
           <CommitRow
             key={node.commit.sha}
             node={node}
@@ -275,15 +423,19 @@ export default function CommitListView() {
             onSelect={handleSelect}
             branchMap={graphData.branchMap}
             tagMap={graphData.tagMap}
+            repoUrl={repoUrl}
           />
         ))}
       </div>
 
-      {/* Count bar */}
-      <div className="flex items-center px-4 py-2 border-t border-border bg-muted/20
-                      text-xs text-muted-foreground flex-shrink-0">
-        Showing {nodes.length.toLocaleString()} of {allCommits.length.toLocaleString()} commits
-      </div>
+      {/* Pagination */}
+      <Pagination
+        page={safePage}
+        pageSize={safePageSize}
+        total={nodes.length}
+        onPage={setPage}
+        onPageSize={setPageSize}
+      />
     </div>
   );
 }

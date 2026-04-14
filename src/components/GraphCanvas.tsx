@@ -57,8 +57,6 @@ export default function GraphCanvas() {
   });
 
   // ── Memoized filter computation ────────────────────────────────────────────
-  // Only recomputes when filter fields, graph, or commits change —
-  // NOT on viewport moves, hover, or selection (which are the hot path).
   const highlightedShas = useMemo<Set<string> | null>(() => {
     if (!graphData) return null;
     const hasFilter = filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
@@ -68,7 +66,6 @@ export default function GraphCanvas() {
     const dateFrom = filter.dateFrom ? new Date(filter.dateFrom).getTime() : 0;
     const dateTo   = filter.dateTo   ? new Date(filter.dateTo + 'T23:59:59').getTime() : Infinity;
 
-    // Branch reachability (BFS) — computed once per branch selection
     let branchReachable: Set<string> | null = null;
     if (filter.branch) {
       const tip = branches.find(b => b.name === filter.branch)?.sha;
@@ -78,7 +75,6 @@ export default function GraphCanvas() {
     const matching = new Set<string>();
     for (const commit of allCommits) {
       if (branchReachable && !branchReachable.has(commit.sha)) continue;
-
       if (search) {
         const a = commit.author;
         const hit =
@@ -89,17 +85,14 @@ export default function GraphCanvas() {
           a.email.toLowerCase().includes(search);
         if (!hit) continue;
       }
-
       if (filter.author) {
         const a = commit.author;
         if (a.name !== filter.author && a.login !== filter.author && a.email !== filter.author) continue;
       }
-
       if (filter.dateFrom || filter.dateTo) {
         const t = new Date(commit.author.date).getTime();
         if (t < dateFrom || t > dateTo) continue;
       }
-
       matching.add(commit.sha);
     }
 
@@ -139,7 +132,6 @@ export default function GraphCanvas() {
   }, [canvasSize]);
 
   // ── Main render loop ───────────────────────────────────────────────────────
-  // Runs on every render-relevant state change, throttled to one rAF per cycle.
   useEffect(() => {
     const ctx = ctxRef.current;
     if (!ctx) return;
@@ -169,8 +161,6 @@ export default function GraphCanvas() {
     });
 
     return () => cancelAnimationFrame(rafRef.current);
-  // Note: `state` is intentionally NOT a dep — we list individual stable values
-  // so that token/loadState changes don't trigger unnecessary redraws.
   }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme]);
 
   // ── Minimap ────────────────────────────────────────────────────────────────
@@ -183,14 +173,67 @@ export default function GraphCanvas() {
     renderMinimap(ctx, graphData, viewport.offsetY, canvasSize.h, totalH, 120, 8);
   }, [graphData, viewport.offsetY, canvasSize.h]);
 
-  // ── Fit on initial load ────────────────────────────────────────────────────
+  // ── Fit on initial load — only once per repo, not on every remount ─────────
+  // This prevents re-fitting when user toggles between canvas/list views.
+  const fittedRepoRef = useRef<string | null>(null);
   useEffect(() => {
-    if (state.loadState.phase === 'done' && graphData) {
-      fitToView(canvasSize.w, canvasSize.h);
+    if (state.loadState.phase === 'done' && graphData && state.repoInfo) {
+      const key = `${state.repoInfo.owner}/${state.repoInfo.repo}`;
+      if (fittedRepoRef.current !== key) {
+        fittedRepoRef.current = key;
+        fitToView(canvasSize.w, canvasSize.h);
+      }
     }
-    // Intentionally only fires when load phase transitions to done
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.loadState.phase]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.loadState.phase, state.repoInfo]);
+
+  // ── Smooth pan to a specific SHA (e.g., from DetailPanel parent click) ─────
+  const panAnimRef = useRef<number>(0);
+  useEffect(() => {
+    if (!state.panToSha || !graphData) return;
+    const node = graphData.commitMap.get(state.panToSha);
+
+    // Always clear the request immediately so it won't re-trigger
+    dispatch({ type: 'SCROLL_TO_SHA', sha: null });
+
+    if (!node) return;
+
+    // Capture current viewport at effect time
+    const startX = viewport.offsetX;
+    const startY = viewport.offsetY;
+    const { scale } = viewport;
+
+    // Target: center the node in the canvas
+    const targetX = canvasSize.w / 2 - node.x * scale;
+    const targetY = canvasSize.h / 2 - node.y * scale;
+
+    const duration = 520; // ms
+    const startTime = performance.now();
+
+    cancelAnimationFrame(panAnimRef.current);
+
+    function frame(now: number) {
+      const t = Math.min(1, (now - startTime) / duration);
+      // easeOutCubic
+      const ease = 1 - Math.pow(1 - t, 3);
+      dispatch({
+        type: 'SET_VIEWPORT',
+        viewport: {
+          offsetX: startX + (targetX - startX) * ease,
+          offsetY: startY + (targetY - startY) * ease,
+        },
+      });
+      if (t < 1) {
+        panAnimRef.current = requestAnimationFrame(frame);
+      }
+    }
+
+    panAnimRef.current = requestAnimationFrame(frame);
+
+    return () => cancelAnimationFrame(panAnimRef.current);
+  // Only rerun when panToSha changes — intentionally exclude viewport
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.panToSha]);
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -272,9 +315,6 @@ export default function GraphCanvas() {
           </svg>
           <p className="text-sm text-muted-foreground">
             Enter a GitHub repository URL to visualize its commit graph
-          </p>
-          <p className="text-xs text-muted-foreground/60 font-mono">
-            torvalds/linux · facebook/react · microsoft/vscode
           </p>
         </div>
       )}

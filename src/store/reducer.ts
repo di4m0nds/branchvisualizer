@@ -29,6 +29,7 @@ export const initialState: AppState = {
   rateLimit: null,
   viewMode: 'canvas',
   theme: 'dark',
+  panToSha: null,
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -97,6 +98,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_THEME':
       return { ...state, theme: action.theme };
+
+    case 'SCROLL_TO_SHA':
+      return { ...state, panToSha: action.sha };
 
     default:
       return state;

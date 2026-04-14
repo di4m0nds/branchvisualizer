@@ -4,6 +4,7 @@ import { parseGitHubURL } from '../lib/parser';
 import { fetchFullRepository, setToken } from '../lib/github';
 import { buildGraphData } from '../graph/layout';
 import { useAppContext } from '../store/AppContext';
+import { addToHistory } from '../lib/history';
 
 export function useRepoData() {
   const { state, dispatch } = useAppContext();
@@ -61,6 +62,12 @@ export function useRepoData() {
         tags,
         allCommits: commits,
       });
+
+      // Record in visit history
+      addToHistory(
+        `${parsed.owner}/${parsed.repo}`,
+        `https://github.com/${parsed.owner}/${parsed.repo}`,
+      );
 
       toast.dismiss(loadToastId);
       toast.success(`${parsed.owner}/${parsed.repo}`, {

@@ -1,4 +1,6 @@
-import { useState, type FormEvent, useRef, useEffect, useCallback } from 'react';
+import {
+  useState, type FormEvent, useRef, useEffect, useCallback, useMemo,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppContext } from '@/store/AppContext';
@@ -7,38 +9,174 @@ import { validateRepoInput, parseRepoInput, tokenSchema } from '@/services/valid
 import { toast } from '@/services/toast';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { getHistory, removeFromHistory, timeAgoShort, type HistoryEntry } from '@/lib/history';
 
-const EXAMPLE_REPOS = [
-  { label: 'torvalds/linux',   desc: 'Linux kernel'    },
-  { label: 'facebook/react',   desc: 'React UI library'},
-  { label: 'microsoft/vscode', desc: 'VS Code editor'  },
+// ─── Fallback examples (shown when no history) ────────────────────────────────
+
+const FALLBACK_REPOS = [
+  { label: 'torvalds/linux',   desc: 'Linux kernel'     },
+  { label: 'facebook/react',   desc: 'React UI library' },
+  { label: 'microsoft/vscode', desc: 'VS Code editor'   },
   { label: 'vercel/next.js',   desc: 'Next.js framework'},
 ];
 
 interface RepoSearchProps {
-  /** When true, renders as a compact inline bar (in navbar / repo page) */
   compact?: boolean;
 }
+
+// ─── Autocomplete dropdown ────────────────────────────────────────────────────
+
+interface DropdownProps {
+  suggestions: HistoryEntry[];
+  activeIndex: number;
+  onSelect: (entry: HistoryEntry) => void;
+  onRemove: (label: string, e: React.MouseEvent) => void;
+}
+
+function AutocompleteDropdown({ suggestions, activeIndex, onSelect, onRemove }: DropdownProps) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4, scaleY: 0.95 }}
+      animate={{ opacity: 1, y: 0, scaleY: 1 }}
+      exit={{ opacity: 0, y: -4, scaleY: 0.95 }}
+      transition={{ duration: 0.13 }}
+      style={{ transformOrigin: 'top' }}
+      className="absolute top-full left-0 right-0 z-50 mt-1
+                 rounded-lg border border-border bg-card shadow-lg overflow-hidden"
+    >
+      {suggestions.map((entry, i) => (
+        <div
+          key={entry.label}
+          className={cn(
+            'flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors duration-75',
+            'hover:bg-accent/40 group',
+            i === activeIndex && 'bg-accent/50',
+          )}
+          onMouseDown={e => { e.preventDefault(); onSelect(entry); }}
+        >
+          <ClockIcon className="h-3 w-3 text-muted-foreground shrink-0 opacity-60" />
+          <span className="flex-1 min-w-0 text-sm font-mono text-foreground truncate">
+            {entry.label}
+          </span>
+          <span className="text-[10px] text-muted-foreground/60 shrink-0 hidden sm:block">
+            {timeAgoShort(entry.visitedAt)}
+          </span>
+          <button
+            className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity
+                       ml-1 rounded p-0.5 hover:bg-destructive/20 hover:text-destructive"
+            onMouseDown={e => { e.stopPropagation(); onRemove(entry.label, e); }}
+            title="Remove from history"
+          >
+            <XSmallIcon className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+      <div className="px-3 py-1 border-t border-border/50 text-[10px] text-muted-foreground/50 flex items-center gap-1">
+        <span className="font-mono border border-border/60 rounded px-1 text-[9px]">Tab</span>
+        <span>to complete</span>
+        <span className="ml-1 font-mono border border-border/60 rounded px-1 text-[9px]">↑↓</span>
+        <span>to navigate</span>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Recently visited card (for homepage) ─────────────────────────────────────
+
+interface RecentCardProps {
+  entry: HistoryEntry;
+  onLoad: (entry: HistoryEntry) => void;
+  onRemove: (label: string) => void;
+  disabled: boolean;
+}
+
+function RecentCard({ entry, onLoad, onRemove, disabled }: RecentCardProps) {
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      className={cn(
+        'relative flex items-center gap-2.5 px-3 py-2.5 rounded-lg border cursor-grab active:cursor-grabbing',
+        'bg-card hover:bg-accent/30 border-border hover:border-border',
+        'transition-all duration-150 group select-none',
+        isDragOver && 'border-primary/50 bg-primary/5',
+        disabled && 'opacity-50 cursor-not-allowed',
+      )}
+      draggable={!disabled}
+      onDragStart={e => {
+        e.dataTransfer.setData('text/plain', entry.fullUrl);
+        e.dataTransfer.setData('application/bv-repo', entry.fullUrl);
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
+      onClick={() => !disabled && onLoad(entry)}
+      title={`${entry.label} — drag to input or click to load`}
+    >
+      {/* Drag handle visual indicator */}
+      <div className="flex flex-col gap-0.5 shrink-0 opacity-30 group-hover:opacity-60 transition-opacity">
+        <div className="flex gap-0.5">
+          <div className="w-0.5 h-0.5 rounded-full bg-current" />
+          <div className="w-0.5 h-0.5 rounded-full bg-current" />
+        </div>
+        <div className="flex gap-0.5">
+          <div className="w-0.5 h-0.5 rounded-full bg-current" />
+          <div className="w-0.5 h-0.5 rounded-full bg-current" />
+        </div>
+        <div className="flex gap-0.5">
+          <div className="w-0.5 h-0.5 rounded-full bg-current" />
+          <div className="w-0.5 h-0.5 rounded-full bg-current" />
+        </div>
+      </div>
+
+      <RepoIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+
+      <div className="flex flex-col min-w-0 flex-1">
+        <span className="text-xs font-mono font-medium text-foreground truncate">{entry.label}</span>
+        <span className="text-[10px] text-muted-foreground/60">{timeAgoShort(entry.visitedAt)}</span>
+      </div>
+
+      {/* Remove button */}
+      <button
+        className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity
+                   rounded p-0.5 hover:bg-destructive/20 hover:text-destructive shrink-0"
+        onClick={e => { e.stopPropagation(); onRemove(entry.label); }}
+        title="Remove"
+      >
+        <XSmallIcon className="h-3 w-3" />
+      </button>
+    </motion.div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RepoSearch({ compact = false }: RepoSearchProps) {
   const { state, dispatch } = useAppContext();
   const { loadRepo } = useRepoData();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [showToken, setShowToken] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => getHistory());
+  const [isDragTarget, setIsDragTarget] = useState(false);
   const tokenToastRef = useRef<string | number | undefined>(undefined);
+
+  // Refresh history from storage when we get focus (other tabs may update it)
+  const refreshHistory = useCallback(() => {
+    setHistory(getHistory());
+  }, []);
 
   const handleTokenChange = useCallback((newToken: string) => {
     dispatch({ type: 'SET_TOKEN', token: newToken });
-
-    // Dismiss previous toast
     if (tokenToastRef.current !== undefined) toast.dismiss(tokenToastRef.current);
-
     if (!newToken) return;
-
     const result = tokenSchema.safeParse(newToken);
     if (!result.success) {
       tokenToastRef.current = toast.warning('Token format not recognised', {
@@ -56,37 +194,72 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   const isLoading = ['fetching-repo', 'fetching-branches', 'fetching-commits', 'building-graph', 'validating']
     .includes(state.loadState.phase);
 
-  // Focus on mount (hero search)
   useEffect(() => {
     if (!compact) inputRef.current?.focus();
   }, [compact]);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    const raw = value.trim();
-    const validation = validateRepoInput(raw);
+  // Autocomplete suggestions: filter history by current input
+  const suggestions = useMemo<HistoryEntry[]>(() => {
+    const q = value.trim().toLowerCase().replace(/^https?:\/\/(www\.)?github\.com\//, '');
+    if (!q) return history.slice(0, 8);
+    return history.filter(h =>
+      h.label.toLowerCase().includes(q) || h.fullUrl.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [value, history]);
+
+  const showDropdown = isInputFocused && suggestions.length > 0;
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current && !inputRef.current.contains(e.target as Node)
+      ) {
+        setIsInputFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  function doLoad(raw: string) {
+    const trimmed = raw.trim();
+    const validation = validateRepoInput(trimmed);
     if (!validation.ok) {
       setError(validation.error ?? 'Invalid repository');
       return;
     }
     setError('');
     try {
-      const { owner, repo } = parseRepoInput(raw);
+      const { owner, repo } = parseRepoInput(trimmed);
       navigate(`/${owner}/${repo}`);
-      await loadRepo(raw);
+      loadRepo(trimmed).catch(e =>
+        toast.error(e instanceof Error ? e.message : 'Failed to load repository'),
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load repository');
     }
   }
 
-  function handleExample(label: string) {
-    setValue(`https://github.com/${label}`);
-    setError('');
-    const { owner, repo } = parseRepoInput(label);
-    navigate(`/${owner}/${repo}`);
-    loadRepo(`https://github.com/${label}`).catch(e =>
-      toast.error(e instanceof Error ? e.message : 'Failed to load repository'),
-    );
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setIsInputFocused(false);
+    setActiveIndex(-1);
+    doLoad(value);
+  }
+
+  function handleSelectSuggestion(entry: HistoryEntry) {
+    setValue(entry.fullUrl);
+    setIsInputFocused(false);
+    setActiveIndex(-1);
+    doLoad(entry.fullUrl);
+  }
+
+  function handleRemoveSuggestion(label: string, e?: React.MouseEvent) {
+    e?.stopPropagation();
+    removeFromHistory(label);
+    setHistory(getHistory());
   }
 
   function handleClear() {
@@ -97,45 +270,120 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
     inputRef.current?.focus();
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!showDropdown) return;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const target = activeIndex >= 0 ? suggestions[activeIndex] : suggestions[0];
+      if (target) {
+        setValue(target.fullUrl);
+        setIsInputFocused(false);
+        setActiveIndex(-1);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex(i => Math.min(suggestions.length - 1, i + 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex(i => Math.max(-1, i - 1));
+    } else if (e.key === 'Escape') {
+      setIsInputFocused(false);
+      setActiveIndex(-1);
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault();
+      handleSelectSuggestion(suggestions[activeIndex]);
+    }
+  }
+
+  // ── Drag & drop onto input ─────────────────────────────────────────────────
+
+  function handleDragOver(e: React.DragEvent) {
+    if (e.dataTransfer.types.includes('application/bv-repo') || e.dataTransfer.types.includes('text/plain')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDragTarget(true);
+    }
+  }
+
+  function handleDragLeave() {
+    setIsDragTarget(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setIsDragTarget(false);
+    const url = e.dataTransfer.getData('application/bv-repo') || e.dataTransfer.getData('text/plain');
+    if (url) {
+      setValue(url);
+      setError('');
+      inputRef.current?.focus();
+    }
+  }
+
+  // ── Compact mode (repo page header) ───────────────────────────────────────
+
   if (compact) {
     return (
-      <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full max-w-lg">
-        <div className={cn(
-          'relative flex items-center flex-1 h-8',
-          'rounded-md border bg-surface-2 transition-all duration-150',
-          'focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50',
-          error ? 'border-destructive/60' : 'border-border',
-        )}>
-          <GitHubIcon className="absolute left-2.5 h-3.5 w-3.5 text-muted-fg shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={value}
-            onChange={e => { setValue(e.target.value); setError(''); }}
-            disabled={isLoading}
-            placeholder="owner/repository"
-            spellCheck={false}
-            autoComplete="off"
-            className="h-full w-full bg-transparent pl-8 pr-8 text-sm text-foreground placeholder:text-muted-fg/60 focus:outline-none font-mono"
-          />
-          {value && !isLoading && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="absolute right-2 text-muted-fg hover:text-foreground transition-colors"
-            >
-              <XIcon className="h-3 w-3" />
-            </button>
+      <div className="relative w-full max-w-lg" ref={dropdownRef}>
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full">
+          <div
+            className={cn(
+              'relative flex items-center flex-1 h-8',
+              'rounded-md border bg-surface-2 transition-all duration-150',
+              'focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50',
+              error ? 'border-destructive/60' : 'border-border',
+              isDragTarget && 'border-primary/60 bg-primary/5 ring-2 ring-primary/20',
+            )}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <GitHubIcon className="absolute left-2.5 h-3.5 w-3.5 text-muted-fg shrink-0" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={value}
+              onChange={e => { setValue(e.target.value); setError(''); setActiveIndex(-1); }}
+              onFocus={() => { setIsInputFocused(true); refreshHistory(); }}
+              onBlur={() => setTimeout(() => setIsInputFocused(false), 150)}
+              onKeyDown={handleKeyDown}
+              disabled={isLoading}
+              placeholder="owner/repository"
+              spellCheck={false}
+              autoComplete="off"
+              className="h-full w-full bg-transparent pl-8 pr-8 text-sm text-foreground placeholder:text-muted-fg/60 focus:outline-none font-mono"
+            />
+            {value && !isLoading && (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="absolute right-2 text-muted-fg hover:text-foreground transition-colors"
+              >
+                <XIcon className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <Button type="submit" size="sm" loading={isLoading}>
+            {isLoading ? state.loadState.message : 'Go'}
+          </Button>
+        </form>
+
+        <AnimatePresence>
+          {showDropdown && (
+            <AutocompleteDropdown
+              suggestions={suggestions}
+              activeIndex={activeIndex}
+              onSelect={handleSelectSuggestion}
+              onRemove={(label, e) => handleRemoveSuggestion(label, e)}
+            />
           )}
-        </div>
-        <Button type="submit" size="sm" loading={isLoading}>
-          {isLoading ? state.loadState.message : 'Go'}
-        </Button>
-      </form>
+        </AnimatePresence>
+      </div>
     );
   }
 
-  // ── Hero search (full-size, used on the home page)
+  // ── Hero / homepage full mode ──────────────────────────────────────────────
+
   return (
     <div className="w-full max-w-2xl mx-auto">
       {/* Token toggle */}
@@ -208,81 +456,147 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
       </AnimatePresence>
 
       {/* Main search form */}
-      <form onSubmit={handleSubmit}>
-        <div className={cn(
-          'relative flex items-center h-12 rounded-xl border transition-all duration-150',
-          'bg-surface-2 shadow-md',
-          'focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50',
-          error ? 'border-destructive/60' : 'border-border',
-        )}>
-          <GitHubIcon className="absolute left-4 h-4 w-4 text-muted-fg shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={value}
-            onChange={e => { setValue(e.target.value); setError(''); }}
-            disabled={isLoading}
-            placeholder="github.com/owner/repository or owner/repo"
-            spellCheck={false}
-            autoComplete="off"
-            className="h-full w-full bg-transparent pl-11 pr-32 text-sm text-foreground placeholder:text-muted-fg/50 focus:outline-none font-mono"
-          />
-          <div className="absolute right-2 flex items-center gap-1">
-            {value && !isLoading && (
-              <button
-                type="button"
-                onClick={handleClear}
-                className="h-7 w-7 flex items-center justify-center rounded-md text-muted-fg hover:text-foreground hover:bg-surface transition-colors"
-              >
-                <XIcon className="h-3.5 w-3.5" />
-              </button>
+      <div className="relative" ref={dropdownRef}>
+        <form onSubmit={handleSubmit}>
+          <div
+            className={cn(
+              'relative flex items-center h-12 rounded-xl border transition-all duration-150',
+              'bg-surface-2 shadow-md',
+              'focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50',
+              error ? 'border-destructive/60' : 'border-border',
+              isDragTarget && 'border-primary/60 bg-primary/5 ring-2 ring-primary/30 shadow-lg',
             )}
-            <Button type="submit" size="sm" loading={isLoading} className="px-4">
-              {isLoading ? 'Loading…' : 'Visualize'}
-            </Button>
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <GitHubIcon className="absolute left-4 h-4 w-4 text-muted-fg shrink-0" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={value}
+              onChange={e => { setValue(e.target.value); setError(''); setActiveIndex(-1); }}
+              onFocus={() => { setIsInputFocused(true); refreshHistory(); }}
+              onBlur={() => setTimeout(() => setIsInputFocused(false), 150)}
+              onKeyDown={handleKeyDown}
+              disabled={isLoading}
+              placeholder={isDragTarget ? 'Drop repository here…' : 'github.com/owner/repository or owner/repo'}
+              spellCheck={false}
+              autoComplete="off"
+              className="h-full w-full bg-transparent pl-11 pr-32 text-sm text-foreground placeholder:text-muted-fg/50 focus:outline-none font-mono"
+            />
+            <div className="absolute right-2 flex items-center gap-1">
+              {value && !isLoading && (
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="h-7 w-7 flex items-center justify-center rounded-md text-muted-fg hover:text-foreground hover:bg-surface transition-colors"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <Button type="submit" size="sm" loading={isLoading} className="px-4">
+                {isLoading ? 'Loading…' : 'Visualize'}
+              </Button>
+            </div>
           </div>
-        </div>
 
+          <AnimatePresence>
+            {error && (
+              <motion.p
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="mt-2 text-xs text-destructive flex items-center gap-1"
+              >
+                <AlertIcon className="h-3 w-3 shrink-0" />
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </form>
+
+        {/* Autocomplete dropdown */}
         <AnimatePresence>
-          {error && (
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="mt-2 text-xs text-destructive flex items-center gap-1"
-            >
-              <AlertIcon className="h-3 w-3 shrink-0" />
-              {error}
-            </motion.p>
+          {showDropdown && (
+            <AutocompleteDropdown
+              suggestions={suggestions}
+              activeIndex={activeIndex}
+              onSelect={handleSelectSuggestion}
+              onRemove={(label, e) => handleRemoveSuggestion(label, e)}
+            />
           )}
         </AnimatePresence>
-      </form>
+      </div>
 
-      {/* Example repos */}
-      <div className="mt-4 flex flex-wrap gap-2 justify-center">
-        {EXAMPLE_REPOS.map(({ label, desc }) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => handleExample(label)}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border',
-              'text-xs text-muted-fg hover:text-foreground',
-              'bg-surface-2 hover:bg-surface border-border hover:border-border',
-              'transition-all duration-150',
-            )}
-            disabled={isLoading}
-          >
-            <span className="font-mono">{label}</span>
-            <span className="text-muted-fg/50 hidden sm:block">· {desc}</span>
-          </button>
-        ))}
+      {/* Recently visited / fallback examples */}
+      <div className="mt-5">
+        {history.length > 0 ? (
+          <>
+            <div className="flex items-center gap-2 mb-2">
+              <ClockIcon className="h-3 w-3 text-muted-foreground/60" />
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Recently visited
+              </span>
+              <span className="text-[10px] text-muted-foreground/40 ml-auto">
+                drag to input
+              </span>
+            </div>
+            <motion.div
+              className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+              layout
+            >
+              <AnimatePresence mode="popLayout">
+                {history.slice(0, 6).map(entry => (
+                  <RecentCard
+                    key={entry.label}
+                    entry={entry}
+                    onLoad={handleSelectSuggestion}
+                    onRemove={label => { removeFromHistory(label); setHistory(getHistory()); }}
+                    disabled={isLoading}
+                  />
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Try these
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {FALLBACK_REPOS.map(({ label, desc }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setValue(`https://github.com/${label}`);
+                    setError('');
+                    doLoad(`https://github.com/${label}`);
+                  }}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border',
+                    'text-xs text-muted-fg hover:text-foreground',
+                    'bg-surface-2 hover:bg-surface border-border',
+                    'transition-all duration-150',
+                  )}
+                  disabled={isLoading}
+                >
+                  <span className="font-mono">{label}</span>
+                  <span className="text-muted-fg/50 hidden sm:block">· {desc}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Icons ────────────────────────────────────────────────────────────────
+// ─── Icons ─────────────────────────────────────────────────────────────────────
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -296,6 +610,14 @@ function XIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M4 4l8 8M12 4l-8 8"/>
+    </svg>
+  );
+}
+
+function XSmallIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M3 3l6 6M9 3l-6 6"/>
     </svg>
   );
 }
@@ -321,6 +643,23 @@ function AlertIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="currentColor">
       <path fillRule="evenodd" d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM0 8a8 8 0 1116 0A8 8 0 010 8zm9-3a1 1 0 11-2 0 1 1 0 012 0zm-.25 3.25a.75.75 0 00-1.5 0v3a.75.75 0 001.5 0v-3z"/>
+    </svg>
+  );
+}
+
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <circle cx="8" cy="8" r="6"/>
+      <path d="M8 5v3.5l2 1.5"/>
+    </svg>
+  );
+}
+
+function RepoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z"/>
     </svg>
   );
 }

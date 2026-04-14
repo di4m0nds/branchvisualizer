@@ -15,46 +15,51 @@ import LoadingOverlay from '@/components/LoadingOverlay';
 import ErrorBanner from '@/components/ErrorBanner';
 import PolicyModal, { hasAcceptedPolicy } from '@/components/PolicyModal';
 import LegalPage, { type LegalTab } from '@/components/LegalPage';
+import { cn } from '@/lib/utils';
 
 // ─── Home page (/) ────────────────────────────────────────────────────────────
 
 function HomePage() {
   return (
-    <main className="flex flex-col items-center justify-center flex-1 px-6 py-16 gap-12">
-      {/* Hero */}
-      <div className="flex flex-col items-center gap-4 text-center max-w-2xl">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/40 text-xs text-muted-foreground font-mono mb-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
-          GitHub Commit Graph Visualizer
-        </div>
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-foreground">
-          Explore any repository's
-          <span className="block text-green-300">branch history</span>
-        </h1>
-        <p className="text-base text-muted-foreground max-w-lg leading-relaxed opacity-70">
-          Enter any public GitHub repository to render an interactive commit graph —
-          branches, merges, tags, and authors, all at a glance.
-        </p>
-      </div>
-
-      {/* Search form */}
-      <RepoSearch compact={false} />
-
-      {/* Feature highlights */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-2xl mt-4">
-        {[
-          { icon: '⎇', label: 'Branch graph', desc: 'Visualize every branch and merge as an interactive DAG' },
-          { icon: '🏷', label: 'Tags & releases', desc: 'See semantic version tags inline on the commit timeline' },
-          { icon: '🔍', label: 'Smart filters', desc: 'Filter by author, date range, branch, or commit message' },
-        ].map(f => (
-          <div key={f.label} className="flex flex-col gap-2 p-4 rounded-xl border border-border bg-card hover:bg-accent/30 transition-colors">
-            <span className="text-xl">{f.icon}</span>
-            <span className="text-sm font-semibold text-foreground">{f.label}</span>
-            <span className="text-xs text-muted-foreground leading-relaxed">{f.desc}</span>
+    <div className="flex flex-col flex-1 overflow-y-auto">
+      <main className="flex flex-col items-center justify-start sm:justify-center flex-1 px-4 sm:px-6 py-10 sm:py-16 gap-8 sm:gap-12 min-h-fit">
+        {/* Hero */}
+        <div className="flex flex-col items-center gap-4 text-center max-w-2xl w-full">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/40 text-xs text-muted-foreground font-mono mb-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
+            GitHub Commit Graph Visualizer
           </div>
-        ))}
-      </div>
-    </main>
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-foreground">
+            Explore any repository's
+            <span className="block text-green-300">branch history</span>
+          </h1>
+          <p className="text-sm sm:text-base text-muted-foreground max-w-lg leading-relaxed opacity-70">
+            Enter any public GitHub repository to render an interactive commit graph —
+            branches, merges, tags, and authors, all at a glance.
+          </p>
+        </div>
+
+        {/* Search form */}
+        <div className="w-full max-w-2xl">
+          <RepoSearch compact={false} />
+        </div>
+
+        {/* Feature highlights */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full max-w-2xl">
+          {[
+            { icon: '⎇', label: 'Branch graph', desc: 'Visualize every branch and merge as an interactive DAG' },
+            { icon: '🏷', label: 'Tags & releases', desc: 'See semantic version tags inline on the commit timeline' },
+            { icon: '🔍', label: 'Smart filters', desc: 'Filter by author, date range, branch, or commit message' },
+          ].map(f => (
+            <div key={f.label} className="flex flex-col gap-2 p-4 rounded-xl border border-border bg-card hover:bg-accent/30 transition-colors">
+              <span className="text-xl">{f.icon}</span>
+              <span className="text-sm font-semibold text-foreground">{f.label}</span>
+              <span className="text-xs text-muted-foreground leading-relaxed">{f.desc}</span>
+            </div>
+          ))}
+        </div>
+      </main>
+    </div>
   );
 }
 
@@ -70,7 +75,6 @@ function RepoPage() {
   // Auto-load when navigating directly to a repo URL
   useEffect(() => {
     if (!owner || !repo) return;
-    // Skip if this repo is already loaded or currently loading
     const current = state.repoInfo;
     const isLoading = !['idle', 'error', 'done'].includes(state.loadState.phase);
     if (isLoading) return;
@@ -95,10 +99,24 @@ function RepoPage() {
       {/* Filter bar */}
       {hasGraph && <div className="flex-shrink-0"><SearchFilter /></div>}
 
-      {/* Workspace */}
+      {/* Workspace — both views always mounted so camera state is preserved */}
       <main className="flex flex-1 min-h-0 overflow-hidden relative">
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {isCanvas ? <GraphCanvas /> : <CommitListView />}
+        <div className="flex-1 min-h-0 overflow-hidden relative">
+          {/* GraphCanvas: always mounted, hidden when not active */}
+          <div className={cn(
+            'absolute inset-0',
+            !isCanvas && 'invisible pointer-events-none',
+          )}>
+            <GraphCanvas />
+          </div>
+
+          {/* CommitListView: always mounted, hidden when not active */}
+          <div className={cn(
+            'absolute inset-0 flex flex-col',
+            isCanvas && 'invisible pointer-events-none',
+          )}>
+            <CommitListView />
+          </div>
         </div>
 
         {state.selectedNode && (
@@ -110,7 +128,8 @@ function RepoPage() {
       {hasGraph && isCanvas && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5
                         px-3 py-1.5 rounded-full border border-border bg-background/80 backdrop-blur-sm
-                        text-xs text-muted-foreground font-mono pointer-events-none select-none">
+                        text-xs text-muted-foreground font-mono pointer-events-none select-none
+                        hidden sm:flex">
           <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">F</kbd>
           <span>fit</span>
           <span className="opacity-40">·</span>

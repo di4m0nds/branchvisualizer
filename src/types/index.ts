@@ -139,6 +139,8 @@ export interface AppState {
   rateLimit: RateLimit | null;
   viewMode: ViewMode;
   theme: Theme;
+  /** SHA to smoothly pan the graph canvas to. Cleared after animation starts. */
+  panToSha: string | null;
 }
 
 export interface RateLimit {
@@ -162,4 +164,5 @@ export type AppAction =
   | { type: 'SET_VIEWPORT'; viewport: Partial<ViewportState> }
   | { type: 'SET_RATE_LIMIT'; rateLimit: RateLimit }
   | { type: 'SET_VIEW_MODE'; viewMode: ViewMode }
-  | { type: 'SET_THEME'; theme: Theme };
+  | { type: 'SET_THEME'; theme: Theme }
+  | { type: 'SCROLL_TO_SHA'; sha: string | null };
