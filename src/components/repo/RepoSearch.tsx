@@ -41,7 +41,7 @@ function AutocompleteDropdown({ suggestions, activeIndex, onSelect, onRemove }: 
       exit={{ opacity: 0, y: -4, scaleY: 0.95 }}
       transition={{ duration: 0.13 }}
       style={{ transformOrigin: 'top' }}
-      className="absolute top-full left-0 right-0 z-50 mt-1
+      className="absolute top-full left-0 right-0 z-[9999] mt-1
                  rounded-lg border border-border bg-card shadow-lg overflow-hidden"
     >
       {suggestions.map((entry, i) => (
@@ -323,8 +323,39 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   // ── Compact mode (repo page header) ───────────────────────────────────────
 
   if (compact) {
+    const { rateLimit } = state;
+    const rateLimitLow = rateLimit && rateLimit.remaining < 10;
+    const rateLimitWarn = rateLimit && rateLimit.remaining < 30;
+
     return (
-      <div className="relative w-full max-w-lg" ref={dropdownRef}>
+      <div className="flex flex-col gap-1.5 w-full max-w-lg">
+        {/* Rate limit banner */}
+        {rateLimit && (
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs
+            ${rateLimitLow
+              ? 'bg-red-500/10 border-red-500/30 text-red-400'
+              : rateLimitWarn
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                : 'bg-muted/30 border-border text-muted-foreground'
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0 opacity-80">
+              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 4.5v4.25a.75.75 0 0 1-1.5 0V4.5a.75.75 0 0 1 1.5 0zM8 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+            </svg>
+            <span className="font-mono font-semibold text-sm">{rateLimit.remaining.toLocaleString()}</span>
+            <span className="opacity-70">/ {rateLimit.limit.toLocaleString()} API requests remaining</span>
+            {rateLimitLow && (
+              <span className="ml-auto opacity-80 flex-shrink-0">
+                resets in {Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 60_000)}m
+              </span>
+            )}
+            {!state.token && (
+              <span className="ml-auto opacity-60 flex-shrink-0 hidden sm:block">Add token for 5k/hr</span>
+            )}
+          </div>
+        )}
+
+        <div className="relative w-full" ref={dropdownRef}>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full">
           <div
             className={cn(
@@ -378,6 +409,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
             />
           )}
         </AnimatePresence>
+        </div>
       </div>
     );
   }

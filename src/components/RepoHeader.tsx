@@ -1,6 +1,6 @@
 import { useAppContext } from '../store/AppContext';
 import { useRepoData } from '../hooks/useRepoData';
-import { formatCount } from '@/lib/utils';
+import { formatCount, formatDateDMY } from '@/lib/utils';
 import { useState } from 'react';
 
 function timeUntil(date: Date): string {
@@ -16,6 +16,7 @@ export default function RepoHeader() {
   const { loadRepo } = useRepoData();
   const { repoInfo, rateLimit, loadState } = state;
   const [refreshing, setRefreshing] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
 
   if (!repoInfo) return null;
 
@@ -55,9 +56,16 @@ export default function RepoHeader() {
       {repoInfo.description && (
         <>
           <span className="text-border/60">·</span>
-          <span className="text-muted-foreground text-xs truncate max-w-xs hidden md:block">
-            {repoInfo.description}
-          </span>
+          <button
+            className="text-muted-foreground text-xs hidden md:block text-left transition-colors hover:text-foreground"
+            style={{ maxWidth: descExpanded ? '100%' : '20rem' }}
+            onClick={() => setDescExpanded(v => !v)}
+            title={descExpanded ? 'Click to collapse' : 'Click to expand'}
+          >
+            <span className={descExpanded ? '' : 'truncate block'}>
+              {repoInfo.description}
+            </span>
+          </button>
         </>
       )}
 
@@ -89,7 +97,7 @@ export default function RepoHeader() {
         {/* Last push */}
         {repoInfo.pushedAt && (
           <span className="hidden sm:block" title="Last push">
-            pushed {new Date(repoInfo.pushedAt).toLocaleDateString()}
+            pushed {formatDateDMY(repoInfo.pushedAt)}
           </span>
         )}
 

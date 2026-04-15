@@ -253,12 +253,10 @@ export default function TabWorkspace() {
       {/* Content area */}
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {splitLayout === 'single' && (
-          <>
-            <div className="flex-1 min-h-0 overflow-hidden relative">
-              <TabContent activeTab={activeTab} />
-            </div>
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
+            <TabContent activeTab={activeTab} />
             {selectedNode && graphData && <DetailPanel />}
-          </>
+          </div>
         )}
 
         {splitLayout === '2h' && (

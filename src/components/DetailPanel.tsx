@@ -52,7 +52,9 @@ export default function DetailPanel() {
   }
 
   return (
-    <aside className="w-80 flex-shrink-0 flex flex-col border-l border-border bg-card overflow-hidden">
+    <aside className="absolute top-4 right-4 z-50 w-80 max-h-[calc(100%-2rem)]
+                      flex flex-col rounded-xl border border-border bg-card/95 backdrop-blur-sm
+                      shadow-xl overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -270,6 +272,25 @@ export default function DetailPanel() {
                 <path d="M2 10L10 2M10 2H5M10 2v5" />
               </svg>
             </a>
+          </div>
+
+          {/* Navigate to commits */}
+          <div className="px-4 py-3 border-t border-border">
+            <button
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg
+                         text-xs font-medium border border-border bg-accent/30 hover:bg-accent
+                         text-foreground transition-colors"
+              onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'list' })}
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="5" y="3.5" width="9" height="1.5" rx="0.75"/>
+                <rect x="5" y="7.25" width="9" height="1.5" rx="0.75"/>
+                <rect x="5" y="11" width="9" height="1.5" rx="0.75"/>
+                <circle cx="2.5" cy="4.25" r="1.25"/><circle cx="2.5" cy="8" r="1.25"/>
+                <circle cx="2.5" cy="11.75" r="1.25"/>
+              </svg>
+              View in commits
+            </button>
           </div>
         </div>
       </div>

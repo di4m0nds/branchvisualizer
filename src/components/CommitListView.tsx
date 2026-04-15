@@ -176,6 +176,7 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, re
 
   return (
     <div
+      data-sha={commit.sha}
       className={cn(
         'flex items-center gap-3 px-4 py-2.5 border-b border-border/60',
         'cursor-pointer transition-colors duration-75',
@@ -380,10 +381,34 @@ export default function CommitListView() {
   // Reset to page 0 when filter changes
   useEffect(() => { setPage(0); }, [filteredCommits.length, pageSize]);
 
-  // Scroll list to top when page changes
+  // Scroll list to top when page changes (only if not triggered by selectedNode navigation)
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [page]);
+
+  // Navigate to the page containing selected commit, then scroll to it
+  useEffect(() => {
+    if (!selectedNode || !graphData) return;
+    const sha = selectedNode.commit.sha;
+    const allNodes = filteredCommits
+      .map(c => graphData.commitMap.get(c.sha))
+      .filter((n): n is NonNullable<typeof n> => !!n);
+
+    const idx = allNodes.findIndex(n => n.commit.sha === sha);
+    if (idx === -1) return; // commit not in current filter
+
+    const targetPage = Math.floor(idx / pageSize);
+    setPage(targetPage);
+
+    // After page update, scroll to the row
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(`[data-sha="${sha}"]`);
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode?.commit.sha]);
 
   const handleSelect = useCallback((node: GraphNode) => {
     const isSame = selectedNode?.commit.sha === node.commit.sha;

@@ -32,7 +32,9 @@ export default function GraphCanvas() {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const minimapRef   = useRef<HTMLCanvasElement>(null);
   const rafRef       = useRef<number>(0);
+  const animRafRef   = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const renderOptsRef = useRef<RenderOptions | null>(null);
 
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
 
@@ -47,6 +49,9 @@ export default function GraphCanvas() {
 
   const handleSelect = useCallback((node: GraphNode | null) => {
     dispatch({ type: 'SELECT_NODE', node });
+    if (node) {
+      dispatch({ type: 'SET_ACTIVE_TAB', tab: 'list' });
+    }
   }, [dispatch]);
 
   const { fitToView } = useCanvas(canvasRef as RefObject<HTMLCanvasElement>, {
@@ -153,6 +158,9 @@ export default function GraphCanvas() {
       direction:      graphDirection,
     };
 
+    // Keep renderOptsRef current so animation loop always has fresh opts
+    renderOptsRef.current = opts;
+
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       if (!graphData) {
@@ -165,6 +173,29 @@ export default function GraphCanvas() {
 
     return () => cancelAnimationFrame(rafRef.current);
   }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection]);
+
+  // ── Animation loop (orbiting arc + dashed edges when a node is selected) ─
+  useEffect(() => {
+    cancelAnimationFrame(animRafRef.current);
+    if (!selectedNode || !graphData) return;
+
+    let startTs = 0;
+
+    function animLoop(ts: number) {
+      if (!startTs) startTs = ts;
+      const elapsed = ts - startTs;
+      const ctx = ctxRef.current;
+      const opts = renderOptsRef.current;
+      if (ctx && opts && graphData) {
+        renderGraph(ctx, graphData, { ...opts, animTime: elapsed });
+      }
+      animRafRef.current = requestAnimationFrame(animLoop);
+    }
+
+    animRafRef.current = requestAnimationFrame(animLoop);
+    return () => cancelAnimationFrame(animRafRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode?.commit.sha, graphData]);
 
   // ── Minimap (vertical mode only) ──────────────────────────────────────
   useEffect(() => {
