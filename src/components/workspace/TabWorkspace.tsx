@@ -246,7 +246,7 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
         <GraphCanvas />
       </div>
       <div className={cn('absolute inset-0 flex flex-col', activeTab !== 'list' && 'invisible pointer-events-none')}>
-        <CommitListView />
+        <CommitListView isActive={activeTab === 'list'} />
       </div>
       {activeTab === 'files'  && <div className="absolute inset-0 flex flex-col"><FilesTab /></div>}
       {activeTab === 'readme' && <div className="absolute inset-0 flex flex-col"><ReadmeTab /></div>}

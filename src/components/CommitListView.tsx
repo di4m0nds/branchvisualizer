@@ -361,7 +361,7 @@ function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationPro
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-export default function CommitListView() {
+export default function CommitListView({ isActive = true }: { isActive?: boolean }) {
   const { state, dispatch } = useAppContext();
   const { graphData, filter, selectedNode, branches, repoInfo } = state;
 
@@ -414,6 +414,36 @@ export default function CommitListView() {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.commit.sha]);
+
+  // When this list tab becomes visible with a pre-selected node (e.g. user clicked a
+  // graph node then switched to the Commits tab), navigate to the right page and
+  // smooth-scroll to the selected commit row.
+  const prevIsActiveRef = useRef(isActive);
+  useEffect(() => {
+    const wasActive = prevIsActiveRef.current;
+    prevIsActiveRef.current = isActive;
+
+    if (!isActive || wasActive || !selectedNode || !graphData) return;
+
+    const sha = selectedNode.commit.sha;
+    const allNodes = filteredCommits
+      .map(c => graphData.commitMap.get(c.sha))
+      .filter((n): n is NonNullable<typeof n> => !!n);
+
+    const idx = allNodes.findIndex(n => n.commit.sha === sha);
+    if (idx === -1) return;
+
+    const targetPage = Math.floor(idx / pageSize);
+    setPage(targetPage);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(`[data-sha="${sha}"]`);
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive]);
 
   const handleSelect = useCallback((node: GraphNode) => {
     const isSame = selectedNode?.commit.sha === node.commit.sha;

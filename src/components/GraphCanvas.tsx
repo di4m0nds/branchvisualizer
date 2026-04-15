@@ -49,9 +49,9 @@ export default function GraphCanvas() {
 
   const handleSelect = useCallback((node: GraphNode | null) => {
     dispatch({ type: 'SELECT_NODE', node });
-    if (node) {
-      dispatch({ type: 'SET_ACTIVE_TAB', tab: 'list' });
-    }
+    // Don't auto-switch tabs — the floating detail panel appears in-context.
+    // If the user manually navigates to the Commits tab, CommitListView will
+    // scroll to the selected node automatically.
   }, [dispatch]);
 
   const { fitToView } = useCanvas(canvasRef as RefObject<HTMLCanvasElement>, {
