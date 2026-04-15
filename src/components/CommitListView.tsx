@@ -2,8 +2,10 @@ import {
   useMemo, useCallback, useState, useRef, useEffect,
   type CSSProperties,
 } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useAppContext } from '@/store/AppContext';
 import AuthorPopup, { useAnchorRect } from '@/components/AuthorPopup';
+import DetailPanel from '@/components/DetailPanel';
 import type { GraphNode, Commit } from '@/types';
 import { hashColor, getInitials, timeAgo, cn } from '@/lib/utils';
 
@@ -361,7 +363,7 @@ function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationPro
 
 export default function CommitListView() {
   const { state, dispatch } = useAppContext();
-  const { graphData, filter, selectedNode, branches, allCommits, repoInfo } = state;
+  const { graphData, filter, selectedNode, branches, repoInfo } = state;
 
   const [page, setPage]         = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);
@@ -369,8 +371,11 @@ export default function CommitListView() {
 
   const filteredCommits = useMemo(() => {
     if (!graphData) return [];
-    return applyFilter(allCommits, filter, graphData.commitMap, branches);
-  }, [allCommits, filter, graphData, branches]);
+    // Use graphData.nodes order (topologically sorted, newest-first, row 0 = HEAD)
+    // instead of allCommits which may arrive in arbitrary fetch order from the API.
+    const sortedCommits = graphData.nodes.map(n => n.commit);
+    return applyFilter(sortedCommits, filter, graphData.commitMap, branches);
+  }, [graphData, filter, branches]);
 
   const highlightedShas = useMemo<Set<string> | null>(() => {
     const hasFilter = filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
@@ -464,18 +469,37 @@ export default function CommitListView() {
 
       {/* Scrollable list */}
       <div ref={listRef} className="flex-1 overflow-y-auto" role="grid">
-        {pageNodes.map(node => (
-          <CommitRow
-            key={node.commit.sha}
-            node={node}
-            isSelected={selectedNode?.commit.sha === node.commit.sha}
-            isDimmed={highlightedShas !== null && !highlightedShas.has(node.commit.sha)}
-            onSelect={handleSelect}
-            branchMap={graphData.branchMap}
-            tagMap={graphData.tagMap}
-            repoUrl={repoUrl}
-          />
-        ))}
+        {pageNodes.map(node => {
+          const isSelected = selectedNode?.commit.sha === node.commit.sha;
+          return (
+            <div key={node.commit.sha}>
+              <CommitRow
+                node={node}
+                isSelected={isSelected}
+                isDimmed={highlightedShas !== null && !highlightedShas.has(node.commit.sha)}
+                onSelect={handleSelect}
+                branchMap={graphData.branchMap}
+                tagMap={graphData.tagMap}
+                repoUrl={repoUrl}
+              />
+              {/* Inline detail panel — animated slide-in below the focused commit row */}
+              <AnimatePresence initial={false}>
+                {isSelected && (
+                  <motion.div
+                    key="inline-panel"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                    className="overflow-hidden"
+                  >
+                    <DetailPanel mode="inline" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
       </div>
 
       {/* Pagination */}

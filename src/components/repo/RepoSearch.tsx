@@ -328,40 +328,50 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
     const minsLeft = rateLimit ? Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 60_000) : 0;
 
     return (
-      <div className="flex items-center gap-3 w-full max-w-lg">
-        {/* Rate limit — subtle dot + number, tooltip on hover */}
+      <div className="flex items-center gap-2 w-full max-w-lg">
+        {/* Rate limit indicator — compact pill to the left of the input */}
         {rateLimit && (
-          <div className="relative group flex-shrink-0 flex items-center gap-1.5 cursor-default select-none">
-            {/* Status dot */}
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              rateLimitLow ? 'bg-red-400 animate-pulse' :
-              rateLimitWarn ? 'bg-amber-400' : 'bg-green-400'
-            }`} />
-            <span className={`text-xs font-mono tabular-nums ${
-              rateLimitLow ? 'text-red-400' :
-              rateLimitWarn ? 'text-amber-400' : 'text-muted-foreground'
-            }`}>
-              {rateLimit.remaining.toLocaleString()}
-            </span>
+          <div className="relative group flex-shrink-0 cursor-default select-none">
+            <div className={cn(
+              'flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-mono tabular-nums',
+              'transition-colors',
+              rateLimitLow
+                ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                : rateLimitWarn
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
+                  : 'border-border bg-muted/30 text-muted-foreground hover:text-foreground',
+            )}>
+              {/* Status dot */}
+              <span className={cn(
+                'w-1.5 h-1.5 rounded-full flex-shrink-0',
+                rateLimitLow ? 'bg-red-400 animate-pulse' :
+                rateLimitWarn ? 'bg-amber-400' : 'bg-green-400',
+              )} />
+              <span>{rateLimit.remaining.toLocaleString()}</span>
+              <span className="opacity-50 hidden sm:inline">/ {rateLimit.limit.toLocaleString()}</span>
+            </div>
 
-            {/* Hover tooltip */}
-            <div className="absolute bottom-full left-0 mb-2 w-64 z-[9999] pointer-events-none
+            {/* Hover tooltip — opens DOWNWARD (bar is at top of page) */}
+            <div className="absolute top-full left-0 mt-2 w-64 z-[9999] pointer-events-none
                             opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-              <div className="bg-popover border border-border rounded-lg p-3 shadow-xl text-xs space-y-2">
+              {/* Arrow pointing up */}
+              <div className="absolute -top-1 left-4 w-2 h-2 bg-popover border-t border-l border-border rotate-45" />
+              <div className="bg-popover border border-border rounded-lg p-3 shadow-xl text-xs space-y-2 mt-0.5">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-foreground">GitHub API quota</span>
-                  <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                  <span className={cn(
+                    'font-mono text-[10px] px-1.5 py-0.5 rounded border',
                     rateLimitLow ? 'text-red-400 border-red-500/30 bg-red-500/10' :
                     rateLimitWarn ? 'text-amber-400 border-amber-500/30 bg-amber-500/10' :
                     'text-green-400 border-green-500/30 bg-green-500/10'
-                  }`}>{pct}%</span>
+                  )}>{pct}%</span>
                 </div>
-                {/* Progress bar */}
                 <div className="h-1.5 rounded-full bg-border overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${
-                      rateLimitLow ? 'bg-red-400' : rateLimitWarn ? 'bg-amber-400' : 'bg-green-400'
-                    }`}
+                    className={cn(
+                      'h-full rounded-full transition-all',
+                      rateLimitLow ? 'bg-red-400' : rateLimitWarn ? 'bg-amber-400' : 'bg-green-400',
+                    )}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -376,13 +386,11 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                   </div>
                   {!state.token && (
                     <p className="text-[10px] pt-1 border-t border-border text-muted-foreground/70 leading-relaxed">
-                      Add a GitHub token to increase the limit to 5,000 req/hr.
+                      Add a GitHub token to raise the limit to 5,000 req/hr.
                     </p>
                   )}
                 </div>
               </div>
-              {/* Arrow */}
-              <div className="absolute top-full left-3 w-2 h-2 bg-popover border-r border-b border-border rotate-45 -mt-1" />
             </div>
           </div>
         )}
@@ -426,8 +434,15 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               </button>
             )}
           </div>
-          <Button type="submit" size="sm" loading={isLoading}>
-            {isLoading ? state.loadState.message : 'Go'}
+          <Button
+            type="submit"
+            size="sm"
+            loading={isLoading}
+            className="border-green-300/30 bg-green-300/10 text-green-300
+                       hover:bg-green-300/20 hover:text-green-200 hover:border-green-300/50
+                       font-mono tracking-wide transition-all"
+          >
+            {isLoading ? state.loadState.message : 'Go →'}
           </Button>
         </form>
 
@@ -559,8 +574,15 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                   <XIcon className="h-3.5 w-3.5" />
                 </button>
               )}
-              <Button type="submit" size="sm" loading={isLoading} className="px-4">
-                {isLoading ? 'Loading…' : 'Visualize'}
+              <Button
+                type="submit"
+                size="sm"
+                loading={isLoading}
+                className="px-5 border-green-300/30 bg-green-300/10 text-green-300
+                           hover:bg-green-300/20 hover:text-green-200 hover:border-green-300/50
+                           font-mono tracking-wide transition-all"
+              >
+                {isLoading ? 'Loading…' : 'Visualize →'}
               </Button>
             </div>
           </div>

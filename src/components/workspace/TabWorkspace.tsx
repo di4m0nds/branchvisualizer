@@ -78,6 +78,51 @@ const TABS: TabDef[] = [
   },
 ];
 
+// ─── Split layout icons ────────────────────────────────────────────────────
+
+// Single pane – one full rectangle
+function IconSingle() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="1.5" y="1.5" width="9" height="9" rx="1"/>
+    </svg>
+  );
+}
+
+// 2-pane left | right (vertical divider)
+// Rotate the "rows" base shape 90° → becomes columns
+function IconSplitColumns() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="1"   y="1.5" width="4" height="9" rx="0.8"/>
+      <rect x="7"   y="1.5" width="4" height="9" rx="0.8"/>
+    </svg>
+  );
+}
+
+// 2-pane top / bottom (horizontal divider)
+// Base shape – two stacked rows
+function IconSplitRows() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="1.5" y="1"   width="9" height="4" rx="0.8"/>
+      <rect x="1.5" y="7"   width="9" height="4" rx="0.8"/>
+    </svg>
+  );
+}
+
+// 4-grid – same columns icon concept extended to 2×2
+function IconGrid4() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="1" y="1" width="4" height="4" rx="0.7"/>
+      <rect x="7" y="1" width="4" height="4" rx="0.7"/>
+      <rect x="1" y="7" width="4" height="4" rx="0.7"/>
+      <rect x="7" y="7" width="4" height="4" rx="0.7"/>
+    </svg>
+  );
+}
+
 // ─── Single pane tab bar ───────────────────────────────────────────────────
 
 function PaneTabBar({
@@ -119,52 +164,55 @@ function WorkspaceToolbar() {
 
   if (!graphData) return null;
 
-  const SPLITS: { id: SplitLayout; title: string; icon: string }[] = [
-    { id: 'single', title: 'Single pane', icon: '□' },
-    { id: '2h',     title: 'Split horizontal (left | right)', icon: '⊟' },
-    { id: '2v',     title: 'Split vertical (top / bottom)', icon: '⊞' },
-    { id: '4g',     title: '4-grid', icon: '⊡' },
+  const SPLITS: { id: SplitLayout; title: string; icon: React.ReactNode }[] = [
+    { id: 'single', title: 'Single pane',           icon: <IconSingle /> },
+    { id: '2h',     title: 'Split left / right',    icon: <IconSplitColumns /> },
+    { id: '2v',     title: 'Split top / bottom',    icon: <IconSplitRows /> },
+    { id: '4g',     title: '4-grid',                icon: <IconGrid4 /> },
   ];
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-muted/10 flex-shrink-0">
+    <div className="flex items-center gap-2 px-2 sm:px-3 py-1.5 border-b border-border bg-muted/10 flex-shrink-0 flex-wrap gap-y-1">
       {/* Direction toggle */}
-      <div className="flex items-center gap-0.5 p-0.5 rounded border border-border bg-muted/30">
-        <button
-          onClick={() => dispatch({ type: 'SET_GRAPH_DIRECTION', direction: 'vertical' })}
-          title="Vertical layout (top→bottom)"
-          className={cn(
-            'w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors',
-            graphDirection === 'vertical'
-              ? 'bg-accent text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <line x1="6" y1="1" x2="6" y2="11"/>
-            <path d="M3 8l3 3 3-3"/>
-            <line x1="2" y1="4" x2="10" y2="4"/>
-          </svg>
-        </button>
-        <button
-          onClick={() => dispatch({ type: 'SET_GRAPH_DIRECTION', direction: 'horizontal' })}
-          title="Horizontal layout (left→right)"
-          className={cn(
-            'w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors',
-            graphDirection === 'horizontal'
-              ? 'bg-accent text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <line x1="1" y1="6" x2="11" y2="6"/>
-            <path d="M8 3l3 3-3 3"/>
-            <line x1="4" y1="2" x2="4" y2="10"/>
-          </svg>
-        </button>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] text-muted-foreground hidden sm:inline select-none">Graph direction:</span>
+        <div className="flex items-center gap-0.5 p-0.5 rounded border border-border bg-muted/30">
+          <button
+            onClick={() => dispatch({ type: 'SET_GRAPH_DIRECTION', direction: 'vertical' })}
+            title="Vertical layout (top→bottom)"
+            className={cn(
+              'w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors',
+              graphDirection === 'vertical'
+                ? 'bg-accent text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <line x1="6" y1="1" x2="6" y2="11"/>
+              <path d="M3 8l3 3 3-3"/>
+              <line x1="2" y1="4" x2="10" y2="4"/>
+            </svg>
+          </button>
+          <button
+            onClick={() => dispatch({ type: 'SET_GRAPH_DIRECTION', direction: 'horizontal' })}
+            title="Horizontal layout (left→right)"
+            className={cn(
+              'w-6 h-6 flex items-center justify-center rounded text-[10px] transition-colors',
+              graphDirection === 'horizontal'
+                ? 'bg-accent text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <line x1="1" y1="6" x2="11" y2="6"/>
+              <path d="M8 3l3 3-3 3"/>
+              <line x1="4" y1="2" x2="4" y2="10"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <div className="h-4 w-px bg-border" />
+      <div className="h-4 w-px bg-border hidden sm:block" />
 
       {/* Split layout */}
       <div className="flex items-center gap-0.5 p-0.5 rounded border border-border bg-muted/30">
@@ -174,7 +222,7 @@ function WorkspaceToolbar() {
             onClick={() => dispatch({ type: 'SET_SPLIT_LAYOUT', layout: s.id })}
             title={s.title}
             className={cn(
-              'w-6 h-6 flex items-center justify-center rounded text-[11px] transition-colors',
+              'w-6 h-6 flex items-center justify-center rounded transition-colors',
               splitLayout === s.id
                 ? 'bg-accent text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -237,6 +285,18 @@ export default function TabWorkspace() {
   const { state, dispatch } = useAppContext();
   const { activeTab, splitLayout, selectedNode, graphData } = state;
 
+  // Determine if any visible pane is showing the commit list.
+  // If so, the inline panel in CommitListView handles the detail.
+  // If not, show the floating panel.
+  const hasListTabVisible = (() => {
+    if (!selectedNode) return false;
+    if (splitLayout === 'single') return activeTab === 'list';
+    const visibleCount = splitLayout === '4g' ? 4 : 2;
+    return state.paneTab.slice(0, visibleCount).some(t => t === 'list');
+  })();
+
+  const showFloatingPanel = selectedNode && graphData && !hasListTabVisible;
+
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Toolbar (direction + split controls) */}
@@ -255,7 +315,6 @@ export default function TabWorkspace() {
         {splitLayout === 'single' && (
           <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
             <TabContent activeTab={activeTab} />
-            {selectedNode && graphData && <DetailPanel />}
           </div>
         )}
 
@@ -281,6 +340,9 @@ export default function TabWorkspace() {
             <SplitPane paneIndex={3} className="min-h-0" />
           </div>
         )}
+
+        {/* Floating detail panel — only when no list tab is currently visible */}
+        {showFloatingPanel && <DetailPanel mode="floating" />}
       </div>
     </div>
   );
