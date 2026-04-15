@@ -208,10 +208,24 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, re
         <MergeIcon prNumber={prNumber} repoUrl={repoUrl} />
       )}
 
-      {/* Subject */}
-      <span className="flex-1 min-w-0 text-sm text-foreground truncate leading-tight">
-        {commit.subject}
-      </span>
+      {/* Subject — merge commits link to the PR */}
+      {commit.isMerge && prNumber && repoUrl ? (
+        <a
+          href={`${repoUrl}/pull/${prNumber}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={e => e.stopPropagation()}
+          className="flex-1 min-w-0 text-sm text-purple-400 hover:text-purple-300 truncate leading-tight
+                     hover:underline transition-colors"
+          title={`Open PR #${prNumber} on GitHub`}
+        >
+          {commit.subject}
+        </a>
+      ) : (
+        <span className="flex-1 min-w-0 text-sm text-foreground truncate leading-tight">
+          {commit.subject}
+        </span>
+      )}
 
       {/* Badges */}
       <div className="hidden md:flex items-center gap-1 flex-shrink-0">
@@ -244,6 +258,14 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, re
           </span>
         ))}
       </div>
+
+      {/* Stats (additions/deletions) */}
+      {commit.stats && (
+        <div className="hidden lg:flex items-center gap-1 flex-shrink-0 text-[10px] font-mono tabular-nums">
+          <span className="text-green-500">+{commit.stats.additions.toLocaleString()}</span>
+          <span className="text-red-400">-{commit.stats.deletions.toLocaleString()}</span>
+        </div>
+      )}
 
       {/* Author */}
       <AuthorCell commit={commit} />
@@ -364,10 +386,12 @@ export default function CommitListView() {
   }, [page]);
 
   const handleSelect = useCallback((node: GraphNode) => {
-    dispatch({
-      type: 'SELECT_NODE',
-      node: selectedNode?.commit.sha === node.commit.sha ? null : node,
-    });
+    const isSame = selectedNode?.commit.sha === node.commit.sha;
+    dispatch({ type: 'SELECT_NODE', node: isSame ? null : node });
+    if (!isSame) {
+      // Pan graph canvas to this node when selected from list
+      dispatch({ type: 'SCROLL_TO_SHA', sha: node.commit.sha });
+    }
   }, [dispatch, selectedNode]);
 
   if (!graphData) {
@@ -408,6 +432,7 @@ export default function CommitListView() {
         <span className="w-14 flex-shrink-0">SHA</span>
         <span className="flex-1">Message</span>
         <span className="hidden md:block w-32">Branches / Tags</span>
+        <span className="hidden lg:block w-24">Changes</span>
         <span className="hidden sm:block w-20 text-center">Author</span>
         <span className="hidden sm:block w-16 text-right">When</span>
       </div>

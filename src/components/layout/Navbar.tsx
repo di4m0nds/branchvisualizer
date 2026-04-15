@@ -122,9 +122,9 @@ export default function Navbar() {
 
         <Separator orientation="vertical" className="h-4" />
 
-        <Tooltip content="GitHub">
+        <Tooltip content="View on GitHub">
           <Button variant="ghost" size="icon" asChild aria-label="GitHub">
-            <a href="https://github.com" target="_blank" rel="noreferrer">
+            <a href="https://github.com/di4m0nds/branchvisualizer" target="_blank" rel="noreferrer">
               <GitHubIcon className="w-4 h-4" />
             </a>
           </Button>

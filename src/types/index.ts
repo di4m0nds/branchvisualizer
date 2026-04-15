@@ -88,6 +88,9 @@ export interface GraphData {
 
 // ─── UI state ──────────────────────────────────────────────────────────────
 
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs';
+export type SplitLayout = 'single' | '2h' | '2v' | '4g';
+export type GraphDirection = 'vertical' | 'horizontal';
 export type ViewMode = 'canvas' | 'list';
 export type Theme = 'dark' | 'light';
 
@@ -141,6 +144,14 @@ export interface AppState {
   theme: Theme;
   /** SHA to smoothly pan the graph canvas to. Cleared after animation starts. */
   panToSha: string | null;
+  /** Active tab in the tab workspace */
+  activeTab: TabId;
+  /** Split layout mode */
+  splitLayout: SplitLayout;
+  /** Active tab for each pane slot (0=main/TL, 1=TR/bottom, 2=BL, 3=BR) */
+  paneTab: [TabId, TabId, TabId, TabId];
+  /** Graph layout direction */
+  graphDirection: GraphDirection;
 }
 
 export interface RateLimit {
@@ -165,4 +176,8 @@ export type AppAction =
   | { type: 'SET_RATE_LIMIT'; rateLimit: RateLimit }
   | { type: 'SET_VIEW_MODE'; viewMode: ViewMode }
   | { type: 'SET_THEME'; theme: Theme }
-  | { type: 'SCROLL_TO_SHA'; sha: string | null };
+  | { type: 'SCROLL_TO_SHA'; sha: string | null }
+  | { type: 'SET_ACTIVE_TAB'; tab: TabId }
+  | { type: 'SET_SPLIT_LAYOUT'; layout: SplitLayout }
+  | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
+  | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection };

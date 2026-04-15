@@ -2,10 +2,11 @@ import { useEffect, useRef, useCallback, useState, useMemo, type RefObject } fro
 import type { GraphData, GraphNode, ViewportState } from '../types';
 import { useAppContext } from '../store/AppContext';
 import { useCanvas } from '../hooks/useCanvas';
-import { renderGraph, renderMinimap, graphHeight } from '../graph/renderer';
+import { renderGraph, renderMinimap, graphHeight, graphWidth } from '../graph/renderer';
+import { nodeCanvasX, nodeCanvasY } from '../graph/renderer';
 import type { RenderOptions } from '../graph/renderer';
 
-// ─── Branch reachability (BFS) — O(n), run only when branch filter changes ──
+// ─── Branch reachability (BFS) ────────────────────────────────────────────
 
 function reachableFromTip(tipSha: string, commitMap: GraphData['commitMap']): Set<string> {
   const visited = new Set<string>();
@@ -22,11 +23,11 @@ function reachableFromTip(tipSha: string, commitMap: GraphData['commitMap']): Se
   return visited;
 }
 
-// ─── GraphCanvas component ───────────────────────────────────────────────────
+// ─── GraphCanvas component ────────────────────────────────────────────────
 
 export default function GraphCanvas() {
   const { state, dispatch } = useAppContext();
-  const { graphData, viewport, selectedNode, hoveredNode, filter, branches, allCommits } = state;
+  const { graphData, viewport, selectedNode, hoveredNode, filter, branches, allCommits, graphDirection } = state;
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const minimapRef   = useRef<HTMLCanvasElement>(null);
@@ -35,7 +36,7 @@ export default function GraphCanvas() {
 
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
 
-  // ── Stable callbacks ───────────────────────────────────────────────────────
+  // ── Stable callbacks ───────────────────────────────────────────────────
   const handleViewportChange = useCallback((v: Partial<ViewportState>) => {
     dispatch({ type: 'SET_VIEWPORT', viewport: v });
   }, [dispatch]);
@@ -54,9 +55,10 @@ export default function GraphCanvas() {
     onViewportChange: handleViewportChange,
     onHover: handleHover,
     onSelect: handleSelect,
+    direction: graphDirection,
   });
 
-  // ── Memoized filter computation ────────────────────────────────────────────
+  // ── Filter computation ─────────────────────────────────────────────────
   const highlightedShas = useMemo<Set<string> | null>(() => {
     if (!graphData) return null;
     const hasFilter = filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
@@ -99,7 +101,7 @@ export default function GraphCanvas() {
     return matching.size > 0 ? matching : new Set<string>();
   }, [graphData, filter, branches, allCommits]);
 
-  // ── Canvas resize observer ─────────────────────────────────────────────────
+  // ── Canvas resize observer ─────────────────────────────────────────────
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -114,7 +116,7 @@ export default function GraphCanvas() {
     return () => ro.disconnect();
   }, []);
 
-  // ── Canvas physical size (DPR-aware) — only when canvas dimensions change ──
+  // ── Canvas physical size (DPR-aware) ───────────────────────────────────
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -131,7 +133,7 @@ export default function GraphCanvas() {
     }
   }, [canvasSize]);
 
-  // ── Main render loop ───────────────────────────────────────────────────────
+  // ── Main render loop ───────────────────────────────────────────────────
   useEffect(() => {
     const ctx = ctxRef.current;
     if (!ctx) return;
@@ -148,6 +150,7 @@ export default function GraphCanvas() {
       highlightedShas,
       showMessages:   viewport.scale > 0.6,
       theme,
+      direction:      graphDirection,
     };
 
     cancelAnimationFrame(rafRef.current);
@@ -161,20 +164,19 @@ export default function GraphCanvas() {
     });
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme]);
+  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection]);
 
-  // ── Minimap ────────────────────────────────────────────────────────────────
+  // ── Minimap (vertical mode only) ──────────────────────────────────────
   useEffect(() => {
     const canvas = minimapRef.current;
-    if (!canvas || !graphData) return;
+    if (!canvas || !graphData || graphDirection === 'horizontal') return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const totalH = graphHeight(graphData.rowCount);
+    const totalH = graphHeight(graphData.rowCount, 'vertical', graphData.laneCount);
     renderMinimap(ctx, graphData, viewport.offsetY, canvasSize.h, totalH, 120, 8);
-  }, [graphData, viewport.offsetY, canvasSize.h]);
+  }, [graphData, viewport.offsetY, canvasSize.h, graphDirection]);
 
-  // ── Fit on initial load — only once per repo, not on every remount ─────────
-  // This prevents re-fitting when user toggles between canvas/list views.
+  // ── Fit on initial load (once per repo) ───────────────────────────────
   const fittedRepoRef = useRef<string | null>(null);
   useEffect(() => {
     if (state.loadState.phase === 'done' && graphData && state.repoInfo) {
@@ -187,35 +189,48 @@ export default function GraphCanvas() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.loadState.phase, state.repoInfo]);
 
-  // ── Smooth pan to a specific SHA (e.g., from DetailPanel parent click) ─────
+  // ── Re-fit when direction changes ─────────────────────────────────────
+  const prevDirectionRef = useRef(graphDirection);
+  useEffect(() => {
+    if (prevDirectionRef.current !== graphDirection && graphData) {
+      prevDirectionRef.current = graphDirection;
+      fitToView(canvasSize.w, canvasSize.h);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphDirection]);
+
+  // ── Smooth pan to SHA ─────────────────────────────────────────────────
+  // Use a ref to always have the latest viewport without stale closure issues
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+
   const panAnimRef = useRef<number>(0);
   useEffect(() => {
     if (!state.panToSha || !graphData) return;
     const node = graphData.commitMap.get(state.panToSha);
 
-    // Always clear the request immediately so it won't re-trigger
     dispatch({ type: 'SCROLL_TO_SHA', sha: null });
 
     if (!node) return;
 
-    // Capture current viewport at effect time
-    const startX = viewport.offsetX;
-    const startY = viewport.offsetY;
-    const { scale } = viewport;
+    const startX = viewportRef.current.offsetX;
+    const startY = viewportRef.current.offsetY;
+    const { scale } = viewportRef.current;
 
     // Target: center the node in the canvas
-    const targetX = canvasSize.w / 2 - node.x * scale;
-    const targetY = canvasSize.h / 2 - node.y * scale;
+    const nx = nodeCanvasX(node, graphDirection);
+    const ny = nodeCanvasY(node, graphDirection);
+    const targetX = canvasSize.w / 2 - nx * scale;
+    const targetY = canvasSize.h / 2 - ny * scale;
 
-    const duration = 520; // ms
+    const duration = 520;
     const startTime = performance.now();
 
     cancelAnimationFrame(panAnimRef.current);
 
     function frame(now: number) {
       const t = Math.min(1, (now - startTime) / duration);
-      // easeOutCubic
-      const ease = 1 - Math.pow(1 - t, 3);
+      const ease = 1 - Math.pow(1 - t, 3); // easeOutCubic
       dispatch({
         type: 'SET_VIEWPORT',
         viewport: {
@@ -231,11 +246,10 @@ export default function GraphCanvas() {
     panAnimRef.current = requestAnimationFrame(frame);
 
     return () => cancelAnimationFrame(panAnimRef.current);
-  // Only rerun when panToSha changes — intentionally exclude viewport
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.panToSha]);
 
-  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -262,13 +276,13 @@ export default function GraphCanvas() {
     return () => window.removeEventListener('keydown', handler);
   }, [viewport, dispatch, canvasSize, fitToView]);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div ref={containerRef} className="relative w-full h-full overflow-hidden">
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
-      {/* Minimap — only shown when graph is large enough to need navigation */}
-      {graphData && graphData.rowCount > 50 && (
+      {/* Minimap — only in vertical mode, only for large graphs */}
+      {graphData && graphData.rowCount > 50 && graphDirection === 'vertical' && (
         <div className="absolute top-3 right-3 rounded-md overflow-hidden border border-border/50
                         shadow-md opacity-60 hover:opacity-100 transition-opacity">
           <canvas ref={minimapRef} className="block" width={8} height={120} />
@@ -302,6 +316,24 @@ export default function GraphCanvas() {
           onClick={() => fitToView(canvasSize.w, canvasSize.h)}
         >⊞</button>
       </div>
+
+      {/* Keyboard hint */}
+      {graphData && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5
+                        px-3 py-1.5 rounded-full border border-border bg-background/80 backdrop-blur-sm
+                        text-xs text-muted-foreground font-mono pointer-events-none select-none
+                        hidden sm:flex">
+          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">F</kbd>
+          <span>fit</span>
+          <span className="opacity-40">·</span>
+          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">+</kbd>
+          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">−</kbd>
+          <span>zoom</span>
+          <span className="opacity-40">·</span>
+          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">Esc</kbd>
+          <span>deselect</span>
+        </div>
+      )}
 
       {/* Empty state */}
       {!graphData && state.loadState.phase === 'idle' && (

@@ -14,7 +14,7 @@
 //   5. Build edges from parent relationships.
 
 import type { Branch, Commit, GraphData, GraphEdge, GraphNode, Tag } from '../types';
-import { GRAPH_PADDING_LEFT, GRAPH_PADDING_TOP, LANE_WIDTH, ROW_HEIGHT, laneColor } from './colors';
+import { GRAPH_PADDING_LEFT, GRAPH_PADDING_TOP, LANE_WIDTH, ROW_HEIGHT, COL_WIDTH, LANE_HEIGHT, laneColor } from './colors';
 
 // ─── Step 1: topological sort ─────────────────────────────────────────────
 
@@ -264,6 +264,20 @@ export function visibleRows(
   return { minRow: topRow, maxRow: bottomRow };
 }
 
+// ─── Utility: compute canvas position from node ────────────────────────────
+
+export function nodeX(node: GraphNode, dir: 'vertical' | 'horizontal' = 'vertical'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_LEFT + node.row * COL_WIDTH
+    : GRAPH_PADDING_LEFT + node.lane * LANE_WIDTH;
+}
+
+export function nodeY(node: GraphNode, dir: 'vertical' | 'horizontal' = 'vertical'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_TOP + node.lane * LANE_HEIGHT
+    : GRAPH_PADDING_TOP + node.row * ROW_HEIGHT;
+}
+
 // ─── Utility: hit test (find nearest node to a canvas point) ──────────────
 
 export function hitTestNode(
@@ -274,14 +288,23 @@ export function hitTestNode(
   offsetX: number,
   offsetY: number,
   hitRadius = 10,
+  direction: 'vertical' | 'horizontal' = 'vertical',
 ): GraphNode | null {
-  // Convert canvas coords → graph coords
   const gx = (canvasX - offsetX) / scale;
   const gy = (canvasY - offsetY) / scale;
 
-  // Estimate which rows are near the cursor
-  const approxRow = Math.round((gy - GRAPH_PADDING_TOP) / ROW_HEIGHT);
-  const rowBuffer = Math.ceil(hitRadius / ROW_HEIGHT) + 1;
+  // Estimate row range based on direction
+  let approxRow: number;
+  let spacing: number;
+  if (direction === 'horizontal') {
+    approxRow = Math.round((gx - GRAPH_PADDING_LEFT) / COL_WIDTH);
+    spacing = COL_WIDTH;
+  } else {
+    approxRow = Math.round((gy - GRAPH_PADDING_TOP) / ROW_HEIGHT);
+    spacing = ROW_HEIGHT;
+  }
+
+  const rowBuffer = Math.ceil(hitRadius / spacing) + 1;
 
   let best: GraphNode | null = null;
   let bestDist = hitRadius * hitRadius;
@@ -292,8 +315,10 @@ export function hitTestNode(
   for (let r = minR; r <= maxR; r++) {
     const node = graph.nodes[r];
     if (!node) continue;
-    const dx = gx - node.x;
-    const dy = gy - node.y;
+    const nx = nodeX(node, direction);
+    const ny = nodeY(node, direction);
+    const dx = gx - nx;
+    const dy = gy - ny;
     const d2 = dx * dx + dy * dy;
     if (d2 < bestDist) {
       bestDist = d2;

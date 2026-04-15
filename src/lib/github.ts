@@ -52,7 +52,6 @@ async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: 
           true,
         );
       }
-      // Other 403s: private repo, org SSO required, insufficient token scope, etc.
       const body = await res.text().catch(() => '');
       const hint = body.includes('organization') || body.includes('SSO')
         ? ' Your token may need SSO authorization for this organization.'
@@ -125,6 +124,93 @@ interface GHTag {
   commit: { sha: string };
 }
 
+// ─── PR / Issue types ──────────────────────────────────────────────────────
+
+export interface PRInfo {
+  number: number;
+  title: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  user: { login: string; avatarUrl: string };
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  mergedAt: string | null;
+  additions: number | null;
+  deletions: number | null;
+  changedFiles: number | null;
+  url: string;
+  labels: string[];
+  base: string;
+  head: string;
+  mergeCommitSha: string | null;
+}
+
+export interface IssueInfo {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  user: { login: string; avatarUrl: string };
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  url: string;
+  labels: string[];
+  comments: number;
+  isPR: boolean;
+}
+
+export interface FileNode {
+  path: string;
+  name: string;
+  type: 'blob' | 'tree';
+  sha: string;
+  size?: number;
+  children?: FileNode[];
+}
+
+interface GHPull {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  draft: boolean;
+  user: { login: string; avatar_url: string };
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  merged_at: string | null;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  html_url: string;
+  labels: Array<{ name: string }>;
+  base: { ref: string };
+  head: { ref: string };
+  merge_commit_sha: string | null;
+}
+
+interface GHIssue {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  user: { login: string; avatar_url: string };
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  html_url: string;
+  labels: Array<{ name: string }>;
+  comments: number;
+  pull_request?: { url: string };
+}
+
+interface GHTreeItem {
+  path: string;
+  mode: string;
+  type: 'blob' | 'tree';
+  sha: string;
+  size?: number;
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 
 export async function fetchRepo(
@@ -162,7 +248,6 @@ export async function fetchBranches(owner: string, repo: string, defaultBranch: 
     isRemote: false,
   }));
 
-  // Ensure default branch is first
   branches.sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
@@ -220,10 +305,6 @@ function ghCommitToCommit(c: GHCommit): Commit {
   };
 }
 
-/**
- * Fetches commits for a branch, stopping early if we encounter a sha
- * we've already collected (avoids re-walking shared history).
- */
 export async function fetchCommitsForBranch(
   owner: string,
   repo: string,
@@ -260,10 +341,6 @@ export async function fetchCommitsForBranch(
   return commits;
 }
 
-/**
- * Fetches all data needed to build the graph.
- * Calls progressCb with phase name and 0-100 progress.
- */
 export async function fetchFullRepository(
   owner: string,
   repo: string,
@@ -284,7 +361,6 @@ export async function fetchFullRepository(
   progressCb('Fetching tags…', 25);
   const tags = await fetchTags(owner, repo);
 
-  // ─── Fetch commits ────────────────────────────────────────────────────
   const allCommits: Commit[] = [];
   const knownShas = new Set<string>();
 
@@ -312,4 +388,139 @@ export async function fetchFullRepository(
   progressCb('Sorting commits…', 88);
 
   return { repoInfo, branches, tags, commits: allCommits, rateLimit };
+}
+
+// ─── PRs ──────────────────────────────────────────────────────────────────
+
+export async function fetchPRs(
+  owner: string,
+  repo: string,
+  page = 1,
+): Promise<{ prs: PRInfo[]; hasMore: boolean }> {
+  const path = `/repos/${owner}/${repo}/pulls?state=all&per_page=50&sort=updated&direction=desc&page=${page}`;
+  const { data } = await apiFetch<GHPull[]>(path, { cache: true, cacheTtl: 60_000 });
+
+  const prs: PRInfo[] = data.map((p): PRInfo => ({
+    number: p.number,
+    title: p.title,
+    state: p.merged_at ? 'merged' : p.state as 'open' | 'closed',
+    draft: p.draft,
+    user: { login: p.user.login, avatarUrl: p.user.avatar_url },
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+    closedAt: p.closed_at,
+    mergedAt: p.merged_at,
+    additions: p.additions ?? null,
+    deletions: p.deletions ?? null,
+    changedFiles: p.changed_files ?? null,
+    url: p.html_url,
+    labels: p.labels.map(l => l.name),
+    base: p.base.ref,
+    head: p.head.ref,
+    mergeCommitSha: p.merge_commit_sha,
+  }));
+
+  return { prs, hasMore: data.length === 50 };
+}
+
+// ─── Issues ───────────────────────────────────────────────────────────────
+
+export async function fetchIssues(
+  owner: string,
+  repo: string,
+  page = 1,
+): Promise<{ issues: IssueInfo[]; hasMore: boolean }> {
+  const path = `/repos/${owner}/${repo}/issues?state=all&per_page=50&sort=updated&direction=desc&page=${page}`;
+  const { data } = await apiFetch<GHIssue[]>(path, { cache: true, cacheTtl: 60_000 });
+
+  const issues: IssueInfo[] = data
+    .map((i): IssueInfo => ({
+      number: i.number,
+      title: i.title,
+      state: i.state as 'open' | 'closed',
+      user: { login: i.user.login, avatarUrl: i.user.avatar_url },
+      createdAt: i.created_at,
+      updatedAt: i.updated_at,
+      closedAt: i.closed_at,
+      url: i.html_url,
+      labels: i.labels.map(l => l.name),
+      comments: i.comments,
+      isPR: !i.pull_request,
+    }));
+
+  return { issues, hasMore: data.length === 50 };
+}
+
+// ─── File tree ────────────────────────────────────────────────────────────
+
+export async function fetchFileTree(
+  owner: string,
+  repo: string,
+  treeSha: string,
+): Promise<FileNode[]> {
+  const path = `/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
+  const { data } = await apiFetch<{ tree: GHTreeItem[]; truncated: boolean }>(path, {
+    cache: true,
+    cacheTtl: 5 * 60_000,
+  });
+
+  return buildFileTree(data.tree);
+}
+
+function buildFileTree(items: GHTreeItem[]): FileNode[] {
+  const root: FileNode[] = [];
+  const nodeMap = new Map<string, FileNode>();
+
+  const sorted = [...items].sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'tree' ? -1 : 1;
+    return a.path.localeCompare(b.path);
+  });
+
+  for (const item of sorted) {
+    const node: FileNode = {
+      path: item.path,
+      name: item.path.split('/').pop() ?? item.path,
+      type: item.type,
+      sha: item.sha,
+      size: item.size,
+      children: item.type === 'tree' ? [] : undefined,
+    };
+
+    nodeMap.set(item.path, node);
+
+    const parts = item.path.split('/');
+    if (parts.length === 1) {
+      root.push(node);
+    } else {
+      const parentPath = parts.slice(0, -1).join('/');
+      const parent = nodeMap.get(parentPath);
+      if (parent?.children) {
+        parent.children.push(node);
+      } else {
+        root.push(node);
+      }
+    }
+  }
+
+  return root;
+}
+
+// ─── README ───────────────────────────────────────────────────────────────
+
+export async function fetchREADME(
+  owner: string,
+  repo: string,
+): Promise<string> {
+  const url = `${API_BASE}/repos/${owner}/${repo}/readme`;
+  const headers: HeadersInit = {
+    Accept: 'application/vnd.github.html',
+  };
+  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    if (res.status === 404) return '';
+    throw new GitHubError(`Failed to fetch README (${res.status})`, res.status);
+  }
+  return res.text();
 }

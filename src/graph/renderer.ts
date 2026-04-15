@@ -4,11 +4,13 @@
 // Viewport culling ensures only visible rows are processed each frame.
 // requestAnimationFrame is used by the caller; this file only draws.
 
-import type { GraphData, GraphEdge, Tag, Branch } from '../types';
+import type { GraphData, GraphEdge, GraphNode, Tag, Branch } from '../types';
 import {
   GRAPH_PADDING_LEFT,
   GRAPH_PADDING_TOP,
   LANE_WIDTH,
+  LANE_HEIGHT,
+  COL_WIDTH,
   MERGE_NODE_RADIUS,
   NODE_RADIUS,
   ROW_HEIGHT,
@@ -26,18 +28,52 @@ export interface RenderOptions {
   showMessages: boolean;
   /** Pass 'light' to switch canvas colors for the light theme */
   theme?: 'dark' | 'light';
+  /** Layout direction; default 'vertical' */
+  direction?: 'vertical' | 'horizontal';
+}
+
+// ─── Direction-aware coordinate helpers ───────────────────────────────────
+
+export function nodeCanvasX(node: GraphNode, dir: 'vertical' | 'horizontal'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_LEFT + node.row * COL_WIDTH
+    : GRAPH_PADDING_LEFT + node.lane * LANE_WIDTH;
+}
+
+export function nodeCanvasY(node: GraphNode, dir: 'vertical' | 'horizontal'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_TOP + node.lane * LANE_HEIGHT
+    : GRAPH_PADDING_TOP + node.row * ROW_HEIGHT;
+}
+
+function edgeX1(edge: GraphEdge, dir: 'vertical' | 'horizontal'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_LEFT + edge.fromRow * COL_WIDTH
+    : GRAPH_PADDING_LEFT + edge.fromLane * LANE_WIDTH;
+}
+function edgeY1(edge: GraphEdge, dir: 'vertical' | 'horizontal'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_TOP + edge.fromLane * LANE_HEIGHT
+    : GRAPH_PADDING_TOP + edge.fromRow * ROW_HEIGHT;
+}
+function edgeX2(edge: GraphEdge, dir: 'vertical' | 'horizontal'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_LEFT + edge.toRow * COL_WIDTH
+    : GRAPH_PADDING_LEFT + edge.toLane * LANE_WIDTH;
+}
+function edgeY2(edge: GraphEdge, dir: 'vertical' | 'horizontal'): number {
+  return dir === 'horizontal'
+    ? GRAPH_PADDING_TOP + edge.toLane * LANE_HEIGHT
+    : GRAPH_PADDING_TOP + edge.toRow * ROW_HEIGHT;
 }
 
 // ─── Text truncation cache ─────────────────────────────────────────────────
-// Avoids repeated ctx.measureText calls per frame.
-// Capped at 4096 entries (LRU-lite: clear oldest half when full).
 const TEXT_CACHE_MAX = 4096;
 const textCache = new Map<string, string>();
 function truncate(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   const key = `${text}::${maxWidth}`;
   if (textCache.has(key)) return textCache.get(key)!;
   if (textCache.size >= TEXT_CACHE_MAX) {
-    // Evict first half — Map preserves insertion order
     const keys = Array.from(textCache.keys());
     for (let i = 0; i < TEXT_CACHE_MAX >> 1; i++) textCache.delete(keys[i]);
   }
@@ -58,18 +94,16 @@ function truncate(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return result;
 }
 
-// ─── Main render function ─────────────────────────────────────────────────
-
 // ─── Theme-aware color palette ────────────────────────────────────────────
 interface ThemeColors {
-  bg:         string;
-  text:       string;
-  textMuted:  string;
-  rail:       string;
-  railAlpha:  number;
-  tagBg:      string;
-  tagText:    string;
-  branchBg:   string;
+  bg: string;
+  text: string;
+  textMuted: string;
+  rail: string;
+  railAlpha: number;
+  tagBg: string;
+  tagText: string;
+  branchBg: string;
   branchText: string;
   selectedRing: string;
 }
@@ -77,31 +111,33 @@ interface ThemeColors {
 function getThemeColors(theme: 'dark' | 'light'): ThemeColors {
   if (theme === 'light') {
     return {
-      bg:           '#f6f7fb',
-      text:         '#1e293b',
-      textMuted:    '#64748b',
-      rail:         '#000000',
-      railAlpha:    0.06,
-      tagBg:        '#fef3c7',
-      tagText:      '#92400e',
-      branchBg:     '#ede9fe',
-      branchText:   '#5b21b6',
+      bg: '#f6f7fb',
+      text: '#1e293b',
+      textMuted: '#64748b',
+      rail: '#000000',
+      railAlpha: 0.06,
+      tagBg: '#fef3c7',
+      tagText: '#92400e',
+      branchBg: '#ede9fe',
+      branchText: '#5b21b6',
       selectedRing: '#6366f1',
     };
   }
   return {
-    bg:           '#080b11',
-    text:         '#e2e8f0',
-    textMuted:    '#64748b',
-    rail:         '#ffffff',
-    railAlpha:    0.05,
-    tagBg:        '#422006',
-    tagText:      '#fcd34d',
-    branchBg:     '#1e1b4b',
-    branchText:   '#a5b4fc',
+    bg: '#080b11',
+    text: '#e2e8f0',
+    textMuted: '#64748b',
+    rail: '#ffffff',
+    railAlpha: 0.05,
+    tagBg: '#422006',
+    tagText: '#fcd34d',
+    branchBg: '#1e1b4b',
+    branchText: '#a5b4fc',
     selectedRing: '#6366f1',
   };
 }
+
+// ─── Main render function ─────────────────────────────────────────────────
 
 export function renderGraph(
   ctx: CanvasRenderingContext2D,
@@ -110,12 +146,10 @@ export function renderGraph(
 ): void {
   const { width, height, scale, offsetX, offsetY, selectedSha, hoveredSha, highlightedShas } = opts;
   const theme = opts.theme ?? 'dark';
+  const dir = opts.direction ?? 'vertical';
   const colors = getThemeColors(theme);
 
-  // ── Clear
   ctx.clearRect(0, 0, width, height);
-
-  // ── Background (theme-aware)
   ctx.fillStyle = colors.bg;
   ctx.fillRect(0, 0, width, height);
 
@@ -123,24 +157,27 @@ export function renderGraph(
   ctx.translate(offsetX, offsetY);
   ctx.scale(scale, scale);
 
-  // ── Viewport bounds in graph-space (for culling)
-  const graphTop = -offsetY / scale;
-  const graphBottom = (height - offsetY) / scale;
-  const minRow = Math.max(0, Math.floor((graphTop - GRAPH_PADDING_TOP) / ROW_HEIGHT) - 1);
-  const maxRow = Math.min(graph.rowCount - 1, Math.ceil((graphBottom - GRAPH_PADDING_TOP) / ROW_HEIGHT) + 1);
+  // ── Viewport culling in graph-space
+  let minRow: number, maxRow: number;
+  if (dir === 'vertical') {
+    const graphTop = -offsetY / scale;
+    const graphBottom = (height - offsetY) / scale;
+    minRow = Math.max(0, Math.floor((graphTop - GRAPH_PADDING_TOP) / ROW_HEIGHT) - 1);
+    maxRow = Math.min(graph.rowCount - 1, Math.ceil((graphBottom - GRAPH_PADDING_TOP) / ROW_HEIGHT) + 1);
+  } else {
+    // horizontal: cull by x (column = row)
+    const graphLeft = -offsetX / scale;
+    const graphRight = (width - offsetX) / scale;
+    minRow = Math.max(0, Math.floor((graphLeft - GRAPH_PADDING_LEFT) / COL_WIDTH) - 1);
+    maxRow = Math.min(graph.rowCount - 1, Math.ceil((graphRight - GRAPH_PADDING_LEFT) / COL_WIDTH) + 1);
+  }
 
-  // ── Lane rails (faint vertical lines behind everything)
-  drawLaneRails(ctx, graph, minRow, maxRow, colors);
+  drawLaneRails(ctx, graph, minRow, maxRow, colors, dir);
+  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir);
+  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir);
 
-  // ── Edges
-  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas);
-
-  // ── Nodes
-  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors);
-
-  // ── Labels (branch / tag / commit message)
   if (scale > 0.35) {
-    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors);
+    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors, dir);
   }
 
   ctx.restore();
@@ -154,23 +191,37 @@ function drawLaneRails(
   minRow: number,
   maxRow: number,
   colors: ThemeColors,
+  dir: 'vertical' | 'horizontal',
 ): void {
   if (graph.laneCount === 0) return;
-  const yTop = GRAPH_PADDING_TOP + minRow * ROW_HEIGHT;
-  const yBottom = GRAPH_PADDING_TOP + maxRow * ROW_HEIGHT;
 
   ctx.save();
   ctx.globalAlpha = colors.railAlpha;
   ctx.strokeStyle = colors.rail;
   ctx.lineWidth = 1;
 
-  for (let lane = 0; lane < graph.laneCount; lane++) {
-    const x = GRAPH_PADDING_LEFT + lane * LANE_WIDTH;
-    ctx.beginPath();
-    ctx.moveTo(x, yTop);
-    ctx.lineTo(x, yBottom);
-    ctx.stroke();
+  if (dir === 'vertical') {
+    const yTop = GRAPH_PADDING_TOP + minRow * ROW_HEIGHT;
+    const yBottom = GRAPH_PADDING_TOP + maxRow * ROW_HEIGHT;
+    for (let lane = 0; lane < graph.laneCount; lane++) {
+      const x = GRAPH_PADDING_LEFT + lane * LANE_WIDTH;
+      ctx.beginPath();
+      ctx.moveTo(x, yTop);
+      ctx.lineTo(x, yBottom);
+      ctx.stroke();
+    }
+  } else {
+    const xLeft = GRAPH_PADDING_LEFT + minRow * COL_WIDTH;
+    const xRight = GRAPH_PADDING_LEFT + maxRow * COL_WIDTH;
+    for (let lane = 0; lane < graph.laneCount; lane++) {
+      const y = GRAPH_PADDING_TOP + lane * LANE_HEIGHT;
+      ctx.beginPath();
+      ctx.moveTo(xLeft, y);
+      ctx.lineTo(xRight, y);
+      ctx.stroke();
+    }
   }
+
   ctx.restore();
 }
 
@@ -187,6 +238,7 @@ function drawEdges(
   maxRow: number,
   selectedSha: string | null,
   highlightedShas: Set<string> | null,
+  dir: 'vertical' | 'horizontal',
 ): void {
   ctx.save();
   ctx.lineCap = 'round';
@@ -207,30 +259,39 @@ function drawEdges(
     ctx.strokeStyle = edge.color;
     ctx.lineWidth = isSelected ? 2.5 : 1.5;
 
-    drawEdgePath(ctx, edge);
+    drawEdgePath(ctx, edge, dir);
     ctx.stroke();
   }
 
   ctx.restore();
 }
 
-function drawEdgePath(ctx: CanvasRenderingContext2D, edge: GraphEdge): void {
-  const x1 = GRAPH_PADDING_LEFT + edge.fromLane * LANE_WIDTH;
-  const y1 = GRAPH_PADDING_TOP + edge.fromRow * ROW_HEIGHT;
-  const x2 = GRAPH_PADDING_LEFT + edge.toLane * LANE_WIDTH;
-  const y2 = GRAPH_PADDING_TOP + edge.toRow * ROW_HEIGHT;
+function drawEdgePath(ctx: CanvasRenderingContext2D, edge: GraphEdge, dir: 'vertical' | 'horizontal'): void {
+  const x1 = edgeX1(edge, dir);
+  const y1 = edgeY1(edge, dir);
+  const x2 = edgeX2(edge, dir);
+  const y2 = edgeY2(edge, dir);
 
   ctx.beginPath();
   ctx.moveTo(x1, y1);
 
-  if (edge.fromLane === edge.toLane) {
-    // Straight vertical line (same lane)
-    ctx.lineTo(x2, y2);
+  if (dir === 'vertical') {
+    if (edge.fromLane === edge.toLane) {
+      ctx.lineTo(x2, y2);
+    } else {
+      const rowDiff = edge.toRow - edge.fromRow;
+      const midY = y1 + (rowDiff * ROW_HEIGHT * 0.45);
+      ctx.bezierCurveTo(x1, midY, x2, y2 - (rowDiff * ROW_HEIGHT * 0.35), x2, y2);
+    }
   } else {
-    // Bezier curve — exit downward, arrive from above
-    const rowDiff = edge.toRow - edge.fromRow;
-    const midY = y1 + (rowDiff * ROW_HEIGHT * 0.45);
-    ctx.bezierCurveTo(x1, midY, x2, y2 - (rowDiff * ROW_HEIGHT * 0.35), x2, y2);
+    // horizontal: from = newer (right side source), to = older (left side parent)
+    if (edge.fromLane === edge.toLane) {
+      ctx.lineTo(x2, y2);
+    } else {
+      const colDiff = edge.toRow - edge.fromRow;
+      const midX = x1 + (colDiff * COL_WIDTH * 0.45);
+      ctx.bezierCurveTo(midX, y1, x2 - (colDiff * COL_WIDTH * 0.35), y2, x2, y2);
+    }
   }
 }
 
@@ -245,6 +306,7 @@ function drawNodes(
   hoveredSha: string | null,
   highlightedShas: Set<string> | null,
   colors: ThemeColors,
+  dir: 'vertical' | 'horizontal',
 ): void {
   ctx.save();
 
@@ -260,27 +322,27 @@ function drawNodes(
     const radius = node.commit.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS;
     const alpha = isHighlighted ? 1 : 0.2;
 
+    const nx = nodeCanvasX(node, dir);
+    const ny = nodeCanvasY(node, dir);
+
     ctx.globalAlpha = alpha;
 
-    // Glow for selected/hovered
     if ((isSelected || isHovered) && isHighlighted) {
       ctx.save();
       ctx.globalAlpha = isSelected ? 0.35 : 0.2;
       ctx.fillStyle = node.color;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, radius + 5, 0, Math.PI * 2);
+      ctx.arc(nx, ny, radius + 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
       ctx.globalAlpha = 1;
     }
 
-    // Node fill
     ctx.fillStyle = isSelected ? colors.selectedRing : node.color;
     ctx.beginPath();
-    ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+    ctx.arc(nx, ny, radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Node stroke
     if (isSelected || isHovered) {
       ctx.strokeStyle = colors.selectedRing;
       ctx.lineWidth = isSelected ? 2 : 1.5;
@@ -292,14 +354,13 @@ function drawNodes(
       ctx.stroke();
     }
 
-    // Tag/branch indicator dot
     const hasTags = graph.tagMap.has(sha);
     const hasBranches = graph.branchMap.has(sha);
     if ((hasTags || hasBranches) && isHighlighted) {
       ctx.globalAlpha = 1;
       ctx.fillStyle = hasTags ? colors.tagText : '#34d399';
       ctx.beginPath();
-      ctx.arc(node.x + radius, node.y - radius, 2.5, 0, Math.PI * 2);
+      ctx.arc(nx + radius, ny - radius, 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -321,10 +382,8 @@ function drawLabels(
   highlightedShas: Set<string> | null,
   opts: RenderOptions,
   colors: ThemeColors,
+  dir: 'vertical' | 'horizontal',
 ): void {
-  const labelStartX = GRAPH_PADDING_LEFT + graph.laneCount * LANE_WIDTH + 14;
-  const maxLabelWidth = 360;
-
   ctx.save();
   ctx.textBaseline = 'middle';
 
@@ -336,96 +395,107 @@ function drawLabels(
     const isHighlighted = !highlightedShas || highlightedShas.has(sha);
     const isSelected = sha === selectedSha;
 
-    const y = node.y;
+    const nx = nodeCanvasX(node, dir);
+    const ny = nodeCanvasY(node, dir);
 
-    // ── Branch labels
-    const nodeBranches = graph.branchMap.get(sha);
-    if (nodeBranches) {
-      let bx = labelStartX;
-      for (const branch of nodeBranches) {
-        ctx.globalAlpha = isHighlighted ? 0.9 : 0.2;
-        ctx.font = LABEL_FONT;
-        const label = branch.name;
-        const tw = ctx.measureText(label).width;
-        const padding = 5;
-
-        // pill background
-        ctx.fillStyle = colors.branchBg;
-        const rx = bx - padding;
-        const ry = y - 8;
-        const rw = tw + padding * 2;
-        const rh = 16;
-        roundRect(ctx, rx, ry, rw, rh, 3);
-        ctx.fill();
-
-        ctx.fillStyle = colors.branchText;
-        ctx.fillText(label, bx, y);
-        bx += rw + 4;
-      }
-    }
-
-    // ── Tag labels
-    const nodeTags = graph.tagMap.get(sha);
-    if (nodeTags) {
-      let tx = (nodeBranches
-        ? labelStartX + nodeBranches.reduce((s, b) => s + ctx.measureText(b.name).width + 16, 0)
-        : labelStartX);
-      for (const tag of nodeTags) {
-        ctx.globalAlpha = isHighlighted ? 0.9 : 0.2;
-        ctx.font = LABEL_FONT;
-        const label = tag.name;
-        const tw = ctx.measureText(label).width;
-        const padding = 5;
-
-        ctx.fillStyle = colors.tagBg;
-        roundRect(ctx, tx - padding, y - 8, tw + padding * 2, 16, 3);
-        ctx.fill();
-
-        ctx.fillStyle = colors.tagText;
-        ctx.fillText(label, tx, y);
-        tx += tw + padding * 2 + 4;
-      }
-    }
-
-    // ── Commit message (only when scale is large enough)
-    if (opts.showMessages || isSelected) {
-      ctx.globalAlpha = isHighlighted ? (isSelected ? 1 : 0.65) : 0.18;
-      ctx.font = MSG_FONT;
-
-      // Determine x start: after any badges or default offset
-      let msgX = labelStartX;
-      if (nodeBranches || nodeTags) {
-        msgX = labelStartX + estimateBadgeWidth(ctx, nodeBranches ?? [], nodeTags ?? []) + 8;
-      }
-
-      ctx.fillStyle = isSelected ? colors.text : colors.textMuted;
-      const msg = truncate(ctx, node.commit.subject, maxLabelWidth - (msgX - labelStartX));
-      ctx.fillText(msg, msgX, y);
+    if (dir === 'vertical') {
+      // Labels to the right of the node column
+      const labelStartX = GRAPH_PADDING_LEFT + graph.laneCount * LANE_WIDTH + 14;
+      const maxLabelWidth = 360;
+      drawNodeLabelsVertical(ctx, graph, node, sha, nx, ny, labelStartX, maxLabelWidth, isHighlighted, isSelected, opts, colors);
+    } else {
+      // Labels below each node in horizontal mode
+      const labelY = ny + LANE_HEIGHT * 0.5 + 4;
+      drawNodeLabelsHorizontal(ctx, node, sha, nx, labelY, isHighlighted, isSelected, colors);
     }
   }
 
   ctx.restore();
 }
 
-function estimateBadgeWidth(
+function drawNodeLabelsVertical(
   ctx: CanvasRenderingContext2D,
-  branches: Branch[],
-  tags: Tag[],
-): number {
-  let w = 0;
-  ctx.font = LABEL_FONT;
-  for (const b of branches) w += ctx.measureText(b.name).width + 14;
-  for (const t of tags) w += ctx.measureText(t.name).width + 14;
-  return w;
+  graph: GraphData,
+  node: GraphNode,
+  sha: string,
+  _nx: number,
+  ny: number,
+  labelStartX: number,
+  maxLabelWidth: number,
+  isHighlighted: boolean,
+  isSelected: boolean,
+  opts: RenderOptions,
+  colors: ThemeColors,
+): void {
+  const nodeBranches = graph.branchMap.get(sha);
+  const nodeTags = graph.tagMap.get(sha);
+
+  let bx = labelStartX;
+
+  if (nodeBranches) {
+    for (const branch of nodeBranches) {
+      ctx.globalAlpha = isHighlighted ? 0.9 : 0.2;
+      ctx.font = LABEL_FONT;
+      const label = branch.name;
+      const tw = ctx.measureText(label).width;
+      const padding = 5;
+      ctx.fillStyle = colors.branchBg;
+      roundRect(ctx, bx - padding, ny - 8, tw + padding * 2, 16, 3);
+      ctx.fill();
+      ctx.fillStyle = colors.branchText;
+      ctx.fillText(label, bx, ny);
+      bx += tw + padding * 2 + 4;
+    }
+  }
+
+  if (nodeTags) {
+    for (const tag of nodeTags) {
+      ctx.globalAlpha = isHighlighted ? 0.9 : 0.2;
+      ctx.font = LABEL_FONT;
+      const label = tag.name;
+      const tw = ctx.measureText(label).width;
+      const padding = 5;
+      ctx.fillStyle = colors.tagBg;
+      roundRect(ctx, bx - padding, ny - 8, tw + padding * 2, 16, 3);
+      ctx.fill();
+      ctx.fillStyle = colors.tagText;
+      ctx.fillText(label, bx, ny);
+      bx += tw + padding * 2 + 4;
+    }
+  }
+
+  if (opts.showMessages || isSelected) {
+    ctx.globalAlpha = isHighlighted ? (isSelected ? 1 : 0.65) : 0.18;
+    ctx.font = MSG_FONT;
+    ctx.fillStyle = isSelected ? colors.text : colors.textMuted;
+    const msg = truncate(ctx, node.commit.subject, maxLabelWidth - (bx - labelStartX));
+    ctx.fillText(msg, bx, ny);
+  }
 }
+
+function drawNodeLabelsHorizontal(
+  ctx: CanvasRenderingContext2D,
+  node: GraphNode,
+  _sha: string,
+  nx: number,
+  labelY: number,
+  isHighlighted: boolean,
+  isSelected: boolean,
+  colors: ThemeColors,
+): void {
+  ctx.globalAlpha = isHighlighted ? (isSelected ? 0.9 : 0.6) : 0.15;
+  ctx.font = '9px "SF Mono", monospace';
+  ctx.fillStyle = node.color;
+  ctx.textAlign = 'center';
+  ctx.fillText(node.commit.shortSha, nx, labelY);
+  ctx.textAlign = 'left';
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────
 
 function roundRect(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
+  x: number, y: number, w: number, h: number, r: number,
 ): void {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -441,7 +511,6 @@ function roundRect(
 }
 
 // ─── Minimap ──────────────────────────────────────────────────────────────
-// A lightweight overview strip showing where we are in the full graph.
 
 export function renderMinimap(
   ctx: CanvasRenderingContext2D,
@@ -462,7 +531,6 @@ export function renderMinimap(
   const laneW = Math.max(1, Math.floor(minimapW / (graph.laneCount || 1)));
 
   ctx.save();
-  // Draw nodes as tiny dots
   for (const node of graph.nodes) {
     const mx = Math.floor((node.lane / Math.max(graph.laneCount, 1)) * minimapW);
     const my = Math.floor((node.y / totalH) * minimapH);
@@ -471,7 +539,6 @@ export function renderMinimap(
     ctx.fillRect(mx, my, Math.max(laneW, 1), 1);
   }
 
-  // Viewport indicator
   const vTop = Math.floor(-viewportY * scaleY);
   const vH = Math.max(4, Math.floor(viewportH * scaleY));
   ctx.globalAlpha = 0.25;
@@ -485,7 +552,18 @@ export function renderMinimap(
   ctx.restore();
 }
 
-// ─── Total graph height ───────────────────────────────────────────────────
-export function graphHeight(rowCount: number): number {
+// ─── Graph dimensions ─────────────────────────────────────────────────────
+
+export function graphHeight(rowCount: number, direction: 'vertical' | 'horizontal' = 'vertical', laneCount = 1): number {
+  if (direction === 'horizontal') {
+    return GRAPH_PADDING_TOP * 2 + laneCount * LANE_HEIGHT;
+  }
   return GRAPH_PADDING_TOP * 2 + rowCount * ROW_HEIGHT;
+}
+
+export function graphWidth(rowCount: number, direction: 'vertical' | 'horizontal' = 'vertical', laneCount = 1): number {
+  if (direction === 'horizontal') {
+    return GRAPH_PADDING_LEFT * 2 + rowCount * COL_WIDTH;
+  }
+  return GRAPH_PADDING_LEFT * 2 + laneCount * LANE_WIDTH + 400; // +400 for labels
 }
