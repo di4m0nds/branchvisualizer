@@ -262,13 +262,6 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, re
         ))}
       </div>
 
-      {/* Stats (additions/deletions) */}
-      {commit.stats && (
-        <div className="hidden lg:flex items-center gap-1 flex-shrink-0 text-[10px] font-mono tabular-nums">
-          <span className="text-green-500">+{commit.stats.additions.toLocaleString()}</span>
-          <span className="text-red-400">-{commit.stats.deletions.toLocaleString()}</span>
-        </div>
-      )}
 
       {/* Author */}
       <AuthorCell commit={commit} />
@@ -492,7 +485,6 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
         <span className="w-14 flex-shrink-0">SHA</span>
         <span className="flex-1">Message</span>
         <span className="hidden md:block w-32">Branches / Tags</span>
-        <span className="hidden lg:block w-24">Changes</span>
         <span className="hidden sm:block w-20 text-center">Author</span>
         <span className="hidden sm:block w-16 text-right">When</span>
       </div>

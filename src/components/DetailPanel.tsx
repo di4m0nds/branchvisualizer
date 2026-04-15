@@ -1,8 +1,9 @@
 import { useAppContext } from '@/store/AppContext';
 import { AuthorCard } from '@/components/AuthorPopup';
 import { cn, copyToClipboard } from '@/lib/utils';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { CheckIcon, CopyIcon } from 'lucide-react';
+import { fetchCommitDetails, setToken, type CommitDetails, type CommitFile } from '@/lib/github';
 
 // ─── PR number extraction ─────────────────────────────────────────────────────
 
@@ -146,9 +147,96 @@ function PanelHeader({ mode, minimized, onMinimize }: HeaderProps) {
   );
 }
 
+// ─── File status icon ─────────────────────────────────────────────────────────
+
+function FileStatusDot({ status }: { status: CommitFile['status'] }) {
+  const cfg = {
+    added:     { cls: 'bg-green-400',              title: 'Added'    },
+    removed:   { cls: 'bg-red-400',                title: 'Removed'  },
+    modified:  { cls: 'bg-amber-400',              title: 'Modified' },
+    renamed:   { cls: 'bg-blue-400',               title: 'Renamed'  },
+    copied:    { cls: 'bg-sky-400',                title: 'Copied'   },
+    changed:   { cls: 'bg-amber-400',              title: 'Changed'  },
+    unchanged: { cls: 'bg-muted-foreground/30',    title: 'Unchanged'},
+  } as const;
+  const { cls, title } = cfg[status] ?? cfg.modified;
+  return <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cls}`} title={title} />;
+}
+
+// ─── Changed files list ───────────────────────────────────────────────────────
+
+function FilesList({ files, repoUrl, sha }: { files: CommitFile[]; repoUrl: string | null; sha: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? files : files.slice(0, 8);
+  const hidden = files.length - 8;
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      {visible.map(f => {
+        const displayName = f.status === 'renamed' && f.previousFilename
+          ? `${f.previousFilename} → ${f.filename.split('/').pop()}`
+          : f.filename;
+        const fileUrl = repoUrl ? `${repoUrl}/blob/${sha}/${f.filename}` : null;
+
+        return (
+          <div key={f.filename} className="flex items-center gap-1.5 min-w-0 group">
+            <FileStatusDot status={f.status} />
+            {fileUrl ? (
+              <a
+                href={fileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 min-w-0 text-[11px] font-mono text-muted-foreground
+                           truncate hover:text-foreground transition-colors"
+                title={f.filename}
+              >
+                {displayName}
+              </a>
+            ) : (
+              <span className="flex-1 min-w-0 text-[11px] font-mono text-muted-foreground truncate" title={f.filename}>
+                {displayName}
+              </span>
+            )}
+            {(f.additions > 0 || f.deletions > 0) && (
+              <span className="flex-shrink-0 text-[10px] font-mono tabular-nums flex items-center gap-0.5">
+                {f.additions > 0 && <span className="text-green-400">+{f.additions}</span>}
+                {f.deletions > 0 && <span className="text-red-400">-{f.deletions}</span>}
+              </span>
+            )}
+          </div>
+        );
+      })}
+      {!expanded && hidden > 0 && (
+        <button
+          onClick={() => setExpanded(true)}
+          className="self-start text-[10px] text-muted-foreground hover:text-foreground
+                     transition-colors mt-0.5 flex items-center gap-0.5"
+        >
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+            <path d="M2 3.5l3 3 3-3"/>
+          </svg>
+          {hidden} more file{hidden !== 1 ? 's' : ''}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Details loading skeleton ─────────────────────────────────────────────────
+
+function DetailsSkeleton() {
+  return (
+    <div className="flex flex-col gap-1.5 animate-pulse">
+      {[60, 80, 45, 70].map((w, i) => (
+        <div key={i} className="h-2.5 rounded bg-muted/50" style={{ width: `${w}%` }} />
+      ))}
+    </div>
+  );
+}
+
 // ─── Floating panel body (vertical, scrollable) ───────────────────────────────
 
-function FloatingBody() {
+function FloatingBody({ details, detailsLoading }: { details: CommitDetails | null; detailsLoading: boolean }) {
   const { state, dispatch } = useAppContext();
   const { selectedNode, graphData, repoInfo } = state;
 
@@ -184,24 +272,40 @@ function FloatingBody() {
           <AuthorCard author={commit.author} label="Author" />
         </div>
 
-        {/* Stats */}
-        {commit.stats && (
-          <div className="px-4 py-3 flex flex-col gap-1.5">
-            <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Changes</span>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="text-green-400 font-mono font-semibold">+{commit.stats.additions.toLocaleString()}</span>
-              <span className="text-red-400 font-mono font-semibold">−{commit.stats.deletions.toLocaleString()}</span>
-              <span className="text-muted-foreground text-xs">{commit.stats.total.toLocaleString()} files</span>
-            </div>
-            {commit.stats.total > 0 && (
-              <div className="h-1 rounded-full overflow-hidden bg-muted flex mt-0.5">
-                <div className="h-full bg-green-400 rounded-full"
-                  style={{ width: `${(commit.stats.additions / (commit.stats.additions + commit.stats.deletions + 0.001)) * 100}%` }} />
-                <div className="h-full bg-red-400 rounded-full flex-1" />
+        {/* Stats + Files */}
+        <div className="px-4 py-3 flex flex-col gap-2">
+          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Changes</span>
+          {detailsLoading && <DetailsSkeleton />}
+          {!detailsLoading && details?.stats && (
+            <>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-green-400 font-mono font-semibold">+{details.stats.additions.toLocaleString()}</span>
+                <span className="text-red-400 font-mono font-semibold">−{details.stats.deletions.toLocaleString()}</span>
+                <span className="text-muted-foreground text-xs">{details.stats.total.toLocaleString()} line{details.stats.total !== 1 ? 's' : ''}</span>
+                {details.files.length > 0 && (
+                  <span className="text-muted-foreground text-xs">{details.files.length} file{details.files.length !== 1 ? 's' : ''}</span>
+                )}
               </div>
-            )}
-          </div>
-        )}
+              {details.stats.total > 0 && (
+                <div className="h-1 rounded-full overflow-hidden bg-muted flex mt-0.5">
+                  <div className="h-full bg-green-400 rounded-full"
+                    style={{ width: `${(details.stats.additions / (details.stats.additions + details.stats.deletions + 0.001)) * 100}%` }} />
+                  <div className="h-full bg-red-400 rounded-full flex-1" />
+                </div>
+              )}
+              {details.files.length > 0 && (
+                <FilesList
+                  files={details.files}
+                  repoUrl={repoInfo?.url ?? null}
+                  sha={commit.sha}
+                />
+              )}
+            </>
+          )}
+          {!detailsLoading && !details?.stats && (
+            <span className="text-[11px] text-muted-foreground/50">No data available</span>
+          )}
+        </div>
 
         {/* Parents */}
         {parentNodes.length > 0 && (
@@ -253,7 +357,7 @@ function FloatingBody() {
 
 // ─── Inline panel body (compact, structured card) ─────────────────────────────
 
-function InlineBody() {
+function InlineBody({ details, detailsLoading }: { details: CommitDetails | null; detailsLoading: boolean }) {
   const { state, dispatch } = useAppContext();
   const { selectedNode, graphData, repoInfo } = state;
   const [bodyExpanded, setBodyExpanded] = useState(false);
@@ -323,16 +427,37 @@ function InlineBody() {
         <div className="flex items-center gap-3 flex-wrap mt-0.5">
           <AuthorCard author={commit.author} label="" />
           {/* Stats inline */}
-          {commit.stats && (
+          {detailsLoading && (
+            <div className="flex items-center gap-1.5 animate-pulse">
+              <div className="h-3 w-12 rounded bg-muted/50" />
+              <div className="h-3 w-12 rounded bg-muted/50" />
+            </div>
+          )}
+          {!detailsLoading && details?.stats && (
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-mono">
-                <span className="text-green-400 font-semibold">+{commit.stats.additions.toLocaleString()}</span>
-                <span className="text-red-400 font-semibold">−{commit.stats.deletions.toLocaleString()}</span>
+              <div className="flex items-center gap-1 text-xs font-mono">
+                <span
+                  className="inline-flex items-center px-1 py-0.5 rounded-l text-[10px] font-semibold
+                             tabular-nums bg-green-500/10 text-green-400 border border-green-500/25"
+                >
+                  +{details.stats.additions.toLocaleString()}
+                </span>
+                <span
+                  className="inline-flex items-center px-1 py-0.5 rounded-r text-[10px] font-semibold
+                             tabular-nums bg-red-500/10 text-red-400 border border-red-500/25 border-l-0"
+                >
+                  -{details.stats.deletions.toLocaleString()}
+                </span>
               </div>
-              {commit.stats.total > 0 && (
-                <div className="h-1 w-16 rounded-full overflow-hidden bg-muted flex">
+              {details.files.length > 0 && (
+                <span className="text-[10px] text-muted-foreground">
+                  {details.files.length} file{details.files.length !== 1 ? 's' : ''}
+                </span>
+              )}
+              {details.stats.total > 0 && (
+                <div className="h-1 w-14 rounded-full overflow-hidden bg-muted flex flex-shrink-0">
                   <div className="h-full bg-green-400"
-                    style={{ width: `${(commit.stats.additions / (commit.stats.additions + commit.stats.deletions + 0.001)) * 100}%` }} />
+                    style={{ width: `${(details.stats.additions / (details.stats.additions + details.stats.deletions + 0.001)) * 100}%` }} />
                   <div className="h-full bg-red-400 flex-1" />
                 </div>
               )}
@@ -341,8 +466,26 @@ function InlineBody() {
         </div>
       </div>
 
-      {/* Right column: parents + github link */}
+      {/* Right column: files + parents + github link */}
       <div className="flex flex-col gap-2 flex-shrink-0 md:border-l md:border-border md:pl-4 md:min-w-[180px]">
+        {/* Changed files — compact */}
+        {!detailsLoading && details && details.files.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Files ({details.files.length})
+            </span>
+            <FilesList files={details.files} repoUrl={repoInfo?.url ?? null} sha={commit.sha} />
+          </div>
+        )}
+        {detailsLoading && (
+          <div className="flex flex-col gap-1 animate-pulse">
+            <div className="h-2 w-16 rounded bg-muted/50" />
+            {[55, 80, 65, 40].map((w, i) => (
+              <div key={i} className="h-2.5 rounded bg-muted/40" style={{ width: `${w}%` }} />
+            ))}
+          </div>
+        )}
+
         {parentNodes.length > 0 && (
           <div className="flex flex-col gap-1">
             <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
@@ -394,8 +537,37 @@ interface DetailPanelProps {
 
 export default function DetailPanel({ mode = 'floating' }: DetailPanelProps) {
   const { state } = useAppContext();
-  const { selectedNode, graphData } = state;
+  const { selectedNode, graphData, repoInfo, token } = state;
   const [minimized, setMinimized] = useState(false);
+  const [commitDetails, setCommitDetails] = useState<CommitDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  // Track which sha was last fetched to avoid re-fetching on unrelated re-renders
+  const fetchedShaRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedNode || !repoInfo) {
+      setCommitDetails(null);
+      fetchedShaRef.current = null;
+      return;
+    }
+    const sha = selectedNode.commit.sha;
+    if (fetchedShaRef.current === sha) return; // already fetched
+
+    fetchedShaRef.current = sha;
+    setCommitDetails(null);
+    setDetailsLoading(true);
+    setToken(token);
+
+    fetchCommitDetails(repoInfo.owner, repoInfo.repo, sha)
+      .then(d => {
+        // Only apply if the selected commit hasn't changed since we fired this request
+        if (fetchedShaRef.current === sha) setCommitDetails(d);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (fetchedShaRef.current === sha) setDetailsLoading(false);
+      });
+  }, [selectedNode?.commit.sha, repoInfo, token]);
 
   if (!selectedNode || !graphData) return null;
 
@@ -403,7 +575,7 @@ export default function DetailPanel({ mode = 'floating' }: DetailPanelProps) {
     return (
       <div className="w-full bg-card/40 border-b border-border/70">
         <PanelHeader mode="inline" minimized={false} onMinimize={() => {}} />
-        <InlineBody />
+        <InlineBody details={commitDetails} detailsLoading={detailsLoading} />
       </div>
     );
   }
@@ -415,7 +587,7 @@ export default function DetailPanel({ mode = 'floating' }: DetailPanelProps) {
                       flex flex-col sm:rounded-xl rounded-t-xl border border-border bg-card/95 backdrop-blur-sm
                       shadow-2xl overflow-hidden">
       <PanelHeader mode="floating" minimized={minimized} onMinimize={() => setMinimized(v => !v)} />
-      {!minimized && <FloatingBody />}
+      {!minimized && <FloatingBody details={commitDetails} detailsLoading={detailsLoading} />}
     </aside>
   );
 }

@@ -1,10 +1,12 @@
 import { useAppContext } from '@/store/AppContext';
+import { useState, useRef, useCallback } from 'react';
 import GraphCanvas from '@/components/GraphCanvas';
 import CommitListView from '@/components/CommitListView';
 import DetailPanel from '@/components/DetailPanel';
 import FilesTab from './FilesTab';
 import ReadmeTab from './ReadmeTab';
 import PRsIssuesTab from './PRsIssuesTab';
+import ReleasesDeploymentsTab from './ReleasesDeploymentsTab';
 import { cn } from '@/lib/utils';
 import type { TabId, SplitLayout } from '@/types';
 
@@ -76,6 +78,16 @@ const TABS: TabDef[] = [
       </svg>
     ),
   },
+  {
+    id: 'releases',
+    label: 'Releases',
+    shortLabel: 'Releases',
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 0 1 0 2.474l-5.026 5.026a1.75 1.75 0 0 1-2.474 0l-6.25-6.25A1.752 1.752 0 0 1 1 7.775Zm1.5 0c0 .066.026.13.073.177l6.25 6.25a.25.25 0 0 0 .354 0l5.025-5.025a.25.25 0 0 0 0-.354l-6.25-6.25a.25.25 0 0 0-.177-.073H2.75a.25.25 0 0 0-.25.25ZM6 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/>
+      </svg>
+    ),
+  },
 ];
 
 // ─── Split layout icons ────────────────────────────────────────────────────
@@ -120,6 +132,71 @@ function IconGrid4() {
       <rect x="1" y="7" width="4" height="4" rx="0.7"/>
       <rect x="7" y="7" width="4" height="4" rx="0.7"/>
     </svg>
+  );
+}
+
+// ─── Resize handle ────────────────────────────────────────────────────────
+
+interface ResizeHandleProps {
+  direction: 'h' | 'v'; // h = left|right drag, v = top|bottom drag
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  size: number; // current first-pane percentage
+  onSizeChange: (newSize: number) => void;
+}
+
+function ResizeHandle({ direction, containerRef, size, onSizeChange }: ResizeHandleProps) {
+  const isDragging = useRef(false);
+  const startPosRef = useRef(0);
+  const startSizeRef = useRef(size);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    startPosRef.current = direction === 'h' ? e.clientX : e.clientY;
+    startSizeRef.current = size;
+
+    const onMouseMove = (me: MouseEvent) => {
+      if (!isDragging.current) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const containerSize = direction === 'h' ? container.offsetWidth : container.offsetHeight;
+      const delta = (direction === 'h' ? me.clientX : me.clientY) - startPosRef.current;
+      const newSize = Math.min(80, Math.max(20, startSizeRef.current + (delta / containerSize) * 100));
+      onSizeChange(newSize);
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [direction, containerRef, size, onSizeChange]);
+
+  return (
+    <div
+      onMouseDown={handleMouseDown}
+      className={cn(
+        'flex-shrink-0 group relative flex items-center justify-center',
+        'bg-border/50 hover:bg-primary/40 active:bg-primary/60 transition-colors z-10',
+        direction === 'h'
+          ? 'w-1 cursor-col-resize hover:w-1.5 active:w-1.5'
+          : 'h-1 cursor-row-resize hover:h-1.5 active:h-1.5',
+      )}
+      title="Drag to resize"
+    >
+      {/* Grab dots */}
+      <div className={cn(
+        'flex gap-0.5 opacity-0 group-hover:opacity-60 transition-opacity',
+        direction === 'h' ? 'flex-col' : 'flex-row',
+      )}>
+        {[0, 1, 2].map(i => (
+          <div key={i} className="w-1 h-1 rounded-full bg-foreground" />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -248,9 +325,10 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
       <div className={cn('absolute inset-0 flex flex-col', activeTab !== 'list' && 'invisible pointer-events-none')}>
         <CommitListView isActive={activeTab === 'list'} />
       </div>
-      {activeTab === 'files'  && <div className="absolute inset-0 flex flex-col"><FilesTab /></div>}
-      {activeTab === 'readme' && <div className="absolute inset-0 flex flex-col"><ReadmeTab /></div>}
-      {activeTab === 'prs'    && <div className="absolute inset-0 flex flex-col"><PRsIssuesTab /></div>}
+      {activeTab === 'files'    && <div className="absolute inset-0 flex flex-col"><FilesTab /></div>}
+      {activeTab === 'readme'   && <div className="absolute inset-0 flex flex-col"><ReadmeTab /></div>}
+      {activeTab === 'prs'      && <div className="absolute inset-0 flex flex-col"><PRsIssuesTab /></div>}
+      {activeTab === 'releases' && <div className="absolute inset-0 flex flex-col"><ReleasesDeploymentsTab /></div>}
     </div>
   );
 }
@@ -260,15 +338,17 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
 function SplitPane({
   paneIndex,
   className,
+  style,
 }: {
   paneIndex: 0 | 1 | 2 | 3;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   const { state, dispatch } = useAppContext();
   const activeTab = state.paneTab[paneIndex];
 
   return (
-    <div className={cn('flex flex-col min-h-0 overflow-hidden', className)}>
+    <div className={cn('flex flex-col min-h-0 overflow-hidden', className)} style={style}>
       <PaneTabBar
         activeTab={activeTab}
         onTabChange={tab => dispatch({ type: 'SET_PANE_TAB', pane: paneIndex, tab })}
@@ -284,6 +364,16 @@ function SplitPane({
 export default function TabWorkspace() {
   const { state, dispatch } = useAppContext();
   const { activeTab, splitLayout, selectedNode, graphData } = state;
+
+  // Resize state for split layouts (percentages of the first pane)
+  const [splitH, setSplitH] = useState(50);   // 2h: left pane %
+  const [splitV, setSplitV] = useState(50);   // 2v: top pane %
+  const [gridCol, setGridCol] = useState(50); // 4g: left column %
+  const [gridRow, setGridRow] = useState(50); // 4g: top row %
+
+  const containerRef2h   = useRef<HTMLDivElement>(null);
+  const containerRef2v   = useRef<HTMLDivElement>(null);
+  const containerRef4g   = useRef<HTMLDivElement>(null);
 
   // Determine if any visible pane is showing the commit list.
   // If so, the inline panel in CommitListView handles the detail.
@@ -319,25 +409,65 @@ export default function TabWorkspace() {
         )}
 
         {splitLayout === '2h' && (
-          <>
-            <SplitPane paneIndex={0} className="flex-1 min-w-0 border-r border-border" />
+          <div ref={containerRef2h} className="flex flex-1 min-h-0 overflow-hidden">
+            <SplitPane paneIndex={0} style={{ width: `${splitH}%` }} className="min-w-0 flex-shrink-0" />
+            <ResizeHandle
+              direction="h"
+              containerRef={containerRef2h}
+              size={splitH}
+              onSizeChange={setSplitH}
+            />
             <SplitPane paneIndex={1} className="flex-1 min-w-0" />
-          </>
+          </div>
         )}
 
         {splitLayout === '2v' && (
-          <div className="flex flex-col flex-1 min-h-0">
-            <SplitPane paneIndex={0} className="flex-1 min-h-0 border-b border-border" />
+          <div ref={containerRef2v} className="flex flex-col flex-1 min-h-0">
+            <SplitPane paneIndex={0} style={{ height: `${splitV}%` }} className="min-h-0 flex-shrink-0" />
+            <ResizeHandle
+              direction="v"
+              containerRef={containerRef2v}
+              size={splitV}
+              onSizeChange={setSplitV}
+            />
             <SplitPane paneIndex={1} className="flex-1 min-h-0" />
           </div>
         )}
 
         {splitLayout === '4g' && (
-          <div className="grid grid-cols-2 grid-rows-2 flex-1 min-h-0 overflow-hidden" style={{ height: '100%' }}>
-            <SplitPane paneIndex={0} className="border-r border-b border-border min-h-0" />
-            <SplitPane paneIndex={1} className="border-b border-border min-h-0" />
-            <SplitPane paneIndex={2} className="border-r border-border min-h-0" />
-            <SplitPane paneIndex={3} className="min-h-0" />
+          <div
+            ref={containerRef4g}
+            className="flex flex-col flex-1 min-h-0 overflow-hidden"
+          >
+            {/* Top row */}
+            <div className="flex min-h-0 flex-shrink-0" style={{ height: `${gridRow}%` }}>
+              <SplitPane paneIndex={0} style={{ width: `${gridCol}%` }} className="min-w-0 min-h-0 flex-shrink-0" />
+              <ResizeHandle
+                direction="h"
+                containerRef={containerRef4g}
+                size={gridCol}
+                onSizeChange={setGridCol}
+              />
+              <SplitPane paneIndex={1} className="flex-1 min-w-0 min-h-0" />
+            </div>
+            {/* Horizontal divider */}
+            <ResizeHandle
+              direction="v"
+              containerRef={containerRef4g}
+              size={gridRow}
+              onSizeChange={setGridRow}
+            />
+            {/* Bottom row */}
+            <div className="flex flex-1 min-h-0">
+              <SplitPane paneIndex={2} style={{ width: `${gridCol}%` }} className="min-w-0 min-h-0 flex-shrink-0" />
+              <ResizeHandle
+                direction="h"
+                containerRef={containerRef4g}
+                size={gridCol}
+                onSizeChange={setGridCol}
+              />
+              <SplitPane paneIndex={3} className="flex-1 min-w-0 min-h-0" />
+            </div>
           </div>
         )}
 

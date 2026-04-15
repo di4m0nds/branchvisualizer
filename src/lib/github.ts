@@ -507,6 +507,206 @@ function buildFileTree(items: GHTreeItem[]): FileNode[] {
   return root;
 }
 
+// ─── Single commit details (stats + files) ────────────────────────────────
+
+export interface CommitFile {
+  filename: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+  additions: number;
+  deletions: number;
+  changes: number;
+  previousFilename?: string;
+}
+
+export interface CommitDetails {
+  stats: { additions: number; deletions: number; total: number } | null;
+  files: CommitFile[];
+}
+
+interface GHCommitFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  previous_filename?: string;
+}
+
+interface GHCommitFull extends GHCommit {
+  files?: GHCommitFile[];
+}
+
+export async function fetchCommitDetails(
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<CommitDetails> {
+  const path = `/repos/${owner}/${repo}/commits/${sha}`;
+  const { data } = await apiFetch<GHCommitFull>(path, { cache: true, cacheTtl: 30 * 60_000 });
+
+  const files: CommitFile[] = (data.files ?? []).map((f): CommitFile => ({
+    filename: f.filename,
+    status: f.status as CommitFile['status'],
+    additions: f.additions,
+    deletions: f.deletions,
+    changes: f.changes,
+    previousFilename: f.previous_filename,
+  }));
+
+  return {
+    stats: data.stats ?? null,
+    files,
+  };
+}
+
+// ─── Releases & Deployments ───────────────────────────────────────────────
+
+export interface ReleaseInfo {
+  id: number;
+  tagName: string;
+  name: string | null;
+  body: string | null;
+  draft: boolean;
+  prerelease: boolean;
+  createdAt: string;
+  publishedAt: string | null;
+  url: string;
+  author: { login: string; avatarUrl: string };
+  assets: number;
+  tarballUrl: string | null;
+  zipballUrl: string | null;
+}
+
+export interface DeploymentInfo {
+  id: number;
+  ref: string;
+  sha: string;
+  environment: string;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+  creator: { login: string; avatarUrl: string } | null;
+  statuses?: DeploymentStatus[];
+}
+
+export interface DeploymentStatus {
+  state: 'error' | 'failure' | 'inactive' | 'pending' | 'success' | 'queued' | 'in_progress';
+  description: string | null;
+  environmentUrl: string | null;
+  logUrl: string | null;
+  createdAt: string;
+}
+
+interface GHRelease {
+  id: number;
+  tag_name: string;
+  name: string | null;
+  body: string | null;
+  draft: boolean;
+  prerelease: boolean;
+  created_at: string;
+  published_at: string | null;
+  html_url: string;
+  author: { login: string; avatar_url: string };
+  assets: unknown[];
+  tarball_url: string | null;
+  zipball_url: string | null;
+}
+
+interface GHDeployment {
+  id: number;
+  ref: string;
+  sha: string;
+  environment: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  repository_url: string;
+  creator: { login: string; avatar_url: string } | null;
+  statuses_url: string;
+}
+
+interface GHDeploymentStatus {
+  state: 'error' | 'failure' | 'inactive' | 'pending' | 'success' | 'queued' | 'in_progress';
+  description: string | null;
+  environment_url: string | null;
+  log_url: string | null;
+  created_at: string;
+}
+
+export async function fetchReleases(
+  owner: string,
+  repo: string,
+): Promise<{ releases: ReleaseInfo[] }> {
+  const path = `/repos/${owner}/${repo}/releases?per_page=30`;
+  const { data } = await apiFetch<GHRelease[]>(path, { cache: true, cacheTtl: 60_000 });
+
+  const releases: ReleaseInfo[] = data.map((r): ReleaseInfo => ({
+    id: r.id,
+    tagName: r.tag_name,
+    name: r.name,
+    body: r.body,
+    draft: r.draft,
+    prerelease: r.prerelease,
+    createdAt: r.created_at,
+    publishedAt: r.published_at,
+    url: r.html_url,
+    author: { login: r.author.login, avatarUrl: r.author.avatar_url },
+    assets: r.assets.length,
+    tarballUrl: r.tarball_url,
+    zipballUrl: r.zipball_url,
+  }));
+
+  return { releases };
+}
+
+export async function fetchDeployments(
+  owner: string,
+  repo: string,
+): Promise<{ deployments: DeploymentInfo[] }> {
+  const path = `/repos/${owner}/${repo}/deployments?per_page=50`;
+  const { data } = await apiFetch<GHDeployment[]>(path, { cache: true, cacheTtl: 60_000 });
+
+  // Fetch latest status for each deployment (limit to first 20 to avoid rate limit)
+  const deploymentsWithStatuses = await Promise.all(
+    data.slice(0, 20).map(async (d): Promise<DeploymentInfo> => {
+      let statuses: DeploymentStatus[] | undefined;
+      try {
+        const statusPath = `/repos/${owner}/${repo}/deployments/${d.id}/statuses?per_page=5`;
+        const { data: statusData } = await apiFetch<GHDeploymentStatus[]>(statusPath, {
+          cache: true,
+          cacheTtl: 30_000,
+        });
+        statuses = statusData.map((s): DeploymentStatus => ({
+          state: s.state,
+          description: s.description,
+          environmentUrl: s.environment_url,
+          logUrl: s.log_url,
+          createdAt: s.created_at,
+        }));
+      } catch {
+        // ignore status fetch errors
+      }
+      return {
+        id: d.id,
+        ref: d.ref,
+        sha: d.sha.slice(0, 7),
+        environment: d.environment,
+        description: d.description,
+        createdAt: d.created_at,
+        updatedAt: d.updated_at,
+        url: d.url,
+        creator: d.creator ? { login: d.creator.login, avatarUrl: d.creator.avatar_url } : null,
+        statuses,
+      };
+    }),
+  );
+
+  return { deployments: deploymentsWithStatuses };
+}
+
 // ─── README ───────────────────────────────────────────────────────────────
 
 export async function fetchREADME(

@@ -32,7 +32,7 @@ export const initialState: AppState = {
   panToSha: null,
   activeTab: 'graph',
   splitLayout: 'single',
-  paneTab: ['graph', 'list', 'files', 'prs'],
+  paneTab: ['graph', 'list', 'releases', 'prs'],
   graphDirection: 'vertical',
 };
 
