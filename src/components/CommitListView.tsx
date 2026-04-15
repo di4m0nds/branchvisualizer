@@ -2,6 +2,7 @@ import {
   useMemo, useCallback, useState, useRef, useEffect,
   type CSSProperties,
 } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useAppContext } from '@/store/AppContext';
 import AuthorPopup, { useAnchorRect } from '@/components/AuthorPopup';
 import DetailPanel from '@/components/DetailPanel';
@@ -370,8 +371,11 @@ export default function CommitListView() {
 
   const filteredCommits = useMemo(() => {
     if (!graphData) return [];
-    return applyFilter(allCommits, filter, graphData.commitMap, branches);
-  }, [allCommits, filter, graphData, branches]);
+    // Use graphData.nodes order (topologically sorted, newest-first, row 0 = HEAD)
+    // instead of allCommits which may arrive in arbitrary fetch order from the API.
+    const sortedCommits = graphData.nodes.map(n => n.commit);
+    return applyFilter(sortedCommits, filter, graphData.commitMap, branches);
+  }, [graphData, filter, branches]);
 
   const highlightedShas = useMemo<Set<string> | null>(() => {
     const hasFilter = filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
@@ -478,8 +482,21 @@ export default function CommitListView() {
                 tagMap={graphData.tagMap}
                 repoUrl={repoUrl}
               />
-              {/* Inline detail panel — rendered just below the focused commit row */}
-              {isSelected && <DetailPanel mode="inline" />}
+              {/* Inline detail panel — animated slide-in below the focused commit row */}
+              <AnimatePresence initial={false}>
+                {isSelected && (
+                  <motion.div
+                    key="inline-panel"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                    className="overflow-hidden"
+                  >
+                    <DetailPanel mode="inline" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           );
         })}

@@ -434,8 +434,15 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               </button>
             )}
           </div>
-          <Button type="submit" size="sm" loading={isLoading}>
-            {isLoading ? state.loadState.message : 'Go'}
+          <Button
+            type="submit"
+            size="sm"
+            loading={isLoading}
+            className="border-green-300/30 bg-green-300/10 text-green-300
+                       hover:bg-green-300/20 hover:text-green-200 hover:border-green-300/50
+                       font-mono tracking-wide transition-all"
+          >
+            {isLoading ? state.loadState.message : 'Go →'}
           </Button>
         </form>
 
@@ -567,8 +574,15 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                   <XIcon className="h-3.5 w-3.5" />
                 </button>
               )}
-              <Button type="submit" size="sm" loading={isLoading} className="px-4">
-                {isLoading ? 'Loading…' : 'Visualize'}
+              <Button
+                type="submit"
+                size="sm"
+                loading={isLoading}
+                className="px-5 border-green-300/30 bg-green-300/10 text-green-300
+                           hover:bg-green-300/20 hover:text-green-200 hover:border-green-300/50
+                           font-mono tracking-wide transition-all"
+              >
+                {isLoading ? 'Loading…' : 'Visualize →'}
               </Button>
             </div>
           </div>
