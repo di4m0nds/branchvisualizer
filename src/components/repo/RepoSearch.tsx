@@ -324,38 +324,72 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
 
   if (compact) {
     const { rateLimit } = state;
-    const rateLimitLow = rateLimit && rateLimit.remaining < 10;
+    const rateLimitLow  = rateLimit && rateLimit.remaining < 10;
     const rateLimitWarn = rateLimit && rateLimit.remaining < 30;
+    const pct = rateLimit ? Math.round((rateLimit.remaining / rateLimit.limit) * 100) : 100;
+    const minsLeft = rateLimit ? Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 60_000) : 0;
 
     return (
-      <div className="flex flex-col gap-1.5 w-full max-w-lg">
-        {/* Rate limit banner */}
+      <div className="flex items-center gap-3 w-full max-w-lg">
+        {/* Rate limit — subtle dot + number, tooltip on hover */}
         {rateLimit && (
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs
-            ${rateLimitLow
-              ? 'bg-red-500/10 border-red-500/30 text-red-400'
-              : rateLimitWarn
-                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                : 'bg-muted/30 border-border text-muted-foreground'
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0 opacity-80">
-              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 4.5v4.25a.75.75 0 0 1-1.5 0V4.5a.75.75 0 0 1 1.5 0zM8 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
-            </svg>
-            <span className="font-mono font-semibold text-sm">{rateLimit.remaining.toLocaleString()}</span>
-            <span className="opacity-70">/ {rateLimit.limit.toLocaleString()} API requests remaining</span>
-            {rateLimitLow && (
-              <span className="ml-auto opacity-80 flex-shrink-0">
-                resets in {Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 60_000)}m
-              </span>
-            )}
-            {!state.token && (
-              <span className="ml-auto opacity-60 flex-shrink-0 hidden sm:block">Add token for 5k/hr</span>
-            )}
+          <div className="relative group flex-shrink-0 flex items-center gap-1.5 cursor-default select-none">
+            {/* Status dot */}
+            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              rateLimitLow ? 'bg-red-400 animate-pulse' :
+              rateLimitWarn ? 'bg-amber-400' : 'bg-green-400'
+            }`} />
+            <span className={`text-xs font-mono tabular-nums ${
+              rateLimitLow ? 'text-red-400' :
+              rateLimitWarn ? 'text-amber-400' : 'text-muted-foreground'
+            }`}>
+              {rateLimit.remaining.toLocaleString()}
+            </span>
+
+            {/* Hover tooltip */}
+            <div className="absolute bottom-full left-0 mb-2 w-64 z-[9999] pointer-events-none
+                            opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+              <div className="bg-popover border border-border rounded-lg p-3 shadow-xl text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-foreground">GitHub API quota</span>
+                  <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                    rateLimitLow ? 'text-red-400 border-red-500/30 bg-red-500/10' :
+                    rateLimitWarn ? 'text-amber-400 border-amber-500/30 bg-amber-500/10' :
+                    'text-green-400 border-green-500/30 bg-green-500/10'
+                  }`}>{pct}%</span>
+                </div>
+                {/* Progress bar */}
+                <div className="h-1.5 rounded-full bg-border overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      rateLimitLow ? 'bg-red-400' : rateLimitWarn ? 'bg-amber-400' : 'bg-green-400'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <div className="text-muted-foreground space-y-1">
+                  <div className="flex justify-between">
+                    <span>Remaining</span>
+                    <span className="font-mono text-foreground">{rateLimit.remaining.toLocaleString()} / {rateLimit.limit.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Resets in</span>
+                    <span className="font-mono text-foreground">{minsLeft}m</span>
+                  </div>
+                  {!state.token && (
+                    <p className="text-[10px] pt-1 border-t border-border text-muted-foreground/70 leading-relaxed">
+                      Add a GitHub token to increase the limit to 5,000 req/hr.
+                    </p>
+                  )}
+                </div>
+              </div>
+              {/* Arrow */}
+              <div className="absolute top-full left-3 w-2 h-2 bg-popover border-r border-b border-border rotate-45 -mt-1" />
+            </div>
           </div>
         )}
 
-        <div className="relative w-full" ref={dropdownRef}>
+        <div className="relative flex-1" ref={dropdownRef}>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full">
           <div
             className={cn(

@@ -85,8 +85,8 @@ function RepoPage() {
 
   return (
     <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Compact search bar */}
-      <div className="flex-shrink-0 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm">
+      {/* Compact search bar — relative + z-20 so its dropdown overlays the canvas below */}
+      <div className="relative z-20 flex-shrink-0 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm">
         <RepoSearch compact={true} />
       </div>
 
