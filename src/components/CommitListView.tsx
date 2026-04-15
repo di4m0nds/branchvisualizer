@@ -363,7 +363,7 @@ function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationPro
 
 export default function CommitListView() {
   const { state, dispatch } = useAppContext();
-  const { graphData, filter, selectedNode, branches, allCommits, repoInfo } = state;
+  const { graphData, filter, selectedNode, branches, repoInfo } = state;
 
   const [page, setPage]         = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);

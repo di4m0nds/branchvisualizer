@@ -153,7 +153,7 @@ function FloatingBody() {
   const { selectedNode, graphData, repoInfo } = state;
 
   if (!selectedNode) return null;
-  const { commit, color } = selectedNode;
+  const { commit } = selectedNode;
   const parentNodes = commit.parents
     .map(sha => graphData?.commitMap.get(sha))
     .filter((n): n is NonNullable<typeof n> => !!n);
