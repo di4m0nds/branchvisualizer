@@ -47,6 +47,6 @@ export const toast = {
     messages: { loading: string; success: string; error: string | ((err: unknown) => string) },
     opts?: ToastOptions,
   ) {
-    return sonner.promise(promise, messages, opts);
+    return sonner.promise(promise, { ...messages, ...opts });
   },
 };

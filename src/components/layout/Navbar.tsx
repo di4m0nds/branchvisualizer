@@ -4,6 +4,7 @@ import { useAppContext } from '@/store/AppContext';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip } from '@/components/ui/tooltip';
+import { formatCount } from '@/lib/utils';
 
 // ─── Theme toggle ─────────────────────────────────────────────────────────
 
@@ -30,42 +31,76 @@ function ThemeToggle() {
   );
 }
 
-// ─── View mode toggle ─────────────────────────────────────────────────────
+// ─── Repo stats chips ─────────────────────────────────────────────────────
 
-function ViewToggle() {
-  const { state, dispatch } = useAppContext();
-  if (!state.graphData) return null;
+function RepoStats() {
+  const { state } = useAppContext();
+  const { graphData, allCommits, branches, tags } = state;
+  if (!graphData) return null;
 
-  const isCanvas = state.viewMode === 'canvas';
+  const stats = [
+    {
+      label: 'commits',
+      value: formatCount(allCommits.length),
+      title: `${allCommits.length.toLocaleString()} commits`,
+      icon: (
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="opacity-70">
+          <path d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5Zm-1.43-.75a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'branches',
+      value: formatCount(branches.length),
+      title: `${branches.length.toLocaleString()} branches`,
+      icon: (
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="opacity-70">
+          <path fillRule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'tags',
+      value: formatCount(tags.length),
+      title: `${tags.length.toLocaleString()} tags`,
+      icon: (
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="opacity-70">
+          <path d="M2.5 7.775V2.75a.25.25 0 0 1 .25-.25h5.025a.25.25 0 0 1 .177.073l6.25 6.25a.25.25 0 0 1 0 .354l-5.025 5.025a.25.25 0 0 1-.354 0l-6.25-6.25a.25.25 0 0 1-.073-.177ZM1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 0 1 0 2.474l-5.026 5.026a1.75 1.75 0 0 1-2.474 0l-6.25-6.25A1.752 1.752 0 0 1 1 7.775ZM6 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'lanes',
+      value: String(graphData.laneCount),
+      title: `${graphData.laneCount} parallel lanes`,
+      icon: (
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="opacity-70">
+          <line x1="3" y1="2" x2="3" y2="14"/>
+          <line x1="8" y1="2" x2="8" y2="14"/>
+          <line x1="13" y1="2" x2="13" y2="14"/>
+        </svg>
+      ),
+    },
+  ];
 
   return (
-    <div className="flex items-center gap-0.5 p-0.5 bg-surface-2 rounded-md border border-border">
-      <Tooltip content="Graph view">
-        <button
-          onClick={() => dispatch({ type: 'SET_VIEW_MODE', viewMode: 'canvas' })}
-          className={`h-7 w-7 flex items-center justify-center rounded transition-colors text-xs
-            ${isCanvas
-              ? 'bg-surface text-foreground shadow-sm'
-              : 'text-muted-fg hover:text-foreground'
-            }`}
-          aria-label="Graph view"
-        >
-          <GraphIcon />
-        </button>
-      </Tooltip>
-      <Tooltip content="List view">
-        <button
-          onClick={() => dispatch({ type: 'SET_VIEW_MODE', viewMode: 'list' })}
-          className={`h-7 w-7 flex items-center justify-center rounded transition-colors text-xs
-            ${!isCanvas
-              ? 'bg-surface text-foreground shadow-sm'
-              : 'text-muted-fg hover:text-foreground'
-            }`}
-          aria-label="List view"
-        >
-          <ListIcon />
-        </button>
-      </Tooltip>
+    <div className="flex items-center gap-0.5">
+      {stats.map((s, i) => (
+        <div key={s.label} className="flex items-center">
+          <Tooltip content={s.title}>
+            <div className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-mono
+                            text-muted-foreground hover:text-foreground hover:bg-accent/50
+                            transition-colors cursor-default tabular-nums">
+              {s.icon}
+              <span className="font-semibold text-foreground">{s.value}</span>
+              <span className="opacity-50 hidden sm:inline">{s.label}</span>
+            </div>
+          </Tooltip>
+          {i < stats.length - 1 && (
+            <span className="text-border/40 text-[10px] select-none px-0.5 hidden md:inline">·</span>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -74,7 +109,6 @@ function ViewToggle() {
 
 export default function Navbar() {
   const { owner, repo } = useParams<{ owner: string; repo: string }>();
-  const { state } = useAppContext();
 
   return (
     <motion.header
@@ -118,7 +152,7 @@ export default function Navbar() {
 
       {/* Right-side controls */}
       <div className="flex items-center gap-2">
-        {state.graphData && <ViewToggle />}
+        <RepoStats />
 
         <Separator orientation="vertical" className="h-4" />
 
@@ -138,13 +172,6 @@ export default function Navbar() {
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────
 
-function BranchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
-      <path fillRule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z" />
-    </svg>
-  );
-}
 
 function ChevronIcon({ className }: { className?: string }) {
   return (
@@ -154,32 +181,6 @@ function ChevronIcon({ className }: { className?: string }) {
   );
 }
 
-function GraphIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-      <circle cx="3" cy="3" r="1.5" />
-      <circle cx="3" cy="8" r="1.5" />
-      <circle cx="3" cy="13" r="1.5" />
-      <circle cx="9" cy="5" r="1.5" />
-      <circle cx="9" cy="11" r="1.5" />
-      <circle cx="13" cy="8" r="1.5" />
-      <path stroke="currentColor" strokeWidth="1" d="M4.5 3.3 7.5 4.7M4.5 7.6 7.5 5.4M4.5 12.5 7.5 11.5M10.5 5.4 12 7M10.5 10.5 12 8.5" fill="none" />
-    </svg>
-  );
-}
-
-function ListIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-      <rect x="5" y="3.5" width="9" height="1.5" rx="0.75" />
-      <rect x="5" y="7.25" width="9" height="1.5" rx="0.75" />
-      <rect x="5" y="11" width="9" height="1.5" rx="0.75" />
-      <circle cx="2.5" cy="4.25" r="1.25" />
-      <circle cx="2.5" cy="8" r="1.25" />
-      <circle cx="2.5" cy="11.75" r="1.25" />
-    </svg>
-  );
-}
 
 function SunIcon() {
   return (

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '@/store/AppContext';
 import { fetchPRs, fetchIssues, setToken, type PRInfo, type IssueInfo } from '@/lib/github';
-import { cn } from '@/lib/utils';
+import { cn, formatDateDMY } from '@/lib/utils';
 
 // ─── State badge ─────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ function LabelChip({ name }: { name: string }) {
 // ─── PR row ───────────────────────────────────────────────────────────────
 
 function PRRow({ pr }: { pr: PRInfo }) {
-  const date = new Date(pr.updatedAt).toLocaleDateString();
+  const date = formatDateDMY(pr.updatedAt);
 
   return (
     <a
@@ -110,7 +110,7 @@ function PRRow({ pr }: { pr: PRInfo }) {
 // ─── Issue row ────────────────────────────────────────────────────────────
 
 function IssueRow({ issue }: { issue: IssueInfo }) {
-  const date = new Date(issue.updatedAt).toLocaleDateString();
+  const date = formatDateDMY(issue.updatedAt);
 
   return (
     <a

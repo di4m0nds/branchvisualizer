@@ -31,7 +31,7 @@ export function parseRepoInput(raw: string): { owner: string; repo: string } {
 export function validateRepoInput(raw: string): { ok: boolean; error?: string } {
   const result = repoInputSchema.safeParse(raw);
   if (result.success) return { ok: true };
-  return { ok: false, error: result.error.errors[0]?.message };
+  return { ok: false, error: result.error.issues[0]?.message };
 }
 
 // ─── GitHub personal access token ────────────────────────────────────────

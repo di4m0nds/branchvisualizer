@@ -41,7 +41,7 @@ function AutocompleteDropdown({ suggestions, activeIndex, onSelect, onRemove }: 
       exit={{ opacity: 0, y: -4, scaleY: 0.95 }}
       transition={{ duration: 0.13 }}
       style={{ transformOrigin: 'top' }}
-      className="absolute top-full left-0 right-0 z-50 mt-1
+      className="absolute top-full left-0 right-0 z-[9999] mt-1
                  rounded-lg border border-border bg-card shadow-lg overflow-hidden"
     >
       {suggestions.map((entry, i) => (
@@ -91,8 +91,6 @@ interface RecentCardProps {
 }
 
 function RecentCard({ entry, onLoad, onRemove, disabled }: RecentCardProps) {
-  const [isDragOver, setIsDragOver] = useState(false);
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -102,14 +100,14 @@ function RecentCard({ entry, onLoad, onRemove, disabled }: RecentCardProps) {
         'relative flex items-center gap-2.5 px-3 py-2.5 rounded-lg border cursor-grab active:cursor-grabbing',
         'bg-card hover:bg-accent/30 border-border hover:border-border',
         'transition-all duration-150 group select-none',
-        isDragOver && 'border-primary/50 bg-primary/5',
         disabled && 'opacity-50 cursor-not-allowed',
       )}
       draggable={!disabled}
       onDragStart={e => {
-        e.dataTransfer.setData('text/plain', entry.fullUrl);
-        e.dataTransfer.setData('application/bv-repo', entry.fullUrl);
-        e.dataTransfer.effectAllowed = 'copy';
+        const de = e as unknown as DragEvent;
+        de.dataTransfer?.setData('text/plain', entry.fullUrl);
+        de.dataTransfer?.setData('application/bv-repo', entry.fullUrl);
+        if (de.dataTransfer) de.dataTransfer.effectAllowed = 'copy';
       }}
       onClick={() => !disabled && onLoad(entry)}
       title={`${entry.label} — drag to input or click to load`}
@@ -323,8 +321,73 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   // ── Compact mode (repo page header) ───────────────────────────────────────
 
   if (compact) {
+    const { rateLimit } = state;
+    const rateLimitLow  = rateLimit && rateLimit.remaining < 10;
+    const rateLimitWarn = rateLimit && rateLimit.remaining < 30;
+    const pct = rateLimit ? Math.round((rateLimit.remaining / rateLimit.limit) * 100) : 100;
+    const minsLeft = rateLimit ? Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 60_000) : 0;
+
     return (
-      <div className="relative w-full max-w-lg" ref={dropdownRef}>
+      <div className="flex items-center gap-3 w-full max-w-lg">
+        {/* Rate limit — subtle dot + number, tooltip on hover */}
+        {rateLimit && (
+          <div className="relative group flex-shrink-0 flex items-center gap-1.5 cursor-default select-none">
+            {/* Status dot */}
+            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              rateLimitLow ? 'bg-red-400 animate-pulse' :
+              rateLimitWarn ? 'bg-amber-400' : 'bg-green-400'
+            }`} />
+            <span className={`text-xs font-mono tabular-nums ${
+              rateLimitLow ? 'text-red-400' :
+              rateLimitWarn ? 'text-amber-400' : 'text-muted-foreground'
+            }`}>
+              {rateLimit.remaining.toLocaleString()}
+            </span>
+
+            {/* Hover tooltip */}
+            <div className="absolute bottom-full left-0 mb-2 w-64 z-[9999] pointer-events-none
+                            opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+              <div className="bg-popover border border-border rounded-lg p-3 shadow-xl text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-foreground">GitHub API quota</span>
+                  <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                    rateLimitLow ? 'text-red-400 border-red-500/30 bg-red-500/10' :
+                    rateLimitWarn ? 'text-amber-400 border-amber-500/30 bg-amber-500/10' :
+                    'text-green-400 border-green-500/30 bg-green-500/10'
+                  }`}>{pct}%</span>
+                </div>
+                {/* Progress bar */}
+                <div className="h-1.5 rounded-full bg-border overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      rateLimitLow ? 'bg-red-400' : rateLimitWarn ? 'bg-amber-400' : 'bg-green-400'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <div className="text-muted-foreground space-y-1">
+                  <div className="flex justify-between">
+                    <span>Remaining</span>
+                    <span className="font-mono text-foreground">{rateLimit.remaining.toLocaleString()} / {rateLimit.limit.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Resets in</span>
+                    <span className="font-mono text-foreground">{minsLeft}m</span>
+                  </div>
+                  {!state.token && (
+                    <p className="text-[10px] pt-1 border-t border-border text-muted-foreground/70 leading-relaxed">
+                      Add a GitHub token to increase the limit to 5,000 req/hr.
+                    </p>
+                  )}
+                </div>
+              </div>
+              {/* Arrow */}
+              <div className="absolute top-full left-3 w-2 h-2 bg-popover border-r border-b border-border rotate-45 -mt-1" />
+            </div>
+          </div>
+        )}
+
+        <div className="relative flex-1" ref={dropdownRef}>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full">
           <div
             className={cn(
@@ -378,6 +441,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
             />
           )}
         </AnimatePresence>
+        </div>
       </div>
     );
   }

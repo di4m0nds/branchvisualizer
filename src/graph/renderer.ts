@@ -4,7 +4,7 @@
 // Viewport culling ensures only visible rows are processed each frame.
 // requestAnimationFrame is used by the caller; this file only draws.
 
-import type { GraphData, GraphEdge, GraphNode, Tag, Branch } from '../types';
+import type { GraphData, GraphEdge, GraphNode } from '../types';
 import {
   GRAPH_PADDING_LEFT,
   GRAPH_PADDING_TOP,
@@ -30,6 +30,8 @@ export interface RenderOptions {
   theme?: 'dark' | 'light';
   /** Layout direction; default 'vertical' */
   direction?: 'vertical' | 'horizontal';
+  /** Elapsed ms since animation start — drives orbiting arc and dashed edges */
+  animTime?: number;
 }
 
 // ─── Direction-aware coordinate helpers ───────────────────────────────────
@@ -124,16 +126,16 @@ function getThemeColors(theme: 'dark' | 'light'): ThemeColors {
     };
   }
   return {
-    bg: '#080b11',
-    text: '#e2e8f0',
-    textMuted: '#64748b',
+    bg: '#0d1117',
+    text: '#dde4f0',
+    textMuted: '#5d6d88',
     rail: '#ffffff',
-    railAlpha: 0.05,
-    tagBg: '#422006',
-    tagText: '#fcd34d',
-    branchBg: '#1e1b4b',
-    branchText: '#a5b4fc',
-    selectedRing: '#6366f1',
+    railAlpha: 0.04,
+    tagBg: '#3d2200',
+    tagText: '#f5c542',
+    branchBg: '#1a1740',
+    branchText: '#9fb3f8',
+    selectedRing: '#7c6ef8',
   };
 }
 
@@ -172,9 +174,11 @@ export function renderGraph(
     maxRow = Math.min(graph.rowCount - 1, Math.ceil((graphRight - GRAPH_PADDING_LEFT) / COL_WIDTH) + 1);
   }
 
+  const animTime = opts.animTime ?? 0;
+
   drawLaneRails(ctx, graph, minRow, maxRow, colors, dir);
-  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir);
-  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir);
+  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir, animTime);
+  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir, animTime);
 
   if (scale > 0.35) {
     drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors, dir);
@@ -239,6 +243,7 @@ function drawEdges(
   selectedSha: string | null,
   highlightedShas: Set<string> | null,
   dir: 'vertical' | 'horizontal',
+  animTime: number,
 ): void {
   ctx.save();
   ctx.lineCap = 'round';
@@ -252,17 +257,26 @@ function drawEdges(
       highlightedShas.has(edge.fromSha) ||
       highlightedShas.has(edge.toSha);
 
-    const isSelected =
-      selectedSha === edge.fromSha || selectedSha === edge.toSha;
+    const isConnected = selectedSha === edge.fromSha || selectedSha === edge.toSha;
 
-    ctx.globalAlpha = isHighlighted ? (isSelected ? 1 : 0.85) : 0.2;
+    ctx.globalAlpha = isHighlighted ? (isConnected ? 1 : 0.75) : 0.18;
     ctx.strokeStyle = edge.color;
-    ctx.lineWidth = isSelected ? 2.5 : 1.5;
+    ctx.lineWidth = isConnected ? 2.5 : 1.5;
+
+    if (isConnected && animTime > 0) {
+      ctx.setLineDash([6, 4]);
+      ctx.lineDashOffset = -(animTime * 0.045) % 10;
+    } else {
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+    }
 
     drawEdgePath(ctx, edge, dir);
     ctx.stroke();
   }
 
+  ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
   ctx.restore();
 }
 
@@ -307,6 +321,7 @@ function drawNodes(
   highlightedShas: Set<string> | null,
   colors: ThemeColors,
   dir: 'vertical' | 'horizontal',
+  animTime: number,
 ): void {
   ctx.save();
 
@@ -320,40 +335,82 @@ function drawNodes(
     const isHighlighted = !highlightedShas || highlightedShas.has(sha);
 
     const radius = node.commit.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS;
-    const alpha = isHighlighted ? 1 : 0.2;
+    const alpha = isHighlighted ? 1 : 0.18;
 
     const nx = nodeCanvasX(node, dir);
     const ny = nodeCanvasY(node, dir);
 
     ctx.globalAlpha = alpha;
 
+    // ── Glow layers (selected or hovered) ─────────────────────────────────
     if ((isSelected || isHovered) && isHighlighted) {
       ctx.save();
-      ctx.globalAlpha = isSelected ? 0.35 : 0.2;
+      // Outer glow
+      ctx.globalAlpha = isSelected ? 0.08 : 0.05;
       ctx.fillStyle = node.color;
       ctx.beginPath();
-      ctx.arc(nx, ny, radius + 5, 0, Math.PI * 2);
+      ctx.arc(nx, ny, radius + 14, 0, Math.PI * 2);
+      ctx.fill();
+      // Inner glow
+      ctx.globalAlpha = isSelected ? 0.18 : 0.12;
+      ctx.beginPath();
+      ctx.arc(nx, ny, radius + 7, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
       ctx.globalAlpha = 1;
     }
 
+    // ── Node fill ──────────────────────────────────────────────────────────
     ctx.fillStyle = isSelected ? colors.selectedRing : node.color;
     ctx.beginPath();
     ctx.arc(nx, ny, radius, 0, Math.PI * 2);
     ctx.fill();
 
+    // ── Inner specular highlight ───────────────────────────────────────────
+    if (isHighlighted) {
+      ctx.save();
+      ctx.globalAlpha = isSelected ? 0.45 : 0.28;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(nx - radius * 0.28, ny - radius * 0.28, radius * 0.38, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ── Stroke ring ────────────────────────────────────────────────────────
     if (isSelected || isHovered) {
-      ctx.strokeStyle = colors.selectedRing;
-      ctx.lineWidth = isSelected ? 2 : 1.5;
+      ctx.strokeStyle = isSelected ? colors.selectedRing : node.color;
+      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(nx, ny, radius, 0, Math.PI * 2);
       ctx.stroke();
     } else if (node.commit.isMerge) {
       ctx.strokeStyle = node.color;
       ctx.lineWidth = 1;
-      ctx.globalAlpha = alpha * 0.6;
+      ctx.globalAlpha = alpha * 0.55;
+      ctx.beginPath();
+      ctx.arc(nx, ny, radius, 0, Math.PI * 2);
       ctx.stroke();
     }
 
+    // ── Orbiting dashed arc (selected + animating) ─────────────────────────
+    if (isSelected && animTime > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      ctx.strokeStyle = colors.selectedRing;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.lineDashOffset = -(animTime * 0.06) % 8;
+      ctx.beginPath();
+      ctx.arc(nx, ny, radius + 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.restore();
+    }
+
+    // ── Tag / branch dot ───────────────────────────────────────────────────
     const hasTags = graph.tagMap.has(sha);
     const hasBranches = graph.branchMap.has(sha);
     if ((hasTags || hasBranches) && isHighlighted) {
@@ -481,7 +538,7 @@ function drawNodeLabelsHorizontal(
   labelY: number,
   isHighlighted: boolean,
   isSelected: boolean,
-  colors: ThemeColors,
+  _colors: ThemeColors,
 ): void {
   ctx.globalAlpha = isHighlighted ? (isSelected ? 0.9 : 0.6) : 0.15;
   ctx.font = '9px "SF Mono", monospace';
