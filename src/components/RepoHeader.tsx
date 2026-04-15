@@ -69,6 +69,25 @@ export default function RepoHeader() {
         </>
       )}
 
+      {repoInfo.homepage && (
+        <>
+          <span className="text-border/60 hidden md:inline">·</span>
+          <a
+            href={repoInfo.homepage}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs hidden md:flex items-center gap-1 text-primary/70 hover:text-primary transition-colors truncate max-w-[16rem]"
+            title={repoInfo.homepage}
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="flex-shrink-0 opacity-70">
+              <circle cx="8" cy="8" r="6"/>
+              <path d="M8 2c-2 3-2 9 0 12M8 2c2 3 2 9 0 12M2 8h12"/>
+            </svg>
+            <span className="truncate">{repoInfo.homepage.replace(/^https?:\/\//, '')}</span>
+          </a>
+        </>
+      )}
+
       <div className="flex items-center gap-3 ml-auto text-xs text-muted-foreground">
         {/* Stars — links to stargazers page */}
         <a

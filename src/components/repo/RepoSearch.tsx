@@ -164,6 +164,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [history, setHistory] = useState<HistoryEntry[]>(() => getHistory());
   const [isDragTarget, setIsDragTarget] = useState(false);
+  const [rateTipOpen, setRateTipOpen] = useState(false);
   const tokenToastRef = useRef<string | number | undefined>(undefined);
 
   // Refresh history from storage when we get focus (other tabs may update it)
@@ -331,16 +332,20 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
       <div className="flex items-center gap-2 w-full max-w-lg">
         {/* Rate limit indicator — compact pill to the left of the input */}
         {rateLimit && (
-          <div className="relative group flex-shrink-0 cursor-default select-none">
-            <div className={cn(
-              'flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-mono tabular-nums',
-              'transition-colors',
-              rateLimitLow
-                ? 'border-red-500/40 bg-red-500/10 text-red-400'
-                : rateLimitWarn
-                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
-                  : 'border-border bg-muted/30 text-muted-foreground hover:text-foreground',
-            )}>
+          <div className="relative group flex-shrink-0 select-none">
+            <button
+              type="button"
+              onClick={() => setRateTipOpen(v => !v)}
+              onBlur={() => setTimeout(() => setRateTipOpen(false), 150)}
+              className={cn(
+                'flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-mono tabular-nums',
+                'transition-colors cursor-default',
+                rateLimitLow
+                  ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                  : rateLimitWarn
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
+                    : 'border-border bg-muted/30 text-muted-foreground hover:text-foreground',
+              )}>
               {/* Status dot */}
               <span className={cn(
                 'w-1.5 h-1.5 rounded-full flex-shrink-0',
@@ -349,11 +354,14 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               )} />
               <span>{rateLimit.remaining.toLocaleString()}</span>
               <span className="opacity-50 hidden sm:inline">/ {rateLimit.limit.toLocaleString()}</span>
-            </div>
+            </button>
 
-            {/* Hover tooltip — opens DOWNWARD (bar is at top of page) */}
-            <div className="absolute top-full left-0 mt-2 w-64 z-[9999] pointer-events-none
-                            opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            {/* Hover + click tooltip — opens DOWNWARD (bar is at top of page) */}
+            <div className={cn(
+              'absolute top-full left-0 mt-2 w-64 z-[9999] pointer-events-none',
+              'opacity-0 group-hover:opacity-100 transition-opacity duration-150',
+              rateTipOpen && 'opacity-100',
+            )}>
               {/* Arrow pointing up */}
               <div className="absolute -top-1 left-4 w-2 h-2 bg-popover border-t border-l border-border rotate-45" />
               <div className="bg-popover border border-border rounded-lg p-3 shadow-xl text-xs space-y-2 mt-0.5">
@@ -438,8 +446,10 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
             type="submit"
             size="sm"
             loading={isLoading}
-            className="border-green-300/30 bg-green-300/10 text-green-300
-                       hover:bg-green-300/20 hover:text-green-200 hover:border-green-300/50
+            className="border-green-700/40 bg-green-700/10 text-green-700
+                       hover:bg-green-700/15 hover:border-green-700/60
+                       dark:border-green-300/30 dark:bg-green-300/10 dark:text-green-300
+                       dark:hover:bg-green-300/20 dark:hover:border-green-300/50
                        font-mono tracking-wide transition-all"
           >
             {isLoading ? state.loadState.message : 'Go →'}
@@ -578,8 +588,10 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                 type="submit"
                 size="sm"
                 loading={isLoading}
-                className="px-5 border-green-300/30 bg-green-300/10 text-green-300
-                           hover:bg-green-300/20 hover:text-green-200 hover:border-green-300/50
+                className="px-5 border-green-700/40 bg-green-700/10 text-green-700
+                           hover:bg-green-700/15 hover:border-green-700/60
+                           dark:border-green-300/30 dark:bg-green-300/10 dark:text-green-300
+                           dark:hover:bg-green-300/20 dark:hover:border-green-300/50
                            font-mono tracking-wide transition-all"
               >
                 {isLoading ? 'Loading…' : 'Visualize →'}
