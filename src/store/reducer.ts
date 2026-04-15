@@ -1,4 +1,4 @@
-import type { AppAction, AppState, FilterState, LoadState } from '../types';
+import type { AppAction, AppState, FilterState, LoadState, TabId } from '../types';
 
 export const initialFilterState: FilterState = {
   search: '',
@@ -29,6 +29,11 @@ export const initialState: AppState = {
   rateLimit: null,
   viewMode: 'canvas',
   theme: 'dark',
+  panToSha: null,
+  activeTab: 'graph',
+  splitLayout: 'single',
+  paneTab: ['graph', 'list', 'files', 'prs'],
+  graphDirection: 'vertical',
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -46,7 +51,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         allCommits: [],
         selectedNode: null,
         hoveredNode: null,
-        loadState: { phase: 'fetching-repo', message: 'Starting…', progress: 0 },
+        loadState: { phase: 'fetching-repo', message: 'Starting...', progress: 0 },
         filter: initialFilterState,
         viewport: { offsetX: 16, offsetY: 16, scale: 1 },
       };
@@ -97,6 +102,24 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_THEME':
       return { ...state, theme: action.theme };
+
+    case 'SCROLL_TO_SHA':
+      return { ...state, panToSha: action.sha };
+
+    case 'SET_ACTIVE_TAB':
+      return { ...state, activeTab: action.tab };
+
+    case 'SET_SPLIT_LAYOUT':
+      return { ...state, splitLayout: action.layout };
+
+    case 'SET_PANE_TAB': {
+      const paneTab = [...state.paneTab] as [TabId, TabId, TabId, TabId];
+      paneTab[action.pane] = action.tab;
+      return { ...state, paneTab };
+    }
+
+    case 'SET_GRAPH_DIRECTION':
+      return { ...state, graphDirection: action.direction };
 
     default:
       return state;

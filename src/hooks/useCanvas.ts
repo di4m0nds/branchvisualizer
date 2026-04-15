@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import type { GraphData, GraphNode, ViewportState } from '../types';
 import { hitTestNode } from '../graph/layout';
-import { graphHeight } from '../graph/renderer';
+import { graphHeight, graphWidth } from '../graph/renderer';
 
 const MIN_SCALE = 0.15;
 const MAX_SCALE = 3;
@@ -15,6 +15,7 @@ interface UseCanvasOptions {
   onViewportChange: (v: Partial<ViewportState>) => void;
   onHover: (node: GraphNode | null) => void;
   onSelect: (node: GraphNode | null) => void;
+  direction?: 'vertical' | 'horizontal';
 }
 
 export function useCanvas(
@@ -22,13 +23,16 @@ export function useCanvas(
   opts: UseCanvasOptions,
 ) {
   const { graph, viewport, onViewportChange, onHover, onSelect } = opts;
+  const dir = opts.direction ?? 'vertical';
 
-  // Mutable refs to avoid stale closures in event handlers
   const vpRef = useRef(viewport);
   vpRef.current = viewport;
 
   const graphRef = useRef(graph);
   graphRef.current = graph;
+
+  const dirRef = useRef(dir);
+  dirRef.current = dir;
 
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
@@ -48,14 +52,13 @@ export function useCanvas(
     const delta = -e.deltaY * ZOOM_SPEED;
     const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * (1 + delta)));
 
-    // Zoom toward the cursor
     const newOffsetX = mx - (mx - offsetX) * (newScale / scale);
     const newOffsetY = my - (my - offsetY) * (newScale / scale);
 
     onViewportChange({ scale: newScale, offsetX: newOffsetX, offsetY: newOffsetY });
   }, [canvasRef, onViewportChange]);
 
-  // ─── Mouse down (start pan or select) ────────────────────────────────
+  // ─── Mouse down ───────────────────────────────────────────────────────
   const onMouseDown = useCallback((e: MouseEvent) => {
     if (e.button !== 0) return;
     dragging.current = false;
@@ -65,12 +68,11 @@ export function useCanvas(
       ox: vpRef.current.offsetX,
       oy: vpRef.current.offsetY,
     };
-
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grabbing';
   }, [canvasRef]);
 
-  // ─── Mouse move (pan or hover) ────────────────────────────────────────
+  // ─── Mouse move ───────────────────────────────────────────────────────
   const onMouseMove = useCallback((e: MouseEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -79,7 +81,6 @@ export function useCanvas(
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
 
-    // Check pan drag
     if (e.buttons === 1) {
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
@@ -93,16 +94,15 @@ export function useCanvas(
       return;
     }
 
-    // Hover hit test
     if (!graphRef.current) return;
     const { scale, offsetX, offsetY } = vpRef.current;
-    const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, 10);
+    const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, 10, dirRef.current);
 
     canvas.style.cursor = node ? 'pointer' : 'grab';
     onHover(node);
   }, [canvasRef, onViewportChange, onHover]);
 
-  // ─── Mouse up (select) ────────────────────────────────────────────────
+  // ─── Mouse up ─────────────────────────────────────────────────────────
   const onMouseUp = useCallback((e: MouseEvent) => {
     const canvas = canvasRef.current;
     if (canvas) canvas.style.cursor = 'grab';
@@ -113,17 +113,16 @@ export function useCanvas(
     }
     if (e.button !== 0) return;
 
-    // Click — do hit test
     if (!graphRef.current) return;
     const rect = canvas!.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
     const { scale, offsetX, offsetY } = vpRef.current;
-    const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, 12);
+    const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, 12, dirRef.current);
     onSelect(node);
   }, [canvasRef, onSelect]);
 
-  // ─── Touch (pinch zoom + pan) ─────────────────────────────────────────
+  // ─── Touch ────────────────────────────────────────────────────────────
   const lastTouches = useRef<TouchList | null>(null);
 
   const onTouchStart = useCallback((e: TouchEvent) => {
@@ -140,12 +139,10 @@ export function useCanvas(
     const { scale, offsetX, offsetY } = vpRef.current;
 
     if (curr.length === 1 && prev.length === 1) {
-      // Pan
       const dx = curr[0].clientX - prev[0].clientX;
       const dy = curr[0].clientY - prev[0].clientY;
       onViewportChange({ offsetX: offsetX + dx, offsetY: offsetY + dy });
     } else if (curr.length === 2 && prev.length === 2) {
-      // Pinch zoom
       const prevDist = Math.hypot(prev[0].clientX - prev[1].clientX, prev[0].clientY - prev[1].clientY);
       const currDist = Math.hypot(curr[0].clientX - curr[1].clientX, curr[0].clientY - curr[1].clientY);
       if (prevDist === 0) return;
@@ -153,7 +150,6 @@ export function useCanvas(
       const ratio = currDist / prevDist;
       const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * ratio));
 
-      // Zoom toward midpoint
       const mx = (curr[0].clientX + curr[1].clientX) / 2;
       const my = (curr[0].clientY + curr[1].clientY) / 2;
       const newOffsetX = mx - (mx - offsetX) * (newScale / scale);
@@ -163,7 +159,7 @@ export function useCanvas(
     }
   }, [onViewportChange]);
 
-  // ─── Register / unregister listeners ─────────────────────────────────
+  // ─── Register listeners ───────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -185,17 +181,31 @@ export function useCanvas(
     };
   }, [canvasRef, onWheel, onMouseDown, onMouseMove, onMouseUp, onTouchStart, onTouchMove]);
 
-  // ─── Keyboard shortcuts ───────────────────────────────────────────────
+  // ─── Fit to view ──────────────────────────────────────────────────────
   const fitToView = useCallback((canvasWidth: number, canvasHeight: number) => {
     if (!graphRef.current || graphRef.current.rowCount === 0) return;
-    const totalH = graphHeight(graphRef.current.rowCount);
-    const totalW = 40 + graphRef.current.laneCount * 20 + 400;
+    const d = dirRef.current;
+    const g = graphRef.current;
+
+    const totalW = graphWidth(g.rowCount, d, g.laneCount);
+    const totalH = graphHeight(g.rowCount, d, g.laneCount);
+
     const scaleX = canvasWidth / totalW;
     const scaleY = canvasHeight / totalH;
-    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(scaleX, scaleY) * 0.9));
-    onViewportChange({ scale: newScale, offsetX: 16, offsetY: 16 });
+
+    // For large graphs, don't try to fit everything — use comfortable zoom
+    const fitScale = Math.min(scaleX, scaleY) * 0.9;
+    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fitScale));
+
+    // If graph is large (would need very small scale), use a comfortable zoom
+    // and position at the start (newest commits)
+    if (fitScale < 0.4 && g.rowCount > 150) {
+      const comfortScale = Math.max(0.7, MIN_SCALE);
+      onViewportChange({ scale: comfortScale, offsetX: 16, offsetY: 16 });
+    } else {
+      onViewportChange({ scale: newScale, offsetX: 16, offsetY: 16 });
+    }
   }, [onViewportChange]);
 
   return { fitToView };
 }
-

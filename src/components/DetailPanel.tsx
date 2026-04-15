@@ -2,29 +2,47 @@ import { useAppContext } from '@/store/AppContext';
 import { AuthorCard } from '@/components/AuthorPopup';
 import { cn, copyToClipboard } from '@/lib/utils';
 import { useState } from 'react';
+import { CheckIcon, CopyIcon } from 'lucide-react';
+
+// ─── PR number extraction (same as CommitListView) ────────────────────────────
+
+function extractPRNumber(subject: string, body: string): string | null {
+  const combined = `${subject} ${body}`;
+  const m = combined.match(/(?:pull\s+request\s+#|pr\s*#|\(#|(?:^|\s)#)(\d+)/i);
+  return m ? m[1] : null;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DetailPanel() {
   const { state, dispatch } = useAppContext();
-  const { selectedNode, graphData } = state;
+  const { selectedNode, graphData, repoInfo } = state;
   const [copied, setCopied] = useState(false);
 
   if (!selectedNode) return null;
 
   const { commit, color } = selectedNode;
-  const tags      = graphData?.tagMap.get(commit.sha)    ?? [];
-  const branches  = graphData?.branchMap.get(commit.sha) ?? [];
+  const tags = graphData?.tagMap.get(commit.sha) ?? [];
+  const branches = graphData?.branchMap.get(commit.sha) ?? [];
   const parentNodes = commit.parents
     .map(pSha => graphData?.commitMap.get(pSha))
     .filter((n): n is NonNullable<typeof n> => !!n);
 
-  const ghUrl = state.repoInfo
-    ? `${state.repoInfo.url}/commit/${commit.sha}`
+  const ghUrl = repoInfo
+    ? `${repoInfo.url}/commit/${commit.sha}`
     : `https://github.com/commit/${commit.sha}`;
+
+  const prNumber = commit.isMerge ? extractPRNumber(commit.subject, commit.body) : null;
+  const prUrl = prNumber && repoInfo ? `${repoInfo.url}/pull/${prNumber}` : null;
 
   function selectParent(sha: string) {
     if (!graphData) return;
     const node = graphData.commitMap.get(sha);
-    if (node) dispatch({ type: 'SELECT_NODE', node });
+    if (node) {
+      dispatch({ type: 'SELECT_NODE', node });
+      // Smoothly pan the canvas to the selected node
+      dispatch({ type: 'SCROLL_TO_SHA', sha });
+    }
   }
 
   async function handleCopySha() {
@@ -51,31 +69,49 @@ export default function DetailPanel() {
               {commit.shortSha}
             </code>
             <span className={cn(
-              'text-[10px] transition-all',
+              'text-[10px] transition-all scale-120',
               copied ? 'text-green-500' : 'text-muted-foreground opacity-0 group-hover:opacity-100'
             )}>
-              {copied ? '✓' : '⎘'}
+              {copied ? <CheckIcon className="w-3 h-3" /> : <CopyIcon className="w-3 h-3" />}
             </span>
           </button>
 
-          {/* Merge badge */}
+          {/* Merge badge + PR link */}
           {commit.isMerge && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium
-                             bg-purple-500/10 border border-purple-500/30 text-purple-400">
-              merge
-            </span>
+            <>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium
+                               bg-purple-500/10 border border-purple-500/30 text-purple-400">
+                merge
+              </span>
+              {prUrl && (
+                <a
+                  href={prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium
+                             bg-purple-500/10 border border-purple-500/30 text-purple-400
+                             hover:bg-purple-500/20 transition-colors flex items-center gap-0.5"
+                  title={`View PR #${prNumber}`}
+                >
+                  #{prNumber}
+                  <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M2 10L10 2M10 2H5M10 2v5"/>
+                  </svg>
+                </a>
+              )}
+            </>
           )}
 
-          {/* Branch badges */}
+          {/* Branch badges — colored with the commit's lane color */}
           {branches.slice(0, 2).map(b => (
             <span
               key={b.name}
-              className={cn(
-                'px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border truncate max-w-[90px]',
-                b.isDefault
-                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-                  : 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
-              )}
+              className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border truncate max-w-[90px]"
+              style={{
+                color,
+                borderColor: `${color}55`,
+                background: `${color}15`,
+              }}
               title={b.name}
             >
               {b.name}
@@ -107,8 +143,8 @@ export default function DetailPanel() {
           aria-label="Close detail panel"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <line x1="1" y1="1" x2="9" y2="9"/>
-            <line x1="9" y1="1" x2="1" y2="9"/>
+            <line x1="1" y1="1" x2="9" y2="9" />
+            <line x1="9" y1="1" x2="1" y2="9" />
           </svg>
         </button>
       </div>
@@ -151,7 +187,6 @@ export default function DetailPanel() {
                   {commit.stats.total.toLocaleString()} files
                 </span>
               </div>
-              {/* Progress bar */}
               {commit.stats.total > 0 && (
                 <div className="h-1 rounded-full overflow-hidden bg-muted flex mt-0.5">
                   <div
@@ -164,7 +199,7 @@ export default function DetailPanel() {
             </div>
           )}
 
-          {/* Parents */}
+          {/* Parents — clicking one pans the canvas to that node */}
           {parentNodes.length > 0 && (
             <div className="px-4 py-3 flex flex-col gap-2">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
@@ -177,6 +212,7 @@ export default function DetailPanel() {
                     className="flex items-start gap-2 text-left rounded-lg px-2 py-1.5
                                hover:bg-accent transition-colors group w-full"
                     onClick={() => selectParent(pn.commit.sha)}
+                    title="Click to navigate to this commit in the graph"
                   >
                     <svg
                       className="flex-shrink-0 mt-0.5 opacity-60"
@@ -184,11 +220,11 @@ export default function DetailPanel() {
                       fill="none" stroke="currentColor" strokeWidth="2"
                       style={{ color: pn.color }}
                     >
-                      <line x1="8" y1="14" x2="8" y2="2"/>
-                      <line x1="4" y1="6" x2="8" y2="2"/>
-                      <line x1="12" y1="6" x2="8" y2="2"/>
+                      <line x1="8" y1="14" x2="8" y2="2" />
+                      <line x1="4" y1="6" x2="8" y2="2" />
+                      <line x1="12" y1="6" x2="8" y2="2" />
                     </svg>
-                    <div className="flex flex-col min-w-0">
+                    <div className="flex flex-col min-w-0 flex-1">
                       <code className="text-xs font-mono" style={{ color: pn.color }}>
                         {pn.commit.shortSha}
                       </code>
@@ -196,6 +232,15 @@ export default function DetailPanel() {
                         {pn.commit.subject.slice(0, 52)}{pn.commit.subject.length > 52 ? '…' : ''}
                       </span>
                     </div>
+                    {/* Pan indicator */}
+                    <svg
+                      className="flex-shrink-0 opacity-0 group-hover:opacity-50 transition-opacity mt-0.5"
+                      width="10" height="10" viewBox="0 0 12 12" fill="none"
+                      stroke="currentColor" strokeWidth="1.5"
+                    >
+                      <circle cx="6" cy="6" r="4"/>
+                      <path d="M6 4v4M4 6h4" strokeLinecap="round"/>
+                    </svg>
                   </button>
                 ))}
               </div>
@@ -212,7 +257,7 @@ export default function DetailPanel() {
                          hover:text-foreground transition-colors group"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
+                stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                 <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61
                          c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1
                          S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77
@@ -220,9 +265,9 @@ export default function DetailPanel() {
               </svg>
               View on GitHub
               <svg width="9" height="9" viewBox="0 0 12 12" fill="none"
-                   stroke="currentColor" strokeWidth="1.5"
-                   className="opacity-60 group-hover:opacity-100 transition-opacity">
-                <path d="M2 10L10 2M10 2H5M10 2v5"/>
+                stroke="currentColor" strokeWidth="1.5"
+                className="opacity-60 group-hover:opacity-100 transition-opacity">
+                <path d="M2 10L10 2M10 2H5M10 2v5" />
               </svg>
             </a>
           </div>
