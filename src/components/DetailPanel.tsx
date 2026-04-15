@@ -411,7 +411,7 @@ export default function DetailPanel({ mode = 'floating' }: DetailPanelProps) {
   // Floating panel
   return (
     <aside className="absolute bottom-0 sm:bottom-auto sm:top-4 left-0 right-0 sm:left-auto sm:right-4
-                      z-50 sm:w-80 max-h-[65vh] sm:max-h-[calc(100%-2rem)]
+                      z-[200] sm:w-80 max-h-[65vh] sm:max-h-[calc(100%-2rem)]
                       flex flex-col sm:rounded-xl rounded-t-xl border border-border bg-card/95 backdrop-blur-sm
                       shadow-2xl overflow-hidden">
       <PanelHeader mode="floating" minimized={minimized} onMinimize={() => setMinimized(v => !v)} />

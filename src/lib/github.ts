@@ -93,6 +93,7 @@ interface GHRepo {
   owner: { login: string };
   default_branch: string;
   description: string | null;
+  homepage: string | null;
   stargazers_count: number;
   forks_count: number;
   private: boolean;
@@ -225,6 +226,7 @@ export async function fetchRepo(
     fullName: data.full_name,
     defaultBranch: data.default_branch,
     description: data.description,
+    homepage: data.homepage || null,
     starCount: data.stargazers_count,
     forkCount: data.forks_count,
     isPrivate: data.private,

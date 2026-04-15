@@ -6,6 +6,7 @@ export interface RepoInfo {
   fullName: string;
   defaultBranch: string;
   description: string | null;
+  homepage: string | null;
   starCount: number;
   forkCount: number;
   isPrivate: boolean;
