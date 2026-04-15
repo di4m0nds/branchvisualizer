@@ -12,11 +12,28 @@ interface TooltipProps {
 
 export function Tooltip({ content, children, side = 'top', delay = 400, className }: TooltipProps) {
   const [visible, setVisible] = useState(false);
+  const [placement, setPlacement] = useState<'top' | 'bottom' | 'left' | 'right'>(side);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapperRef = useRef<HTMLSpanElement>(null);
+
+  function computePlacement(): 'top' | 'bottom' | 'left' | 'right' {
+    if (!wrapperRef.current) return side;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Flip if too close to an edge
+    if (side === 'top'    && rect.top    < 90)        return 'bottom';
+    if (side === 'bottom' && rect.bottom > vh - 90)   return 'top';
+    if (side === 'left'   && rect.left   < 170)       return 'right';
+    if (side === 'right'  && rect.right  > vw - 170)  return 'left';
+    return side;
+  }
 
   function show() {
+    setPlacement(computePlacement());
     timer.current = setTimeout(() => setVisible(true), delay);
   }
+
   function hide() {
     if (timer.current) clearTimeout(timer.current);
     setVisible(false);
@@ -33,6 +50,7 @@ export function Tooltip({ content, children, side = 'top', delay = 400, classNam
 
   return (
     <span
+      ref={wrapperRef}
       className="relative inline-flex"
       onMouseEnter={show}
       onMouseLeave={hide}
@@ -49,10 +67,10 @@ export function Tooltip({ content, children, side = 'top', delay = 400, classNam
             exit={{ opacity: 0, scale: 0.92 }}
             transition={{ duration: 0.1 }}
             className={cn(
-              'absolute z-50 px-2 py-1 text-xs font-medium',
+              'absolute z-[9999] px-2 py-1 text-xs font-medium',
               'bg-surface-2 border border-border text-foreground',
-              'rounded-md shadow-md whitespace-nowrap pointer-events-none',
-              positions[side],
+              'rounded-md shadow-lg whitespace-nowrap pointer-events-none',
+              positions[placement],
               className,
             )}
           >

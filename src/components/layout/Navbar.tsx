@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useMatch } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAppContext } from '@/store/AppContext';
 import { Button } from '@/components/ui/button';
@@ -36,7 +36,9 @@ function ThemeToggle() {
 function RepoStats() {
   const { state } = useAppContext();
   const { graphData, allCommits, branches, tags } = state;
-  if (!graphData) return null;
+  const onRepoPage = useMatch('/:owner/:repo');
+  // Hide stats when no repo is loaded or user is on the home page
+  if (!graphData || !onRepoPage) return null;
 
   const stats = [
     {
@@ -72,7 +74,7 @@ function RepoStats() {
     {
       label: 'lanes',
       value: String(graphData.laneCount),
-      title: `${graphData.laneCount} parallel lanes`,
+      title: `${graphData.laneCount} lanes — width of the branch graph`,
       icon: (
         <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="opacity-70">
           <line x1="3" y1="2" x2="3" y2="14"/>

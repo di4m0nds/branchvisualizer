@@ -4,6 +4,7 @@ import {
 } from 'react';
 import { useAppContext } from '@/store/AppContext';
 import AuthorPopup, { useAnchorRect } from '@/components/AuthorPopup';
+import DetailPanel from '@/components/DetailPanel';
 import type { GraphNode, Commit } from '@/types';
 import { hashColor, getInitials, timeAgo, cn } from '@/lib/utils';
 
@@ -464,18 +465,24 @@ export default function CommitListView() {
 
       {/* Scrollable list */}
       <div ref={listRef} className="flex-1 overflow-y-auto" role="grid">
-        {pageNodes.map(node => (
-          <CommitRow
-            key={node.commit.sha}
-            node={node}
-            isSelected={selectedNode?.commit.sha === node.commit.sha}
-            isDimmed={highlightedShas !== null && !highlightedShas.has(node.commit.sha)}
-            onSelect={handleSelect}
-            branchMap={graphData.branchMap}
-            tagMap={graphData.tagMap}
-            repoUrl={repoUrl}
-          />
-        ))}
+        {pageNodes.map(node => {
+          const isSelected = selectedNode?.commit.sha === node.commit.sha;
+          return (
+            <div key={node.commit.sha}>
+              <CommitRow
+                node={node}
+                isSelected={isSelected}
+                isDimmed={highlightedShas !== null && !highlightedShas.has(node.commit.sha)}
+                onSelect={handleSelect}
+                branchMap={graphData.branchMap}
+                tagMap={graphData.tagMap}
+                repoUrl={repoUrl}
+              />
+              {/* Inline detail panel — rendered just below the focused commit row */}
+              {isSelected && <DetailPanel mode="inline" />}
+            </div>
+          );
+        })}
       </div>
 
       {/* Pagination */}
