@@ -6,7 +6,7 @@ import FilesTab from './FilesTab';
 import ReadmeTab from './ReadmeTab';
 import PRsIssuesTab from './PRsIssuesTab';
 import { cn } from '@/lib/utils';
-import type { TabId, SplitLayout, GraphDirection } from '@/types';
+import type { TabId, SplitLayout } from '@/types';
 
 // ─── Tab config ────────────────────────────────────────────────────────────
 

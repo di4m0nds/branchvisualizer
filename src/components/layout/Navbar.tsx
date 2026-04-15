@@ -109,7 +109,6 @@ function RepoStats() {
 
 export default function Navbar() {
   const { owner, repo } = useParams<{ owner: string; repo: string }>();
-  const { state } = useAppContext();
 
   return (
     <motion.header

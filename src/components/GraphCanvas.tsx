@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState, useMemo, type RefObject } fro
 import type { GraphData, GraphNode, ViewportState } from '../types';
 import { useAppContext } from '../store/AppContext';
 import { useCanvas } from '../hooks/useCanvas';
-import { renderGraph, renderMinimap, graphHeight, graphWidth } from '../graph/renderer';
+import { renderGraph, renderMinimap, graphHeight } from '../graph/renderer';
 import { nodeCanvasX, nodeCanvasY } from '../graph/renderer';
 import type { RenderOptions } from '../graph/renderer';
 

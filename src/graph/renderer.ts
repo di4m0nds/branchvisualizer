@@ -4,7 +4,7 @@
 // Viewport culling ensures only visible rows are processed each frame.
 // requestAnimationFrame is used by the caller; this file only draws.
 
-import type { GraphData, GraphEdge, GraphNode, Tag, Branch } from '../types';
+import type { GraphData, GraphEdge, GraphNode } from '../types';
 import {
   GRAPH_PADDING_LEFT,
   GRAPH_PADDING_TOP,
@@ -538,7 +538,7 @@ function drawNodeLabelsHorizontal(
   labelY: number,
   isHighlighted: boolean,
   isSelected: boolean,
-  colors: ThemeColors,
+  _colors: ThemeColors,
 ): void {
   ctx.globalAlpha = isHighlighted ? (isSelected ? 0.9 : 0.6) : 0.15;
   ctx.font = '9px "SF Mono", monospace';
