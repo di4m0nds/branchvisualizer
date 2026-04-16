@@ -3,9 +3,10 @@ import AuthorPopup, { AuthorCard, useAnchorRect } from '@/components/AuthorPopup
 import { cn, copyToClipboard } from '@/lib/utils';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { fetchCommitDetails, setToken, type CommitDetails, type CommitFile } from '@/lib/github';
-import type { CommitAuthor } from '@/types';
+import type { CommitAuthor, GraphNode } from '@/types';
 
 // ─── Author card with hover tooltip ──────────────────────────────────────────
 
@@ -37,20 +38,20 @@ function extractPRNumber(subject: string, body: string): string | null {
 // ─── Shared header ────────────────────────────────────────────────────────────
 
 interface HeaderProps {
+  node: GraphNode;
   mode: 'floating' | 'inline';
   minimized: boolean;
   onMinimize: () => void;
+  onClose: () => void;
   onDragHandleMouseDown?: (e: React.MouseEvent) => void;
 }
 
-function PanelHeader({ mode, minimized, onMinimize, onDragHandleMouseDown }: HeaderProps) {
-  const { state, dispatch } = useAppContext();
-  const { selectedNode, graphData, repoInfo } = state;
+function PanelHeader({ node, mode, minimized, onMinimize, onClose, onDragHandleMouseDown }: HeaderProps) {
+  const { state } = useAppContext();
+  const { graphData, repoInfo } = state;
   const [copied, setCopied] = useState(false);
 
-  if (!selectedNode) return null;
-
-  const { commit, color } = selectedNode;
+  const { commit, color } = node;
   const tags = graphData?.tagMap.get(commit.sha) ?? [];
   const branches = graphData?.branchMap.get(commit.sha) ?? [];
   const prNumber = commit.isMerge ? extractPRNumber(commit.subject, commit.body) : null;
@@ -165,7 +166,7 @@ function PanelHeader({ mode, minimized, onMinimize, onDragHandleMouseDown }: Hea
           </button>
         )}
         <button
-          onClick={() => dispatch({ type: 'SELECT_NODE', node: null })}
+          onClick={onClose}
           title="Close (Esc)"
           className="w-5 h-5 rounded flex items-center justify-center
                      text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
@@ -269,14 +270,13 @@ function DetailsSkeleton() {
 
 // ─── Floating panel body ──────────────────────────────────────────────────────
 
-function FloatingBody({ details, detailsLoading }: { details: CommitDetails | null; detailsLoading: boolean }) {
+function FloatingBody({ node, details, detailsLoading }: { node: GraphNode; details: CommitDetails | null; detailsLoading: boolean }) {
   const { state, dispatch } = useAppContext();
-  const { selectedNode, graphData, repoInfo } = state;
+  const { graphData, repoInfo } = state;
   const [bodyExpanded, setBodyExpanded] = useState(false);
   const prevShaRef = useRef<string | null>(null);
 
-  if (!selectedNode) return null;
-  const { commit, color } = selectedNode;
+  const { commit, color } = node;
 
   if (prevShaRef.current !== commit.sha) {
     prevShaRef.current = commit.sha;
@@ -290,8 +290,8 @@ function FloatingBody({ details, detailsLoading }: { details: CommitDetails | nu
 
   function selectParent(sha: string) {
     if (!graphData) return;
-    const node = graphData.commitMap.get(sha);
-    if (node) { dispatch({ type: 'SELECT_NODE', node }); dispatch({ type: 'SCROLL_TO_SHA', sha }); }
+    const n = graphData.commitMap.get(sha);
+    if (n) { dispatch({ type: 'SELECT_NODE', node: n }); dispatch({ type: 'SCROLL_TO_SHA', sha }); }
   }
 
   return (
@@ -409,13 +409,12 @@ function FloatingBody({ details, detailsLoading }: { details: CommitDetails | nu
 
 // ─── Inline panel body ────────────────────────────────────────────────────────
 
-function InlineBody({ details, detailsLoading }: { details: CommitDetails | null; detailsLoading: boolean }) {
+function InlineBody({ node, details, detailsLoading }: { node: GraphNode; details: CommitDetails | null; detailsLoading: boolean }) {
   const { state, dispatch } = useAppContext();
-  const { selectedNode, graphData, repoInfo } = state;
+  const { graphData, repoInfo } = state;
   const [bodyExpanded, setBodyExpanded] = useState(false);
 
-  if (!selectedNode) return null;
-  const { commit, color } = selectedNode;
+  const { commit, color } = node;
   const parentNodes = commit.parents
     .map(sha => graphData?.commitMap.get(sha))
     .filter((n): n is NonNullable<typeof n> => !!n);
@@ -424,8 +423,8 @@ function InlineBody({ details, detailsLoading }: { details: CommitDetails | null
 
   function selectParent(sha: string) {
     if (!graphData) return;
-    const node = graphData.commitMap.get(sha);
-    if (node) { dispatch({ type: 'SELECT_NODE', node }); dispatch({ type: 'SCROLL_TO_SHA', sha }); }
+    const n = graphData.commitMap.get(sha);
+    if (n) { dispatch({ type: 'SELECT_NODE', node: n }); dispatch({ type: 'SCROLL_TO_SHA', sha }); }
   }
 
   return (
@@ -570,16 +569,309 @@ function InlineBody({ details, detailsLoading }: { details: CommitDetails | null
   );
 }
 
-// ─── Floating panel — portal-based, freely draggable ─────────────────────────
+// ─── Commit detail fetcher (shared hook) ─────────────────────────────────────
+
+function useCommitDetails(node: GraphNode | null) {
+  const { state } = useAppContext();
+  const { repoInfo, token } = state;
+  const [commitDetails, setCommitDetails] = useState<CommitDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const fetchedShaRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!node || !repoInfo) {
+      setCommitDetails(null);
+      fetchedShaRef.current = null;
+      return;
+    }
+    const sha = node.commit.sha;
+    if (fetchedShaRef.current === sha) return;
+
+    fetchedShaRef.current = sha;
+    setCommitDetails(null);
+    setDetailsLoading(true);
+    setToken(token);
+
+    fetchCommitDetails(repoInfo.owner, repoInfo.repo, sha)
+      .then(d => {
+        if (fetchedShaRef.current === sha) setCommitDetails(d);
+      })
+      .catch(() => { })
+      .finally(() => {
+        if (fetchedShaRef.current === sha) setDetailsLoading(false);
+      });
+  }, [node?.commit.sha, repoInfo, token]);
+
+  return { commitDetails, detailsLoading };
+}
+
+// ─── Single accordion item for multi-select panel ────────────────────────────
+
+function AccordionItem({
+  node,
+  isExpanded,
+  onToggle,
+  onDeselect,
+}: {
+  node: GraphNode;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onDeselect: () => void;
+}) {
+  const { state } = useAppContext();
+  const { graphData } = state;
+  const { commitDetails, detailsLoading } = useCommitDetails(isExpanded ? node : null);
+
+  const { commit, color } = node;
+  const branches = graphData?.branchMap.get(commit.sha) ?? [];
+  const tags = graphData?.tagMap.get(commit.sha) ?? [];
+  const prNumber = commit.isMerge ? extractPRNumber(commit.subject, commit.body) : null;
+
+  return (
+    <div className="border-b border-border/70 last:border-b-0">
+      {/* Accordion header */}
+      <button
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-accent/40 transition-colors group"
+        onClick={onToggle}
+      >
+        {/* Color dot */}
+        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+
+        {/* SHA */}
+        <code className="text-[11px] font-mono flex-shrink-0" style={{ color }}>
+          {commit.shortSha}
+        </code>
+
+        {/* Merge badge */}
+        {commit.isMerge && (
+          <span className="px-1 py-0.5 rounded text-[9px] font-mono flex-shrink-0
+                           bg-purple-500/10 border border-purple-500/25 text-purple-400">
+            merge
+          </span>
+        )}
+        {prNumber && (
+          <span className="text-[9px] font-mono text-purple-400 flex-shrink-0">#{prNumber}</span>
+        )}
+
+        {/* Branch/tag badges */}
+        {branches.slice(0, 1).map(b => (
+          <span key={b.name}
+            className="px-1 py-0.5 rounded text-[9px] font-mono border truncate max-w-[70px] flex-shrink-0"
+            style={{ color, borderColor: `${color}45`, background: `${color}12` }}
+            title={b.name}
+          >
+            {b.name}
+          </span>
+        ))}
+        {tags.slice(0, 1).map(t => (
+          <span key={t.name}
+            className="px-1 py-0.5 rounded text-[9px] font-mono flex-shrink-0
+                       bg-amber-500/10 border border-amber-500/25 text-amber-500 truncate max-w-[70px]"
+            title={t.name}
+          >
+            🏷 {t.name}
+          </span>
+        ))}
+
+        {/* Subject */}
+        <span className="flex-1 min-w-0 text-xs text-foreground truncate">
+          {commit.subject}
+        </span>
+
+        {/* Chevron */}
+        <svg
+          width="9" height="9" viewBox="0 0 10 10" fill="none"
+          stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+          className={cn(
+            'flex-shrink-0 text-muted-foreground transition-transform duration-200',
+            isExpanded && 'rotate-180',
+          )}
+        >
+          <path d="M2 3.5l3 3 3-3" />
+        </svg>
+
+        {/* Deselect button */}
+        <span
+          role="button"
+          title="Remove from selection"
+          onClick={e => { e.stopPropagation(); onDeselect(); }}
+          className="flex-shrink-0 w-4 h-4 rounded flex items-center justify-center
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors opacity-0 group-hover:opacity-100"
+        >
+          <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <line x1="1" y1="1" x2="9" y2="9" />
+            <line x1="9" y1="1" x2="1" y2="9" />
+          </svg>
+        </span>
+      </button>
+
+      {/* Expanded body */}
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            key="body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <FloatingBody node={node} details={commitDetails} detailsLoading={detailsLoading} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Multi-select floating panel ─────────────────────────────────────────────
+
+interface MultiSelectFloatingPanelProps {
+  nodes: GraphNode[];
+}
+
+function MultiSelectFloatingPanel({ nodes }: MultiSelectFloatingPanelProps) {
+  const { dispatch } = useAppContext();
+  const [expandedSha, setExpandedSha] = useState<string | null>(null);
+
+  const PANEL_W = 340;
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 540;
+
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
+    const sw = typeof window !== 'undefined' ? window.innerWidth : 800;
+    const sh = typeof window !== 'undefined' ? window.innerHeight : 600;
+    if (sw < 540) {
+      return { x: Math.max(8, (sw - PANEL_W) / 2), y: Math.max(16, Math.round(sh * 0.15)) };
+    }
+    return { x: Math.max(16, sw - PANEL_W - 16), y: 16 };
+  });
+
+  const isDraggingPanel = useRef(false);
+  const dragOrigin = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
+
+  // When a new node is added to selection, expand it
+  const prevNodeCount = useRef(nodes.length);
+  useEffect(() => {
+    if (nodes.length > prevNodeCount.current) {
+      // A new node was added — expand it
+      setExpandedSha(nodes[nodes.length - 1].commit.sha);
+    }
+    prevNodeCount.current = nodes.length;
+  }, [nodes]);
+
+  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, a')) return;
+    e.preventDefault();
+    isDraggingPanel.current = true;
+    dragOrigin.current = { mouseX: e.clientX, mouseY: e.clientY, panelX: pos.x, panelY: pos.y };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingPanel.current) return;
+      setPos({
+        x: dragOrigin.current.panelX + (ev.clientX - dragOrigin.current.mouseX),
+        y: dragOrigin.current.panelY + (ev.clientY - dragOrigin.current.mouseY),
+      });
+    };
+    const onMouseUp = () => {
+      isDraggingPanel.current = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, [pos]);
+
+  function handleToggle(sha: string) {
+    setExpandedSha(prev => prev === sha ? null : sha);
+  }
+
+  function handleDeselect(node: GraphNode) {
+    dispatch({ type: 'TOGGLE_MULTI_SELECT', node });
+  }
+
+  function handleClearAll() {
+    dispatch({ type: 'SELECT_NODE', node: null });
+  }
+
+  const panelWidth = isMobile ? Math.min(PANEL_W, window.innerWidth - 16) : PANEL_W;
+  const panelMaxH = isMobile ? `${window.innerHeight - 48}px` : 'calc(100vh - 32px)';
+
+  const panel = (
+    <div
+      style={{
+        position: 'fixed',
+        left: pos.x,
+        top: pos.y,
+        zIndex: 9999,
+        width: panelWidth,
+        maxHeight: panelMaxH,
+      }}
+      className="flex flex-col rounded-xl border border-border bg-card/95 backdrop-blur-sm
+                 shadow-2xl overflow-hidden"
+    >
+      {/* Multi-select panel header */}
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0
+                   cursor-grab active:cursor-grabbing select-none"
+        onMouseDown={onHeaderMouseDown}
+      >
+        <div className="flex-shrink-0 flex flex-col gap-[3px] pr-1 opacity-30">
+          <div className="w-3 h-px bg-current rounded-full" />
+          <div className="w-3 h-px bg-current rounded-full" />
+          <div className="w-3 h-px bg-current rounded-full" />
+        </div>
+        <span className="text-xs font-semibold text-foreground flex-1">
+          {nodes.length} commits selected
+        </span>
+        <span
+          onMouseDown={e => e.stopPropagation()}
+          className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors px-1"
+          onClick={handleClearAll}
+        >
+          clear all
+        </span>
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onClick={handleClearAll}
+          title="Close"
+          className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0
+                     text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+        >
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <line x1="1" y1="1" x2="9" y2="9" />
+            <line x1="9" y1="1" x2="1" y2="9" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Accordion list */}
+      <div className="flex-1 overflow-y-auto">
+        {nodes.map(node => (
+          <AccordionItem
+            key={node.commit.sha}
+            node={node}
+            isExpanded={expandedSha === node.commit.sha}
+            onToggle={() => handleToggle(node.commit.sha)}
+            onDeselect={() => handleDeselect(node)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+
+  return createPortal(panel, document.body);
+}
+
+// ─── Single floating panel — portal-based, freely draggable ──────────────────
 
 interface FloatingPanelProps {
+  node: GraphNode;
   details: CommitDetails | null;
   detailsLoading: boolean;
 }
 
-function FloatingPanel({ details, detailsLoading }: FloatingPanelProps) {
-  const { state } = useAppContext();
-  const { selectedNode } = state;
+function FloatingPanel({ node, details, detailsLoading }: FloatingPanelProps) {
+  const { dispatch } = useAppContext();
   const [minimized, setMinimized] = useState(false);
 
   const PANEL_W = 320;
@@ -604,15 +896,6 @@ function FloatingPanel({ details, detailsLoading }: FloatingPanelProps) {
   const isDraggingPanel = useRef(false);
   const dragOrigin = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
-
-  const prevShaSeen = useRef<string | null>(null);
-  useEffect(() => {
-    if (!selectedNode) return;
-    const sha = selectedNode.commit.sha;
-    if (prevShaSeen.current !== sha) {
-      prevShaSeen.current = sha;
-    }
-  }, [selectedNode]);
 
   const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return;
@@ -643,8 +926,6 @@ function FloatingPanel({ details, detailsLoading }: FloatingPanelProps) {
     window.addEventListener('mouseup', onMouseUp);
   }, [pos]);
 
-  if (!selectedNode) return null;
-
   const panelWidth = isMobile ? Math.min(PANEL_W, window.innerWidth - 16) : PANEL_W;
   const panelMaxH = isMobile ? `${window.innerHeight - 48}px` : 'calc(100vh - 32px)';
 
@@ -663,12 +944,14 @@ function FloatingPanel({ details, detailsLoading }: FloatingPanelProps) {
                  shadow-2xl overflow-hidden"
     >
       <PanelHeader
+        node={node}
         mode="floating"
         minimized={minimized}
         onMinimize={() => setMinimized(v => !v)}
+        onClose={() => dispatch({ type: 'SELECT_NODE', node: null })}
         onDragHandleMouseDown={onHeaderMouseDown}
       />
-      {!minimized && <FloatingBody details={details} detailsLoading={detailsLoading} />}
+      {!minimized && <FloatingBody node={node} details={details} detailsLoading={detailsLoading} />}
     </div>
   );
 
@@ -679,49 +962,50 @@ function FloatingPanel({ details, detailsLoading }: FloatingPanelProps) {
 
 interface DetailPanelProps {
   mode?: 'floating' | 'inline';
+  /** Optional node override — when provided, renders this node instead of state.selectedNode */
+  node?: GraphNode;
 }
 
-export default function DetailPanel({ mode = 'floating' }: DetailPanelProps) {
-  const { state } = useAppContext();
-  const { selectedNode, graphData, repoInfo, token } = state;
-  const [commitDetails, setCommitDetails] = useState<CommitDetails | null>(null);
-  const [detailsLoading, setDetailsLoading] = useState(false);
-  const fetchedShaRef = useRef<string | null>(null);
+export default function DetailPanel({ mode = 'floating', node: nodeProp }: DetailPanelProps) {
+  const { state, dispatch } = useAppContext();
+  const { selectedNode, selectedNodes, graphData } = state;
 
-  useEffect(() => {
-    if (!selectedNode || !repoInfo) {
-      setCommitDetails(null);
-      fetchedShaRef.current = null;
-      return;
-    }
-    const sha = selectedNode.commit.sha;
-    if (fetchedShaRef.current === sha) return;
+  // For inline mode with explicit node prop (multi-select in CommitListView)
+  const inlineNode = nodeProp ?? selectedNode;
+  const { commitDetails, detailsLoading } = useCommitDetails(inlineNode);
 
-    fetchedShaRef.current = sha;
-    setCommitDetails(null);
-    setDetailsLoading(true);
-    setToken(token);
+  if (!graphData) return null;
 
-    fetchCommitDetails(repoInfo.owner, repoInfo.repo, sha)
-      .then(d => {
-        if (fetchedShaRef.current === sha) setCommitDetails(d);
-      })
-      .catch(() => { })
-      .finally(() => {
-        if (fetchedShaRef.current === sha) setDetailsLoading(false);
-      });
-  }, [selectedNode?.commit.sha, repoInfo, token]);
-
-  if (!selectedNode || !graphData) return null;
-
+  // ── Inline mode ─────────────────────────────────────────────────────────
   if (mode === 'inline') {
+    if (!inlineNode) return null;
     return (
       <div className="w-full bg-card/40 border-b border-border/70">
-        <PanelHeader mode="inline" minimized={false} onMinimize={() => { }} />
-        <InlineBody details={commitDetails} detailsLoading={detailsLoading} />
+        <PanelHeader
+          node={inlineNode}
+          mode="inline"
+          minimized={false}
+          onMinimize={() => { }}
+          onClose={() => {
+            if (nodeProp) {
+              // Deselect this specific node from multi-selection
+              dispatch({ type: 'TOGGLE_MULTI_SELECT', node: nodeProp });
+            } else {
+              dispatch({ type: 'SELECT_NODE', node: null });
+            }
+          }}
+        />
+        <InlineBody node={inlineNode} details={commitDetails} detailsLoading={detailsLoading} />
       </div>
     );
   }
 
-  return <FloatingPanel details={commitDetails} detailsLoading={detailsLoading} />;
+  // ── Floating mode — multi-select accordion ──────────────────────────────
+  if (selectedNodes.length > 1) {
+    return <MultiSelectFloatingPanel nodes={selectedNodes} />;
+  }
+
+  // ── Floating mode — single select ────────────────────────────────────────
+  if (!selectedNode) return null;
+  return <FloatingPanel node={selectedNode} details={commitDetails} detailsLoading={detailsLoading} />;
 }

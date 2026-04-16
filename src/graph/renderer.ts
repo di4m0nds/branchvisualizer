@@ -29,6 +29,8 @@ export interface RenderOptions {
   offsetX: number;
   offsetY: number;
   selectedSha: string | null;
+  /** Set of all selected SHAs (for multi-select highlighting) */
+  selectedShas?: Set<string> | null;
   hoveredSha: string | null;
   highlightedShas: Set<string> | null; // null = no filter active
   showMessages: boolean;
@@ -193,12 +195,14 @@ export function renderGraph(
     ? buildDisplacementMap(opts.dragState, graph)
     : null;
 
+  const multiSelectedShas = opts.selectedShas ?? null;
+
   drawLaneRails(ctx, graph, minRow, maxRow, colors, dir);
-  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir, animTime, opts.dragState ?? null, dispMap);
-  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir, animTime, opts.dragState ?? null, dispMap, opts.mouseGx, opts.mouseGy);
+  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir, animTime, opts.dragState ?? null, dispMap, multiSelectedShas);
+  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir, animTime, opts.dragState ?? null, dispMap, opts.mouseGx, opts.mouseGy, multiSelectedShas);
 
   if (scale > 0.35) {
-    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors, dir, opts.dragState ?? null, dispMap);
+    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors, dir, opts.dragState ?? null, dispMap, multiSelectedShas);
   }
 
   // Elastic drag overlay — drawn on top of everything else
@@ -411,6 +415,7 @@ function drawEdges(
   animTime: number,
   dragState: DragState | null,
   dispMap: Map<string, { dx: number; dy: number }> | null,
+  multiSelectedShas?: Set<string> | null,
 ): void {
   ctx.save();
   ctx.lineCap = 'round';
@@ -426,7 +431,12 @@ function drawEdges(
       highlightedShas.has(edge.fromSha) ||
       highlightedShas.has(edge.toSha);
 
-    const isConnected = selectedSha === edge.fromSha || selectedSha === edge.toSha;
+    // isConnected: edge touches the primary selected node (for animation) or any multi-selected node
+    const isPrimaryConnected = selectedSha === edge.fromSha || selectedSha === edge.toSha;
+    const isMultiConnected = multiSelectedShas
+      ? (multiSelectedShas.has(edge.fromSha) || multiSelectedShas.has(edge.toSha))
+      : false;
+    const isConnected = isPrimaryConnected || isMultiConnected;
 
     ctx.globalAlpha = isHighlighted ? (isConnected ? 1 : 0.75) : 0.18;
     ctx.strokeStyle = edge.color;
@@ -559,6 +569,7 @@ function drawNodes(
   dispMap: Map<string, { dx: number; dy: number }> | null,
   mouseGx?: number,
   mouseGy?: number,
+  multiSelectedShas?: Set<string> | null,
 ): void {
   ctx.save();
 
@@ -572,6 +583,7 @@ function drawNodes(
     if (dragState && sha === dragState.sha) continue;
 
     const isSelected = sha === selectedSha;
+    const isMultiSelected = !isSelected && (multiSelectedShas?.has(sha) ?? false);
     const isHovered = sha === hoveredSha;
     const isHighlighted = !highlightedShas || highlightedShas.has(sha);
 
@@ -601,17 +613,17 @@ function drawNodes(
 
     ctx.globalAlpha = alpha;
 
-    // ── Glow layers (selected or hovered) ─────────────────────────────────
-    if ((isSelected || isHovered) && isHighlighted) {
+    // ── Glow layers (selected, multi-selected or hovered) ─────────────────
+    if ((isSelected || isMultiSelected || isHovered) && isHighlighted) {
       ctx.save();
       // Outer glow
-      ctx.globalAlpha = isSelected ? 0.08 : 0.05;
+      ctx.globalAlpha = isSelected ? 0.08 : isMultiSelected ? 0.06 : 0.05;
       ctx.fillStyle = node.color;
       ctx.beginPath();
       ctx.arc(nx, ny, radius + 14, 0, Math.PI * 2);
       ctx.fill();
       // Inner glow
-      ctx.globalAlpha = isSelected ? 0.18 : 0.12;
+      ctx.globalAlpha = isSelected ? 0.18 : isMultiSelected ? 0.14 : 0.12;
       ctx.beginPath();
       ctx.arc(nx, ny, radius + 7, 0, Math.PI * 2);
       ctx.fill();
@@ -620,7 +632,7 @@ function drawNodes(
     }
 
     // ── Node fill ──────────────────────────────────────────────────────────
-    ctx.fillStyle = isSelected ? colors.selectedRing : node.color;
+    ctx.fillStyle = (isSelected || isMultiSelected) ? colors.selectedRing : node.color;
     ctx.beginPath();
     ctx.arc(nx, ny, radius, 0, Math.PI * 2);
     ctx.fill();
@@ -628,7 +640,7 @@ function drawNodes(
     // ── Inner specular highlight ───────────────────────────────────────────
     if (isHighlighted) {
       ctx.save();
-      ctx.globalAlpha = isSelected ? 0.45 : 0.28;
+      ctx.globalAlpha = (isSelected || isMultiSelected) ? 0.45 : 0.28;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(nx - radius * 0.28, ny - radius * 0.28, radius * 0.38, 0, Math.PI * 2);
@@ -637,9 +649,9 @@ function drawNodes(
     }
 
     // ── Stroke ring ────────────────────────────────────────────────────────
-    if (isSelected || isHovered) {
-      ctx.strokeStyle = isSelected ? colors.selectedRing : node.color;
-      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+    if (isSelected || isMultiSelected || isHovered) {
+      ctx.strokeStyle = (isSelected || isMultiSelected) ? colors.selectedRing : node.color;
+      ctx.lineWidth = (isSelected || isMultiSelected) ? 2.5 : 1.5;
       ctx.globalAlpha = 1;
       ctx.beginPath();
       ctx.arc(nx, ny, radius, 0, Math.PI * 2);
@@ -653,10 +665,10 @@ function drawNodes(
       ctx.stroke();
     }
 
-    // ── Orbiting dashed arc (selected + animating) ─────────────────────────
-    if (isSelected && animTime > 0) {
+    // ── Orbiting dashed arc (any selected node — primary or multi) ────────────
+    if ((isSelected || isMultiSelected) && isHighlighted && animTime > 0) {
       ctx.save();
-      ctx.globalAlpha = 0.75;
+      ctx.globalAlpha = isSelected ? 0.75 : 0.55;
       ctx.strokeStyle = colors.selectedRing;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 3]);
@@ -701,6 +713,7 @@ function drawLabels(
   dir: 'vertical' | 'horizontal',
   dragState: DragState | null,
   dispMap: Map<string, { dx: number; dy: number }> | null,
+  multiSelectedShas?: Set<string> | null,
 ): void {
   ctx.save();
   ctx.textBaseline = 'middle';
@@ -714,7 +727,7 @@ function drawLabels(
     if (dragState && sha === dragState.sha) continue;
 
     const isHighlighted = !highlightedShas || highlightedShas.has(sha);
-    const isSelected = sha === selectedSha;
+    const isSelected = sha === selectedSha || (multiSelectedShas?.has(sha) ?? false);
 
     const disp = dispMap?.get(sha);
     const nx = nodeCanvasX(node, dir) + (disp?.dx ?? 0);
