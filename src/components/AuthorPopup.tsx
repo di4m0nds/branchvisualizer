@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, type RefObject } from 'react';
+import React, { useMemo, useEffect, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppContext } from '@/store/AppContext';
 import type { CommitAuthor } from '@/types';
@@ -40,6 +40,13 @@ export default function AuthorPopup({ author, anchorRect }: AuthorPopupProps) {
   const left = Math.min(anchorRect.left, window.innerWidth - POPUP_WIDTH - 8);
   const top  = anchorRect.top - 8; // will shift up with transform
 
+  const profileUrl = author.login ? `https://github.com/${author.login}` : null;
+
+  function openProfile(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (profileUrl) window.open(profileUrl, '_blank', 'noreferrer');
+  }
+
   return createPortal(
     <div
       className="fixed z-[9999] w-56 rounded-xl border border-border bg-popover shadow-xl
@@ -51,8 +58,13 @@ export default function AuthorPopup({ author, anchorRect }: AuthorPopupProps) {
         transform: 'translateY(-100%)',
       }}
     >
-      {/* Header */}
-      <div className="flex items-center gap-2.5">
+      {/* Header — clickable if GitHub login is known */}
+      <div
+        className={`flex items-center gap-2.5 pointer-events-auto rounded-lg -m-1 p-1
+                   ${profileUrl ? 'cursor-pointer hover:bg-accent/60 transition-colors' : ''}`}
+        onClick={openProfile}
+        title={profileUrl ? `View @${author.login} on GitHub` : undefined}
+      >
         {author.avatarUrl ? (
           <img
             src={author.avatarUrl}
@@ -79,6 +91,12 @@ export default function AuthorPopup({ author, anchorRect }: AuthorPopupProps) {
             <span className="text-xs text-muted-foreground truncate">{author.email}</span>
           )}
         </div>
+        {profileUrl && (
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"
+               className="ml-auto flex-shrink-0 opacity-40">
+            <path d="M2 10L10 2M10 2H5M10 2v5"/>
+          </svg>
+        )}
       </div>
 
       <div className="border-t border-border" />
@@ -139,40 +157,58 @@ interface AuthorCardProps {
 export function AuthorCard({ author, label }: AuthorCardProps) {
   const color = hashColor(author.name);
   const initials = getInitials(author.name);
+  const profileUrl = author.login ? `https://github.com/${author.login}` : null;
+
+  const inner = (
+    <div className="flex items-center gap-2.5">
+      {author.avatarUrl ? (
+        <img
+          src={author.avatarUrl}
+          alt={author.name}
+          className="w-7 h-7 rounded-full border border-border flex-shrink-0"
+        />
+      ) : (
+        <div
+          className="w-7 h-7 rounded-full border flex-shrink-0 flex items-center justify-center text-xs font-semibold"
+          style={{ background: `${color}22`, color, borderColor: `${color}60` }}
+        >
+          {initials}
+        </div>
+      )}
+      <div className="flex flex-col min-w-0">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-sm font-medium text-foreground truncate">{author.name}</span>
+          {author.login && (
+            <span className="text-xs text-muted-foreground">@{author.login}</span>
+          )}
+        </div>
+        {author.email && (
+          <span className="text-xs text-muted-foreground truncate">{author.email}</span>
+        )}
+        <span className="text-xs text-muted-foreground" title={formatDate(author.date)}>
+          {formatDate(author.date)}
+        </span>
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-2.5">
-        {author.avatarUrl ? (
-          <img
-            src={author.avatarUrl}
-            alt={author.name}
-            className="w-7 h-7 rounded-full border border-border flex-shrink-0"
-          />
-        ) : (
-          <div
-            className="w-7 h-7 rounded-full border flex-shrink-0 flex items-center justify-center text-xs font-semibold"
-            style={{ background: `${color}22`, color, borderColor: `${color}60` }}
-          >
-            {initials}
-          </div>
-        )}
-        <div className="flex flex-col min-w-0">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-sm font-medium text-foreground truncate">{author.name}</span>
-            {author.login && (
-              <span className="text-xs text-muted-foreground">@{author.login}</span>
-            )}
-          </div>
-          {author.email && (
-            <span className="text-xs text-muted-foreground truncate">{author.email}</span>
-          )}
-          <span className="text-xs text-muted-foreground" title={formatDate(author.date)}>
-            {formatDate(author.date)}
-          </span>
-        </div>
-      </div>
+      {profileUrl ? (
+        <a
+          href={profileUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-lg hover:bg-accent/60 transition-colors -mx-1 px-1 py-0.5"
+          title={`View @${author.login} on GitHub`}
+          onClick={e => e.stopPropagation()}
+        >
+          {inner}
+        </a>
+      ) : (
+        inner
+      )}
     </div>
   );
 }

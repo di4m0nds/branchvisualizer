@@ -1,4 +1,4 @@
-import {
+import React, {
   useMemo, useCallback, useState, useRef, useEffect,
   type CSSProperties,
 } from 'react';
@@ -79,13 +79,22 @@ function AuthorCell({ commit }: { commit: Commit }) {
   const { author } = commit;
   const color = hashColor(author.name);
   const initials = getInitials(author.name);
+  const profileUrl = author.login ? `https://github.com/${author.login}` : null;
+
+  function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (profileUrl) window.open(profileUrl, '_blank', 'noreferrer');
+  }
 
   return (
     <div
       ref={anchorRef}
-      className="flex items-center gap-1.5 min-w-0"
+      className={`flex items-center gap-1.5 min-w-0 rounded
+                 ${profileUrl ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
       onMouseEnter={() => setShowPopup(true)}
       onMouseLeave={() => setShowPopup(false)}
+      onClick={handleClick}
+      title={profileUrl ? `View @${author.login} on GitHub` : author.name}
     >
       {author.avatarUrl ? (
         <img src={author.avatarUrl} alt={author.name}
@@ -441,10 +450,10 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
   const handleSelect = useCallback((node: GraphNode) => {
     const isSame = selectedNode?.commit.sha === node.commit.sha;
     dispatch({ type: 'SELECT_NODE', node: isSame ? null : node });
-    if (!isSame) {
-      // Pan graph canvas to this node when selected from list
-      dispatch({ type: 'SCROLL_TO_SHA', sha: node.commit.sha });
-    }
+    // Intentionally NOT dispatching SCROLL_TO_SHA — clicking a commit in the
+    // list must NOT re-pan the canvas. The canvas → list direction (clicking a
+    // graph node scrolls the list to that row) is preserved via the
+    // selectedNode useEffect above.
   }, [dispatch, selectedNode]);
 
   if (!graphData) {
