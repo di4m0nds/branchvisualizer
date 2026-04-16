@@ -136,6 +136,7 @@ export interface AppState {
   allCommits: Commit[];
   loadState: LoadState;
   selectedNode: GraphNode | null;
+  selectedNodes: GraphNode[];
   hoveredNode: GraphNode | null;
   filter: FilterState;
   viewport: ViewportState;
@@ -171,6 +172,7 @@ export type AppAction =
   | { type: 'LOAD_ERROR'; message: string }
   | { type: 'RESET' }
   | { type: 'SELECT_NODE'; node: GraphNode | null }
+  | { type: 'TOGGLE_MULTI_SELECT'; node: GraphNode }
   | { type: 'HOVER_NODE'; node: GraphNode | null }
   | { type: 'SET_FILTER'; filter: Partial<FilterState> }
   | { type: 'SET_VIEWPORT'; viewport: Partial<ViewportState> }

@@ -1,13 +1,22 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { toast } from '@/services/toast';
 import { parseGitHubURL } from '../lib/parser';
-import { fetchFullRepository, setToken } from '../lib/github';
+import { fetchFullRepository, setToken, setRateLimitCallback } from '../lib/github';
 import { buildGraphData } from '../graph/layout';
 import { useAppContext } from '../store/AppContext';
 import { addToHistory } from '../lib/history';
 
 export function useRepoData() {
   const { state, dispatch } = useAppContext();
+
+  // Register rate-limit callback once — fires after every GitHub API call
+  // so the token counter updates in real-time across the entire session.
+  useEffect(() => {
+    setRateLimitCallback((rateLimit) => {
+      dispatch({ type: 'SET_RATE_LIMIT', rateLimit });
+    });
+    return () => setRateLimitCallback(null);
+  }, [dispatch]);
 
   const loadRepo = useCallback(async (url: string) => {
     const parsed = parseGitHubURL(url);

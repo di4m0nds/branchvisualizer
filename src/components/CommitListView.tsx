@@ -1,4 +1,4 @@
-import {
+import React, {
   useMemo, useCallback, useState, useRef, useEffect,
   type CSSProperties,
 } from 'react';
@@ -79,13 +79,22 @@ function AuthorCell({ commit }: { commit: Commit }) {
   const { author } = commit;
   const color = hashColor(author.name);
   const initials = getInitials(author.name);
+  const profileUrl = author.login ? `https://github.com/${author.login}` : null;
+
+  function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (profileUrl) window.open(profileUrl, '_blank', 'noreferrer');
+  }
 
   return (
     <div
       ref={anchorRef}
-      className="flex items-center gap-1.5 min-w-0"
+      className={`flex items-center gap-1.5 min-w-0 rounded
+                 ${profileUrl ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
       onMouseEnter={() => setShowPopup(true)}
       onMouseLeave={() => setShowPopup(false)}
+      onClick={handleClick}
+      title={profileUrl ? `View @${author.login} on GitHub` : author.name}
     >
       {author.avatarUrl ? (
         <img src={author.avatarUrl} alt={author.name}
@@ -154,7 +163,7 @@ interface CommitRowProps {
   node: GraphNode;
   isSelected: boolean;
   isDimmed: boolean;
-  onSelect: (node: GraphNode) => void;
+  onSelect: (node: GraphNode, shiftHeld: boolean) => void;
   branchMap: Map<string, { name: string; isDefault: boolean; isRemote: boolean }[]>;
   tagMap: Map<string, { name: string }[]>;
   repoUrl: string | null;
@@ -167,7 +176,7 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, re
   const prNumber = commit.isMerge ? extractPRNumber(commit.subject, commit.body) : null;
 
   const [hovered, setHovered] = useState(false);
-  const handleClick = useCallback(() => onSelect(node), [node, onSelect]);
+  const handleClick = useCallback((e: React.MouseEvent) => onSelect(node, e.shiftKey), [node, onSelect]);
 
   const bgStyle: CSSProperties = {};
   if (isSelected) {
@@ -185,7 +194,7 @@ function CommitRow({ node, isSelected, isDimmed, onSelect, branchMap, tagMap, re
         isDimmed && 'opacity-30',
       )}
       style={bgStyle}
-      onClick={handleClick}
+      onClick={(e) => handleClick(e)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       role="row"
@@ -356,7 +365,8 @@ function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationPro
 
 export default function CommitListView({ isActive = true }: { isActive?: boolean }) {
   const { state, dispatch } = useAppContext();
-  const { graphData, filter, selectedNode, branches, repoInfo } = state;
+  const { graphData, filter, selectedNode, selectedNodes, branches, repoInfo } = state;
+  const selectedShaSet = new Set(selectedNodes.map(n => n.commit.sha));
 
   const [page, setPage]         = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);
@@ -438,14 +448,18 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
-  const handleSelect = useCallback((node: GraphNode) => {
-    const isSame = selectedNode?.commit.sha === node.commit.sha;
-    dispatch({ type: 'SELECT_NODE', node: isSame ? null : node });
-    if (!isSame) {
-      // Pan graph canvas to this node when selected from list
-      dispatch({ type: 'SCROLL_TO_SHA', sha: node.commit.sha });
+  const handleSelect = useCallback((node: GraphNode, shiftHeld: boolean) => {
+    if (shiftHeld) {
+      dispatch({ type: 'TOGGLE_MULTI_SELECT', node });
+    } else {
+      const isSame = selectedNodes.length === 1 && selectedNode?.commit.sha === node.commit.sha;
+      dispatch({ type: 'SELECT_NODE', node: isSame ? null : node });
     }
-  }, [dispatch, selectedNode]);
+    // Intentionally NOT dispatching SCROLL_TO_SHA — clicking a commit in the
+    // list must NOT re-pan the canvas. The canvas → list direction (clicking a
+    // graph node scrolls the list to that row) is preserved via the
+    // selectedNode useEffect above.
+  }, [dispatch, selectedNode, selectedNodes]);
 
   if (!graphData) {
     return (
@@ -469,11 +483,57 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
     );
   }
 
+  const repoUrl = repoInfo?.url ?? null;
+
+  // ── Multi-select mode: show only the selected commits with all panels open ──
+  const isMultiSelectMode = selectedNodes.length > 1;
+
+  if (isMultiSelectMode) {
+    return (
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        {/* Multi-select header */}
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-border
+                        bg-muted/30 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground
+                        flex-shrink-0">
+          <div className="w-0.5 flex-shrink-0" />
+          <span className="flex-1">
+            {selectedNodes.length} commits selected
+          </span>
+          <button
+            className="font-normal normal-case tracking-normal text-muted-foreground hover:text-foreground
+                       transition-colors"
+            onClick={() => dispatch({ type: 'SELECT_NODE', node: null })}
+          >
+            clear selection
+          </button>
+        </div>
+
+        {/* Selected commits only — all panels open */}
+        <div ref={listRef} className="flex-1 overflow-y-auto" role="grid">
+          {selectedNodes.map(node => (
+            <div key={node.commit.sha}>
+              <CommitRow
+                node={node}
+                isSelected={true}
+                isDimmed={false}
+                onSelect={handleSelect}
+                branchMap={graphData.branchMap}
+                tagMap={graphData.tagMap}
+                repoUrl={repoUrl}
+              />
+              <DetailPanel mode="inline" node={node} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Normal mode: paginated list ─────────────────────────────────────────────
   const totalPages = Math.ceil(nodes.length / pageSize);
   const safePageSize = Math.min(pageSize, 50);
   const safePage = Math.min(page, Math.max(0, totalPages - 1));
   const pageNodes = nodes.slice(safePage * safePageSize, (safePage + 1) * safePageSize);
-  const repoUrl = repoInfo?.url ?? null;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -487,12 +547,17 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
         <span className="hidden md:block w-32">Branches / Tags</span>
         <span className="hidden sm:block w-20 text-center">Author</span>
         <span className="hidden sm:block w-16 text-right">When</span>
+        {/* Shift hint */}
+        <span className="hidden lg:flex items-center gap-1 ml-2 flex-shrink-0 font-normal normal-case tracking-normal opacity-50">
+          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[9px] font-mono">⇧</kbd>
+          <span className="text-[9px]">multi-select</span>
+        </span>
       </div>
 
       {/* Scrollable list */}
       <div ref={listRef} className="flex-1 overflow-y-auto" role="grid">
         {pageNodes.map(node => {
-          const isSelected = selectedNode?.commit.sha === node.commit.sha;
+          const isSelected = selectedShaSet.has(node.commit.sha);
           return (
             <div key={node.commit.sha}>
               <CommitRow
@@ -504,7 +569,7 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
                 tagMap={graphData.tagMap}
                 repoUrl={repoUrl}
               />
-              {/* Inline detail panel — animated slide-in below the focused commit row */}
+              {/* Inline detail panel — animated slide-in below the selected commit row */}
               <AnimatePresence initial={false}>
                 {isSelected && (
                   <motion.div
@@ -515,7 +580,7 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
                     transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
                     className="overflow-hidden"
                   >
-                    <DetailPanel mode="inline" />
+                    <DetailPanel mode="inline" node={node} />
                   </motion.div>
                 )}
               </AnimatePresence>

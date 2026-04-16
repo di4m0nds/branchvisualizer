@@ -16,6 +16,12 @@ import {
   ROW_HEIGHT,
 } from './colors';
 
+export interface DragState {
+  sha: string;
+  dx: number; // offset in graph-space units
+  dy: number;
+}
+
 export interface RenderOptions {
   width: number;
   height: number;
@@ -23,6 +29,8 @@ export interface RenderOptions {
   offsetX: number;
   offsetY: number;
   selectedSha: string | null;
+  /** Set of all selected SHAs (for multi-select highlighting) */
+  selectedShas?: Set<string> | null;
   hoveredSha: string | null;
   highlightedShas: Set<string> | null; // null = no filter active
   showMessages: boolean;
@@ -32,6 +40,11 @@ export interface RenderOptions {
   direction?: 'vertical' | 'horizontal';
   /** Elapsed ms since animation start — drives orbiting arc and dashed edges */
   animTime?: number;
+  /** Active node drag for elastic spring animation */
+  dragState?: DragState | null;
+  /** Mouse cursor in graph-space — for magnetic attraction effect */
+  mouseGx?: number;
+  mouseGy?: number;
 }
 
 // ─── Direction-aware coordinate helpers ───────────────────────────────────
@@ -176,13 +189,169 @@ export function renderGraph(
 
   const animTime = opts.animTime ?? 0;
 
+  // Build displacement map once per frame — all sub-functions read from it
+  // so node positions and wire endpoints are always consistent.
+  const dispMap = opts.dragState
+    ? buildDisplacementMap(opts.dragState, graph)
+    : null;
+
+  const multiSelectedShas = opts.selectedShas ?? null;
+
   drawLaneRails(ctx, graph, minRow, maxRow, colors, dir);
-  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir, animTime);
-  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir, animTime);
+  drawEdges(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, dir, animTime, opts.dragState ?? null, dispMap, multiSelectedShas);
+  drawNodes(ctx, graph, minRow, maxRow, selectedSha, hoveredSha, highlightedShas, colors, dir, animTime, opts.dragState ?? null, dispMap, opts.mouseGx, opts.mouseGy, multiSelectedShas);
 
   if (scale > 0.35) {
-    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors, dir);
+    drawLabels(ctx, graph, minRow, maxRow, selectedSha, highlightedShas, opts, colors, dir, opts.dragState ?? null, dispMap, multiSelectedShas);
   }
+
+  // Elastic drag overlay — drawn on top of everything else
+  if (opts.dragState && dispMap) {
+    drawElasticDrag(ctx, graph, opts.dragState, dir, colors, dispMap);
+  }
+
+  ctx.restore();
+}
+
+// ─── Elastic drag overlay ─────────────────────────────────────────────────
+//
+// Draws spring-like bezier lines from the dragged node to its connected
+// neighbours, then redraws the node at its displaced position on top.
+
+function drawElasticDrag(
+  ctx: CanvasRenderingContext2D,
+  graph: GraphData,
+  drag: DragState,
+  dir: 'vertical' | 'horizontal',
+  _colors: ThemeColors,
+  dispMap: Map<string, { dx: number; dy: number }>,
+): void {
+  const dragNode = graph.commitMap.get(drag.sha);
+  if (!dragNode) return;
+
+  const originX = nodeCanvasX(dragNode, dir);
+  const originY = nodeCanvasY(dragNode, dir);
+  const px = originX + drag.dx;
+  const py = originY + drag.dy;
+
+  const stretch = Math.hypot(drag.dx, drag.dy);
+  // tension 0 → 1 as stretch grows (saturates at ~160 px)
+  const tension = Math.min(stretch / 160, 1);
+
+  ctx.save();
+
+  // ── Elastic edges to direct (hop-1) neighbors ─────────────────────────
+  const connectedShas = new Set<string>();
+  for (const edge of graph.edges) {
+    if (edge.fromSha === drag.sha) connectedShas.add(edge.toSha);
+    else if (edge.toSha === drag.sha) connectedShas.add(edge.fromSha);
+  }
+
+  for (const sha of connectedShas) {
+    const other = graph.commitMap.get(sha);
+    if (!other) continue;
+
+    // Use the dispMap (built by buildDisplacementMap) so wire endpoints
+    // land exactly on the rendered node positions — no floating wires.
+    const disp = dispMap.get(sha) ?? { dx: 0, dy: 0 };
+    const ox = nodeCanvasX(other, dir) + disp.dx;
+    const oy = nodeCanvasY(other, dir) + disp.dy;
+
+    // Bezier control point: anchor near the dragged-node origin so the curve
+    // bows toward the origin as tension increases (realistic elastic look)
+    const cx1 = originX + (ox - originX) * 0.40;
+    const cy1 = originY + (oy - originY) * 0.40;
+
+    // Thickness grows with tension
+    const baseWidth = 1.5 + tension * 3.5;
+
+    ctx.globalAlpha = 0.50 + tension * 0.30;
+    ctx.strokeStyle = dragNode.color;
+    ctx.lineWidth = baseWidth;
+    ctx.lineCap = 'round';
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.quadraticCurveTo(cx1, cy1, ox, oy);
+    ctx.stroke();
+
+    // Highlight shimmer — stretched rubber band shimmer
+    ctx.globalAlpha = 0.15 + tension * 0.15;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = baseWidth * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.quadraticCurveTo(cx1, cy1, ox, oy);
+    ctx.stroke();
+
+    // Redraw connected node at its shifted position so it visually anchors
+    // the end of the elastic wire
+    const oRadius = other.commit.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS;
+    ctx.globalAlpha = 0.6 + tension * 0.25;
+    ctx.fillStyle = other.color;
+    ctx.beginPath();
+    ctx.arc(ox, oy, oRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.20;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(ox - oRadius * 0.28, oy - oRadius * 0.28, oRadius * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ── Dragged node redrawn at offset position ───────────────────────────
+  const radius = dragNode.commit.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS;
+
+  // Outer glow scales with tension
+  ctx.globalAlpha = 0.12 + tension * 0.08;
+  ctx.fillStyle = dragNode.color;
+  ctx.beginPath();
+  ctx.arc(px, py, radius + 10 + tension * 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.25 + tension * 0.15;
+  ctx.beginPath();
+  ctx.arc(px, py, radius + 5 + tension * 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Node body
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = dragNode.color;
+  ctx.beginPath();
+  ctx.arc(px, py, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Specular highlight
+  ctx.globalAlpha = 0.38;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(px - radius * 0.28, py - radius * 0.28, radius * 0.38, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Stroke ring — color shifts to white under high tension
+  ctx.globalAlpha = 1;
+  const ringColor = tension > 0.5
+    ? `hsl(${Math.round(tension * 60)}, 100%, 75%)`
+    : dragNode.color;
+  ctx.strokeStyle = ringColor;
+  ctx.lineWidth = 2 + tension * 1.5;
+  ctx.beginPath();
+  ctx.arc(px, py, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Dashed orbit ring — spins faster under tension
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = ringColor;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.lineDashOffset = -(performance.now() * (0.04 + tension * 0.12)) % 7;
+  ctx.beginPath();
+  ctx.arc(px, py, radius + 6 + tension * 4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
 
   ctx.restore();
 }
@@ -244,6 +413,9 @@ function drawEdges(
   highlightedShas: Set<string> | null,
   dir: 'vertical' | 'horizontal',
   animTime: number,
+  dragState: DragState | null,
+  dispMap: Map<string, { dx: number; dy: number }> | null,
+  multiSelectedShas?: Set<string> | null,
 ): void {
   ctx.save();
   ctx.lineCap = 'round';
@@ -251,13 +423,20 @@ function drawEdges(
 
   for (const edge of graph.edges) {
     if (!edgeVisible(edge, minRow, maxRow)) continue;
+    // Skip edges directly on dragged node — drawElasticDrag draws elastic spring lines
+    if (dragState && (edge.fromSha === dragState.sha || edge.toSha === dragState.sha)) continue;
 
     const isHighlighted =
       !highlightedShas ||
       highlightedShas.has(edge.fromSha) ||
       highlightedShas.has(edge.toSha);
 
-    const isConnected = selectedSha === edge.fromSha || selectedSha === edge.toSha;
+    // isConnected: edge touches the primary selected node (for animation) or any multi-selected node
+    const isPrimaryConnected = selectedSha === edge.fromSha || selectedSha === edge.toSha;
+    const isMultiConnected = multiSelectedShas
+      ? (multiSelectedShas.has(edge.fromSha) || multiSelectedShas.has(edge.toSha))
+      : false;
+    const isConnected = isPrimaryConnected || isMultiConnected;
 
     ctx.globalAlpha = isHighlighted ? (isConnected ? 1 : 0.75) : 0.18;
     ctx.strokeStyle = edge.color;
@@ -265,13 +444,16 @@ function drawEdges(
 
     if (isConnected && animTime > 0) {
       ctx.setLineDash([6, 4]);
-      ctx.lineDashOffset = -(animTime * 0.045) % 10;
+      ctx.lineDashOffset = (animTime * 0.045) % 10;
     } else {
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
     }
 
-    drawEdgePath(ctx, edge, dir);
+    // Apply per-node displacement to edge endpoints so wires follow displaced nodes
+    const fromDisp = dispMap?.get(edge.fromSha) ?? { dx: 0, dy: 0 };
+    const toDisp   = dispMap?.get(edge.toSha)   ?? { dx: 0, dy: 0 };
+    drawEdgePath(ctx, edge, dir, fromDisp, toDisp);
     ctx.stroke();
   }
 
@@ -280,11 +462,17 @@ function drawEdges(
   ctx.restore();
 }
 
-function drawEdgePath(ctx: CanvasRenderingContext2D, edge: GraphEdge, dir: 'vertical' | 'horizontal'): void {
-  const x1 = edgeX1(edge, dir);
-  const y1 = edgeY1(edge, dir);
-  const x2 = edgeX2(edge, dir);
-  const y2 = edgeY2(edge, dir);
+function drawEdgePath(
+  ctx: CanvasRenderingContext2D,
+  edge: GraphEdge,
+  dir: 'vertical' | 'horizontal',
+  fromDisp = { dx: 0, dy: 0 },
+  toDisp   = { dx: 0, dy: 0 },
+): void {
+  const x1 = edgeX1(edge, dir) + fromDisp.dx;
+  const y1 = edgeY1(edge, dir) + fromDisp.dy;
+  const x2 = edgeX2(edge, dir) + toDisp.dx;
+  const y2 = edgeY2(edge, dir) + toDisp.dy;
 
   ctx.beginPath();
   ctx.moveTo(x1, y1);
@@ -293,23 +481,78 @@ function drawEdgePath(ctx: CanvasRenderingContext2D, edge: GraphEdge, dir: 'vert
     if (edge.fromLane === edge.toLane) {
       ctx.lineTo(x2, y2);
     } else {
-      const rowDiff = edge.toRow - edge.fromRow;
-      const midY = y1 + (rowDiff * ROW_HEIGHT * 0.45);
-      ctx.bezierCurveTo(x1, midY, x2, y2 - (rowDiff * ROW_HEIGHT * 0.35), x2, y2);
+      const dy = y2 - y1;
+      const midY = y1 + dy * 0.45;
+      ctx.bezierCurveTo(x1, midY, x2, y2 - dy * 0.35, x2, y2);
     }
   } else {
-    // horizontal: from = newer (right side source), to = older (left side parent)
     if (edge.fromLane === edge.toLane) {
       ctx.lineTo(x2, y2);
     } else {
-      const colDiff = edge.toRow - edge.fromRow;
-      const midX = x1 + (colDiff * COL_WIDTH * 0.45);
-      ctx.bezierCurveTo(midX, y1, x2 - (colDiff * COL_WIDTH * 0.35), y2, x2, y2);
+      const dx = x2 - x1;
+      const midX = x1 + dx * 0.45;
+      ctx.bezierCurveTo(midX, y1, x2 - dx * 0.35, y2, x2, y2);
     }
   }
 }
 
 // ─── Nodes ────────────────────────────────────────────────────────────────
+
+// Mouse attraction constants
+const ATTRACT_RADIUS = 48;   // graph-space pixels of attraction influence
+const ATTRACT_STRENGTH = 0.13; // max fraction of distance to pull toward cursor
+
+// Secondary pull: connected nodes follow the drag with this fraction.
+// Decreases as drag distance grows (rubber band stiffens), so pulling far
+// feels like real elastic resistance. Starts at ~30% and fades toward 0.
+// Both drawNodes and drawElasticDrag MUST use this same function so wire
+// endpoints always coincide with the rendered node positions.
+function secondaryPull(dragDist: number): number {
+  return 0.30 * Math.exp(-dragDist / 180);
+}
+
+/** BFS displacement map — dragged node gets its full offset; each hop away
+ *  decays by DECAY (45 %), up to MAX_HOPS hops.  All draw functions read
+ *  from this map so node positions and wire endpoints are always in sync. */
+function buildDisplacementMap(
+  drag: DragState,
+  graph: GraphData,
+): Map<string, { dx: number; dy: number }> {
+  const dragDist = Math.hypot(drag.dx, drag.dy);
+  const basePull = secondaryPull(dragDist);
+  const DECAY    = 0.45;
+  const MAX_HOPS = 4;
+
+  const dispMap = new Map<string, { dx: number; dy: number }>();
+  dispMap.set(drag.sha, { dx: drag.dx, dy: drag.dy });
+
+  // Build undirected adjacency from edge list
+  const adj = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (!adj.has(edge.fromSha)) adj.set(edge.fromSha, []);
+    if (!adj.has(edge.toSha))   adj.set(edge.toSha,   []);
+    adj.get(edge.fromSha)!.push(edge.toSha);
+    adj.get(edge.toSha)!.push(edge.fromSha);
+  }
+
+  let frontier = [drag.sha];
+  let pull = basePull;
+
+  for (let hop = 0; hop < MAX_HOPS && frontier.length > 0 && pull > 0.004; hop++) {
+    const next: string[] = [];
+    for (const sha of frontier) {
+      for (const nb of (adj.get(sha) ?? [])) {
+        if (dispMap.has(nb)) continue;
+        dispMap.set(nb, { dx: drag.dx * pull, dy: drag.dy * pull });
+        next.push(nb);
+      }
+    }
+    frontier = next;
+    pull *= DECAY;
+  }
+
+  return dispMap;
+}
 
 function drawNodes(
   ctx: CanvasRenderingContext2D,
@@ -322,6 +565,11 @@ function drawNodes(
   colors: ThemeColors,
   dir: 'vertical' | 'horizontal',
   animTime: number,
+  dragState: DragState | null,
+  dispMap: Map<string, { dx: number; dy: number }> | null,
+  mouseGx?: number,
+  mouseGy?: number,
+  multiSelectedShas?: Set<string> | null,
 ): void {
   ctx.save();
 
@@ -330,29 +578,52 @@ function drawNodes(
     if (!node) continue;
 
     const sha = node.commit.sha;
+
+    // Hide the dragged node at its rest position — drawElasticDrag redraws it at offset position
+    if (dragState && sha === dragState.sha) continue;
+
     const isSelected = sha === selectedSha;
+    const isMultiSelected = !isSelected && (multiSelectedShas?.has(sha) ?? false);
     const isHovered = sha === hoveredSha;
     const isHighlighted = !highlightedShas || highlightedShas.has(sha);
 
     const radius = node.commit.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS;
     const alpha = isHighlighted ? 1 : 0.18;
 
-    const nx = nodeCanvasX(node, dir);
-    const ny = nodeCanvasY(node, dir);
+    let nx = nodeCanvasX(node, dir);
+    let ny = nodeCanvasY(node, dir);
+
+    // Multi-hop displacement: wave propagates from dragged node outward.
+    // dispMap contains pre-computed { dx, dy } for each reachable node.
+    const disp = dispMap?.get(sha);
+    if (disp) {
+      nx += disp.dx;
+      ny += disp.dy;
+    }
+
+    // Mouse attraction: nodes subtly drift toward nearby cursor (no drag, not while animating drag)
+    if (!dragState && mouseGx !== undefined && mouseGy !== undefined) {
+      const dist = Math.hypot(nx - mouseGx, ny - mouseGy);
+      if (dist < ATTRACT_RADIUS && dist > 1) {
+        const factor = (1 - dist / ATTRACT_RADIUS) * ATTRACT_STRENGTH;
+        nx += (mouseGx - nx) * factor;
+        ny += (mouseGy - ny) * factor;
+      }
+    }
 
     ctx.globalAlpha = alpha;
 
-    // ── Glow layers (selected or hovered) ─────────────────────────────────
-    if ((isSelected || isHovered) && isHighlighted) {
+    // ── Glow layers (selected, multi-selected or hovered) ─────────────────
+    if ((isSelected || isMultiSelected || isHovered) && isHighlighted) {
       ctx.save();
       // Outer glow
-      ctx.globalAlpha = isSelected ? 0.08 : 0.05;
+      ctx.globalAlpha = isSelected ? 0.08 : isMultiSelected ? 0.06 : 0.05;
       ctx.fillStyle = node.color;
       ctx.beginPath();
       ctx.arc(nx, ny, radius + 14, 0, Math.PI * 2);
       ctx.fill();
       // Inner glow
-      ctx.globalAlpha = isSelected ? 0.18 : 0.12;
+      ctx.globalAlpha = isSelected ? 0.18 : isMultiSelected ? 0.14 : 0.12;
       ctx.beginPath();
       ctx.arc(nx, ny, radius + 7, 0, Math.PI * 2);
       ctx.fill();
@@ -361,7 +632,7 @@ function drawNodes(
     }
 
     // ── Node fill ──────────────────────────────────────────────────────────
-    ctx.fillStyle = isSelected ? colors.selectedRing : node.color;
+    ctx.fillStyle = (isSelected || isMultiSelected) ? colors.selectedRing : node.color;
     ctx.beginPath();
     ctx.arc(nx, ny, radius, 0, Math.PI * 2);
     ctx.fill();
@@ -369,7 +640,7 @@ function drawNodes(
     // ── Inner specular highlight ───────────────────────────────────────────
     if (isHighlighted) {
       ctx.save();
-      ctx.globalAlpha = isSelected ? 0.45 : 0.28;
+      ctx.globalAlpha = (isSelected || isMultiSelected) ? 0.45 : 0.28;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(nx - radius * 0.28, ny - radius * 0.28, radius * 0.38, 0, Math.PI * 2);
@@ -378,9 +649,9 @@ function drawNodes(
     }
 
     // ── Stroke ring ────────────────────────────────────────────────────────
-    if (isSelected || isHovered) {
-      ctx.strokeStyle = isSelected ? colors.selectedRing : node.color;
-      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+    if (isSelected || isMultiSelected || isHovered) {
+      ctx.strokeStyle = (isSelected || isMultiSelected) ? colors.selectedRing : node.color;
+      ctx.lineWidth = (isSelected || isMultiSelected) ? 2.5 : 1.5;
       ctx.globalAlpha = 1;
       ctx.beginPath();
       ctx.arc(nx, ny, radius, 0, Math.PI * 2);
@@ -394,14 +665,14 @@ function drawNodes(
       ctx.stroke();
     }
 
-    // ── Orbiting dashed arc (selected + animating) ─────────────────────────
-    if (isSelected && animTime > 0) {
+    // ── Orbiting dashed arc (any selected node — primary or multi) ────────────
+    if ((isSelected || isMultiSelected) && isHighlighted && animTime > 0) {
       ctx.save();
-      ctx.globalAlpha = 0.75;
+      ctx.globalAlpha = isSelected ? 0.75 : 0.55;
       ctx.strokeStyle = colors.selectedRing;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 3]);
-      ctx.lineDashOffset = -(animTime * 0.06) % 8;
+      ctx.lineDashOffset = (animTime * 0.06) % 8;
       ctx.beginPath();
       ctx.arc(nx, ny, radius + 8, 0, Math.PI * 2);
       ctx.stroke();
@@ -440,6 +711,9 @@ function drawLabels(
   opts: RenderOptions,
   colors: ThemeColors,
   dir: 'vertical' | 'horizontal',
+  dragState: DragState | null,
+  dispMap: Map<string, { dx: number; dy: number }> | null,
+  multiSelectedShas?: Set<string> | null,
 ): void {
   ctx.save();
   ctx.textBaseline = 'middle';
@@ -449,11 +723,15 @@ function drawLabels(
     if (!node) continue;
 
     const sha = node.commit.sha;
-    const isHighlighted = !highlightedShas || highlightedShas.has(sha);
-    const isSelected = sha === selectedSha;
+    // Hide label for dragged node — drawElasticDrag redraws the node at offset position
+    if (dragState && sha === dragState.sha) continue;
 
-    const nx = nodeCanvasX(node, dir);
-    const ny = nodeCanvasY(node, dir);
+    const isHighlighted = !highlightedShas || highlightedShas.has(sha);
+    const isSelected = sha === selectedSha || (multiSelectedShas?.has(sha) ?? false);
+
+    const disp = dispMap?.get(sha);
+    const nx = nodeCanvasX(node, dir) + (disp?.dx ?? 0);
+    const ny = nodeCanvasY(node, dir) + (disp?.dy ?? 0);
 
     if (dir === 'vertical') {
       // Labels to the right of the node column
