@@ -19,7 +19,8 @@ interface UseCanvasOptions {
   viewport: ViewportState;
   onViewportChange: (v: Partial<ViewportState>) => void;
   onHover: (node: GraphNode | null) => void;
-  onSelect: (node: GraphNode | null) => void;
+  /** Called on click. shiftHeld=true when Shift was held at mouseup. */
+  onSelect: (node: GraphNode | null, shiftHeld: boolean) => void;
   direction?: 'vertical' | 'horizontal';
   /** Called every frame while the user drags a node (graph-space offsets) */
   onNodeDrag?: (sha: string, dx: number, dy: number) => void;
@@ -182,8 +183,8 @@ export function useCanvas(
       if (canvas) canvas.style.cursor = 'grab';
 
       if (!moved) {
-        // Treat as a tap/click → select
-        onSelect(node);
+        // Treat as a tap/click → select (pass shiftHeld)
+        onSelect(node, e.shiftKey);
       } else {
         // Release → trigger spring-back
         onNodeDragEndRef.current?.(node.commit.sha);
@@ -207,7 +208,7 @@ export function useCanvas(
     const cy = e.clientY - rect.top;
     const { scale, offsetX, offsetY } = vpRef.current;
     const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, NODE_HIT_RADIUS, dirRef.current);
-    onSelect(node);
+    onSelect(node, e.shiftKey);
   }, [canvasRef, onSelect]);
 
   // ─── Touch ────────────────────────────────────────────────────────────

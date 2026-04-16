@@ -29,7 +29,7 @@ function reachableFromTip(tipSha: string, commitMap: GraphData['commitMap']): Se
 
 export default function GraphCanvas() {
   const { state, dispatch } = useAppContext();
-  const { graphData, viewport, selectedNode, hoveredNode, filter, branches, allCommits, graphDirection } = state;
+  const { graphData, viewport, selectedNode, selectedNodes, hoveredNode, filter, branches, allCommits, graphDirection } = state;
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const minimapRef   = useRef<HTMLCanvasElement>(null);
@@ -57,8 +57,12 @@ export default function GraphCanvas() {
     dispatch({ type: 'HOVER_NODE', node });
   }, [dispatch]);
 
-  const handleSelect = useCallback((node: GraphNode | null) => {
-    dispatch({ type: 'SELECT_NODE', node });
+  const handleSelect = useCallback((node: GraphNode | null, shiftHeld: boolean) => {
+    if (shiftHeld && node) {
+      dispatch({ type: 'TOGGLE_MULTI_SELECT', node });
+    } else {
+      dispatch({ type: 'SELECT_NODE', node });
+    }
   }, [dispatch]);
 
   // ── Render helper — always reads fresh refs ────────────────────────────
@@ -299,6 +303,7 @@ export default function GraphCanvas() {
       offsetX:        viewport.offsetX,
       offsetY:        viewport.offsetY,
       selectedSha:    selectedNode?.commit.sha ?? null,
+      selectedShas:   selectedNodes.length > 0 ? new Set(selectedNodes.map(n => n.commit.sha)) : null,
       hoveredSha:     hoveredNode?.commit.sha  ?? null,
       highlightedShas,
       showMessages:   viewport.scale > 0.6,
@@ -328,7 +333,7 @@ export default function GraphCanvas() {
   // ── Animation loop (orbiting arc + dashed edges when a node is selected) ─
   useEffect(() => {
     cancelAnimationFrame(animRafRef.current);
-    if (!selectedNode || !graphData) return;
+    if ((!selectedNode && selectedNodes.length === 0) || !graphData) return;
 
     let startTs = 0;
 
@@ -351,7 +356,7 @@ export default function GraphCanvas() {
     animRafRef.current = requestAnimationFrame(animLoop);
     return () => cancelAnimationFrame(animRafRef.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNode?.commit.sha, graphData]);
+  }, [selectedNode?.commit.sha, selectedNodes.length, graphData]);
 
   // ── Minimap (vertical mode only) ──────────────────────────────────────
   useEffect(() => {
@@ -567,6 +572,9 @@ export default function GraphCanvas() {
           <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">+</kbd>
           <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">−</kbd>
           <span>zoom</span>
+          <span className="opacity-40">·</span>
+          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">⇧</kbd>
+          <span>multi-select</span>
           <span className="opacity-40">·</span>
           <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[10px]">Esc</kbd>
           <span>deselect</span>
