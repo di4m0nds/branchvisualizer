@@ -9,6 +9,11 @@ const MIN_SCALE = 0.15;
 const MAX_SCALE = 3;
 const ZOOM_SPEED = 0.0012;
 
+// How many pixels of screen movement before we switch from "click" to "drag"
+const DRAG_THRESHOLD = 4;
+// Hit radius for node detection (in graph-space pixels)
+const NODE_HIT_RADIUS = 12;
+
 interface UseCanvasOptions {
   graph: GraphData | null;
   viewport: ViewportState;
@@ -16,6 +21,10 @@ interface UseCanvasOptions {
   onHover: (node: GraphNode | null) => void;
   onSelect: (node: GraphNode | null) => void;
   direction?: 'vertical' | 'horizontal';
+  /** Called every frame while the user drags a node (graph-space offsets) */
+  onNodeDrag?: (sha: string, dx: number, dy: number) => void;
+  /** Called when the user releases a dragged node */
+  onNodeDragEnd?: (sha: string) => void;
 }
 
 export function useCanvas(
@@ -34,8 +43,24 @@ export function useCanvas(
   const dirRef = useRef(dir);
   dirRef.current = dir;
 
-  const dragging = useRef(false);
-  const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+  // Callbacks kept in refs so event handlers don't need to re-register
+  const onNodeDragRef = useRef(opts.onNodeDrag);
+  onNodeDragRef.current = opts.onNodeDrag;
+  const onNodeDragEndRef = useRef(opts.onNodeDragEnd);
+  onNodeDragEndRef.current = opts.onNodeDragEnd;
+
+  // ── Pan drag state ─────────────────────────────────────────────────────
+  const panDragging = useRef(false);
+  const panStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+
+  // ── Node drag state ────────────────────────────────────────────────────
+  // Stored in a ref so we don't stale-close over it
+  const nodeDrag = useRef<{
+    node: GraphNode;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  } | null>(null);
 
   // ─── Wheel (zoom) ────────────────────────────────────────────────────
   const onWheel = useCallback((e: WheelEvent) => {
@@ -61,15 +86,42 @@ export function useCanvas(
   // ─── Mouse down ───────────────────────────────────────────────────────
   const onMouseDown = useCallback((e: MouseEvent) => {
     if (e.button !== 0) return;
-    dragging.current = false;
-    dragStart.current = {
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const { scale, offsetX, offsetY } = vpRef.current;
+
+    // ── Check if clicking a node — prefer node-drag over pan ──────────
+    if (graphRef.current) {
+      const hit = hitTestNode(
+        graphRef.current, cx, cy, scale, offsetX, offsetY,
+        NODE_HIT_RADIUS, dirRef.current,
+      );
+      if (hit) {
+        nodeDrag.current = {
+          node: hit,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          moved: false,
+        };
+        canvas.style.cursor = 'grabbing';
+        return; // Don't enter pan mode
+      }
+    }
+
+    // ── Pan mode ──────────────────────────────────────────────────────
+    panDragging.current = false;
+    panStart.current = {
       x: e.clientX,
       y: e.clientY,
       ox: vpRef.current.offsetX,
       oy: vpRef.current.offsetY,
     };
-    const canvas = canvasRef.current;
-    if (canvas) canvas.style.cursor = 'grabbing';
+    canvas.style.cursor = 'grabbing';
   }, [canvasRef]);
 
   // ─── Mouse move ───────────────────────────────────────────────────────
@@ -77,23 +129,40 @@ export function useCanvas(
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // ── Node drag ─────────────────────────────────────────────────────
+    if (nodeDrag.current && e.buttons === 1) {
+      const screenDx = e.clientX - nodeDrag.current.startClientX;
+      const screenDy = e.clientY - nodeDrag.current.startClientY;
+      if (Math.abs(screenDx) > DRAG_THRESHOLD || Math.abs(screenDy) > DRAG_THRESHOLD) {
+        nodeDrag.current.moved = true;
+        // Convert screen-space delta to graph-space delta
+        const { scale } = vpRef.current;
+        const gdx = screenDx / scale;
+        const gdy = screenDy / scale;
+        onNodeDragRef.current?.(nodeDrag.current.node.commit.sha, gdx, gdy);
+      }
+      return;
+    }
+
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
 
-    if (e.buttons === 1) {
-      const dx = e.clientX - dragStart.current.x;
-      const dy = e.clientY - dragStart.current.y;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        dragging.current = true;
+    // ── Pan ───────────────────────────────────────────────────────────
+    if (e.buttons === 1 && !nodeDrag.current) {
+      const dx = e.clientX - panStart.current.x;
+      const dy = e.clientY - panStart.current.y;
+      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+        panDragging.current = true;
         onViewportChange({
-          offsetX: dragStart.current.ox + dx,
-          offsetY: dragStart.current.oy + dy,
+          offsetX: panStart.current.ox + dx,
+          offsetY: panStart.current.oy + dy,
         });
       }
       return;
     }
 
+    // ── Hover highlight ───────────────────────────────────────────────
     if (!graphRef.current) return;
     const { scale, offsetX, offsetY } = vpRef.current;
     const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, 10, dirRef.current);
@@ -105,20 +174,39 @@ export function useCanvas(
   // ─── Mouse up ─────────────────────────────────────────────────────────
   const onMouseUp = useCallback((e: MouseEvent) => {
     const canvas = canvasRef.current;
+
+    // ── End node drag ─────────────────────────────────────────────────
+    if (nodeDrag.current) {
+      const { node, moved } = nodeDrag.current;
+      nodeDrag.current = null;
+      if (canvas) canvas.style.cursor = 'grab';
+
+      if (!moved) {
+        // Treat as a tap/click → select
+        onSelect(node);
+      } else {
+        // Release → trigger spring-back
+        onNodeDragEndRef.current?.(node.commit.sha);
+      }
+      return;
+    }
+
     if (canvas) canvas.style.cursor = 'grab';
 
-    if (dragging.current) {
-      dragging.current = false;
+    // ── End pan ───────────────────────────────────────────────────────
+    if (panDragging.current) {
+      panDragging.current = false;
       return;
     }
     if (e.button !== 0) return;
 
+    // Click on empty canvas → select node under cursor (or deselect)
     if (!graphRef.current) return;
     const rect = canvas!.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
     const { scale, offsetX, offsetY } = vpRef.current;
-    const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, 12, dirRef.current);
+    const node = hitTestNode(graphRef.current, cx, cy, scale, offsetX, offsetY, NODE_HIT_RADIUS, dirRef.current);
     onSelect(node);
   }, [canvasRef, onSelect]);
 
