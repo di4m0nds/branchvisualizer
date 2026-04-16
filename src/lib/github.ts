@@ -25,6 +25,14 @@ let _token = '';
 export function setToken(t: string): void { _token = t.trim(); }
 export function getToken(): string { return _token; }
 
+// ─── Rate limit callback ───────────────────────────────────────────────────
+// Called after every API response so the UI can update the remaining count
+// in real-time without waiting for a full repo reload.
+let _onRateLimitUpdate: ((rl: RateLimit) => void) | null = null;
+export function setRateLimitCallback(fn: ((rl: RateLimit) => void) | null): void {
+  _onRateLimitUpdate = fn;
+}
+
 async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: number } = {}): Promise<{ data: T; rateLimit: RateLimit | null }> {
   const url = `${API_BASE}${path}`;
   const cacheKey = `api:${path}`;
@@ -42,6 +50,8 @@ async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: 
   const res = await fetch(url, { headers });
 
   const rateLimit = parseRateLimit(res);
+  // Notify listener on every request so the UI stays live
+  if (rateLimit && _onRateLimitUpdate) _onRateLimitUpdate(rateLimit);
 
   if (!res.ok) {
     if (res.status === 403) {
