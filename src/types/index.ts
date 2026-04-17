@@ -1,93 +1,26 @@
-// ─── Repository & API types ────────────────────────────────────────────────
+// ─── Domain types (re-exported from @codeatlas/core) ──────────────────────────
+//
+// RepoInfo, Commit, Branch, Tag, GraphNode, GraphEdge, GraphData, RateLimit,
+// CommitAuthor, CommitStats — source of truth is packages/core/src/types.ts.
+// Re-exported here so all existing app imports resolve unchanged.
 
-export interface RepoInfo {
-  owner: string;
-  repo: string;
-  fullName: string;
-  defaultBranch: string;
-  description: string | null;
-  homepage: string | null;
-  starCount: number;
-  forkCount: number;
-  isPrivate: boolean;
-  url: string;
-  pushedAt: string | null;
-}
+export type {
+  RepoInfo,
+  CommitAuthor,
+  CommitStats,
+  Commit,
+  Branch,
+  Tag,
+  GraphNode,
+  GraphEdge,
+  GraphData,
+  RateLimit,
+} from '@codeatlas/core';
 
-export interface CommitAuthor {
-  name: string;
-  email: string;
-  date: string; // ISO 8601
-  login?: string;
-  avatarUrl?: string;
-}
-
-export interface Commit {
-  sha: string;
-  shortSha: string;
-  message: string;
-  subject: string;   // first line of message
-  body: string;      // rest of message
-  author: CommitAuthor;
-  committer: CommitAuthor;
-  parents: string[]; // parent SHAs
-  isMerge: boolean;
-  stats?: CommitStats;
-}
-
-export interface CommitStats {
-  additions: number;
-  deletions: number;
-  total: number;
-}
-
-export interface Branch {
-  name: string;
-  sha: string;       // tip commit sha
-  isDefault: boolean;
-  isRemote: boolean;
-}
-
-export interface Tag {
-  name: string;
-  sha: string;       // tagged commit sha (or tag object sha)
-  commitSha: string; // resolved commit sha
-  message?: string;
-}
-
-// ─── Graph types ───────────────────────────────────────────────────────────
-
-export interface GraphNode {
-  commit: Commit;
-  lane: number;      // x column index (0 = leftmost)
-  row: number;       // y row index (0 = newest)
-  color: string;     // primary color for this lane
-  x: number;        // canvas x (computed from lane)
-  y: number;        // canvas y (computed from row)
-}
-
-export interface GraphEdge {
-  fromSha: string;
-  toSha: string;     // parent sha
-  fromLane: number;
-  toLane: number;
-  fromRow: number;
-  toRow: number;
-  color: string;
-  isMergeEdge: boolean;  // true when connecting to a secondary parent
-}
-
-export interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  commitMap: Map<string, GraphNode>;  // sha -> node
-  tagMap: Map<string, Tag[]>;         // commitSha -> tags
-  branchMap: Map<string, Branch[]>;   // commitSha -> branches
-  laneCount: number;
-  rowCount: number;
-}
-
-// ─── UI state ──────────────────────────────────────────────────────────────
+// ─── App-specific UI types ─────────────────────────────────────────────────
+//
+// These types are specific to the branchvisualizer app (React state, actions,
+// routing) and do NOT belong in @codeatlas/core.
 
 export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci';
 export type SplitLayout = 'single' | '2h' | '2v' | '4g';
@@ -128,6 +61,17 @@ export interface ViewportState {
   scale: number;
 }
 
+// Re-import domain types needed by AppState to avoid duplication
+import type {
+  RepoInfo,
+  GraphData,
+  Branch,
+  Tag,
+  Commit,
+  GraphNode,
+  RateLimit,
+} from '@codeatlas/core';
+
 export interface AppState {
   repoInfo: RepoInfo | null;
   graphData: GraphData | null;
@@ -154,12 +98,6 @@ export interface AppState {
   paneTab: [TabId, TabId, TabId, TabId];
   /** Graph layout direction */
   graphDirection: GraphDirection;
-}
-
-export interface RateLimit {
-  remaining: number;
-  limit: number;
-  resetAt: Date;
 }
 
 // ─── Action types ──────────────────────────────────────────────────────────

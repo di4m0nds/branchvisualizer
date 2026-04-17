@@ -2,7 +2,11 @@
   "compilerOptions": {
     "target": "ES2020",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -20,8 +24,24 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ],
+      "@codeatlas/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@codeatlas/github": [
+        "../../packages/github/src/index.ts"
+      ],
+      "@codeatlas/github/*": [
+        "../../packages/github/src/*"
+      ],
+      "@codeatlas/core/*": [
+        "../../packages/core/src/*"
+      ]
     }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

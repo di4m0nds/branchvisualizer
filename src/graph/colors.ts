@@ -1,35 +1,9 @@
-// ─── Branch color palette ─────────────────────────────────────────────────
-// Colors chosen for contrast on a dark background and to be distinct from each other.
+// ─── Redirect: @codeatlas/core ────────────────────────────────────────────────
+//
+// Source of truth moved to packages/core (Step 4).
+// This file re-exports everything so existing imports within the app
+// continue to resolve without modification.
+//
+// Do NOT add logic here. Changes go to packages/core/src/colors.ts.
 
-export const LANE_COLORS = [
-  '#60a5fa', // blue      — default / main branch
-  '#34d399', // emerald
-  '#f472b6', // pink
-  '#fb923c', // orange
-  '#a78bfa', // violet
-  '#38bdf8', // sky blue
-  '#facc15', // yellow
-  '#f87171', // red
-  '#4ade80', // green
-  '#e879f9', // fuchsia
-  '#2dd4bf', // teal
-  '#fbbf24', // amber
-  '#818cf8', // indigo
-  '#fb7185', // rose
-  '#86efac', // light green
-  '#93c5fd', // light blue
-];
-
-export function laneColor(lane: number): string {
-  return LANE_COLORS[lane % LANE_COLORS.length];
-}
-
-export const NODE_RADIUS = 5;
-export const MERGE_NODE_RADIUS = 6;
-export const LANE_WIDTH = 20;      // horizontal spacing between lanes (vertical mode)
-export const ROW_HEIGHT = 28;      // vertical spacing between commits (vertical mode)
-export const COL_WIDTH = 56;       // horizontal spacing between commits (horizontal mode)
-export const LANE_HEIGHT = 28;     // vertical spacing between lanes (horizontal mode)
-export const LABEL_OFFSET_X = 14; // offset from last lane to start of commit message text
-export const GRAPH_PADDING_TOP = 20;
-export const GRAPH_PADDING_LEFT = 16;
+export * from '@codeatlas/core';
