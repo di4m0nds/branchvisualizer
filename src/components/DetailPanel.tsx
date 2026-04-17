@@ -274,6 +274,7 @@ function FloatingBody({ node, details, detailsLoading }: { node: GraphNode; deta
   const { state, dispatch } = useAppContext();
   const { graphData, repoInfo } = state;
   const [bodyExpanded, setBodyExpanded] = useState(false);
+  const [filesCollapsed, setFilesCollapsed] = useState(false);
   const prevShaRef = useRef<string | null>(null);
 
   const { commit, color } = node;
@@ -281,6 +282,7 @@ function FloatingBody({ node, details, detailsLoading }: { node: GraphNode; deta
   if (prevShaRef.current !== commit.sha) {
     prevShaRef.current = commit.sha;
     if (bodyExpanded) setBodyExpanded(false);
+    if (filesCollapsed) setFilesCollapsed(false);
   }
   const parentNodes = commit.parents
     .map(sha => graphData?.commitMap.get(sha))
@@ -332,7 +334,25 @@ function FloatingBody({ node, details, detailsLoading }: { node: GraphNode; deta
         </div>
 
         <div className="px-4 py-3 flex flex-col gap-2">
-          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Changes</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Changes</span>
+            {!detailsLoading && details && details.files.length > 0 && (
+              <button
+                onClick={() => setFilesCollapsed(v => !v)}
+                className="ml-auto flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                title={filesCollapsed ? 'Show file list' : 'Collapse file list'}
+              >
+                <svg
+                  width="9" height="9" viewBox="0 0 10 10" fill="none"
+                  stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+                  className={`transition-transform duration-150 ${filesCollapsed ? '-rotate-90' : ''}`}
+                >
+                  <path d="M2 3.5l3 3 3-3" />
+                </svg>
+                {filesCollapsed ? 'show files' : 'hide files'}
+              </button>
+            )}
+          </div>
           {detailsLoading && <DetailsSkeleton />}
           {!detailsLoading && details?.stats && (
             <>
@@ -351,7 +371,7 @@ function FloatingBody({ node, details, detailsLoading }: { node: GraphNode; deta
                   <div className="h-full bg-red-400 rounded-full flex-1" />
                 </div>
               )}
-              {details.files.length > 0 && (
+              {!filesCollapsed && details.files.length > 0 && (
                 <FilesList files={details.files} repoUrl={repoInfo?.url ?? null} sha={commit.sha} />
               )}
             </>
@@ -413,6 +433,7 @@ function InlineBody({ node, details, detailsLoading }: { node: GraphNode; detail
   const { state, dispatch } = useAppContext();
   const { graphData, repoInfo } = state;
   const [bodyExpanded, setBodyExpanded] = useState(false);
+  const [filesCollapsed, setFilesCollapsed] = useState(false);
 
   const { commit, color } = node;
   const parentNodes = commit.parents
@@ -511,10 +532,25 @@ function InlineBody({ node, details, detailsLoading }: { node: GraphNode; detail
       <div className="flex flex-col gap-2 flex-shrink-0 md:border-l md:border-border md:pl-4 md:min-w-[180px]">
         {!detailsLoading && details && details.files.length > 0 && (
           <div className="flex flex-col gap-1">
-            <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Files ({details.files.length})
-            </span>
-            <FilesList files={details.files} repoUrl={repoInfo?.url ?? null} sha={commit.sha} />
+            <button
+              onClick={() => setFilesCollapsed(v => !v)}
+              className="flex items-center gap-1 text-left group w-full"
+              title={filesCollapsed ? 'Show files' : 'Collapse files'}
+            >
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground group-hover:text-foreground transition-colors">
+                Files ({details.files.length})
+              </span>
+              <svg
+                width="8" height="8" viewBox="0 0 10 10" fill="none"
+                stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+                className={`text-muted-foreground transition-transform duration-150 ${filesCollapsed ? '-rotate-90' : ''}`}
+              >
+                <path d="M2 3.5l3 3 3-3" />
+              </svg>
+            </button>
+            {!filesCollapsed && (
+              <FilesList files={details.files} repoUrl={repoInfo?.url ?? null} sha={commit.sha} />
+            )}
           </div>
         )}
         {detailsLoading && (

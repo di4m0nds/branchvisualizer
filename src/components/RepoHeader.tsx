@@ -1,7 +1,10 @@
 import { useAppContext } from '../store/AppContext';
 import { useRepoData } from '../hooks/useRepoData';
 import { formatCount, formatDateDMY } from '@/lib/utils';
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import SearchFilter from './SearchFilter';
 
 function timeUntil(date: Date): string {
   const diff = date.getTime() - Date.now();
@@ -14,9 +17,37 @@ function timeUntil(date: Date): string {
 export default function RepoHeader() {
   const { state } = useAppContext();
   const { loadRepo } = useRepoData();
-  const { repoInfo, rateLimit, loadState } = state;
+  const { repoInfo, rateLimit, loadState, filter } = state;
   const [refreshing, setRefreshing] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+
+  const activeFilterCount = [filter.search, filter.branch, filter.author, filter.dateFrom, filter.dateTo]
+    .filter(Boolean).length;
+
+  const handleFilterClick = useCallback(() => {
+    if (!filtersOpen && filterBtnRef.current) {
+      const rect = filterBtnRef.current.getBoundingClientRect();
+      setPanelPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    }
+    setFiltersOpen(v => !v);
+  }, [filtersOpen]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (
+        filterBtnRef.current?.contains(e.target as Node) ||
+        filterPanelRef.current?.contains(e.target as Node)
+      ) return;
+      setFiltersOpen(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [filtersOpen]);
 
   if (!repoInfo) return null;
 
@@ -36,6 +67,7 @@ export default function RepoHeader() {
   const rateLimitWarning = rateLimit && rateLimit.remaining < 30;
 
   return (
+    <>
     <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-muted/20
                     text-sm flex-shrink-0 flex-wrap">
       <a
@@ -152,6 +184,31 @@ export default function RepoHeader() {
           </span>
         )}
 
+        {/* Filters button */}
+        <button
+          ref={filterBtnRef}
+          onClick={handleFilterClick}
+          className={`relative flex items-center gap-1.5 px-2 py-1 rounded border text-xs transition-colors
+            ${filtersOpen
+              ? 'border-primary/50 text-foreground bg-accent'
+              : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+            }`}
+          title="Toggle filters"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="2" y1="4" x2="14" y2="4" />
+            <line x1="4" y1="8" x2="12" y2="8" />
+            <line x1="6" y1="12" x2="10" y2="12" />
+          </svg>
+          <span className="hidden sm:inline">Filters</span>
+          {activeFilterCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-primary text-primary-foreground
+                             text-[9px] font-bold flex items-center justify-center leading-none">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
+
         {/* Refresh button */}
         <button
           onClick={handleRefresh}
@@ -172,5 +229,26 @@ export default function RepoHeader() {
         </button>
       </div>
     </div>
+
+    {/* Floating filter panel — portaled, no layout impact */}
+    {createPortal(
+      <AnimatePresence>
+        {filtersOpen && (
+          <motion.div
+            ref={filterPanelRef}
+            style={{ position: 'fixed', top: panelPos.top, right: panelPos.right, zIndex: 9000 }}
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.14, ease: [0.4, 0, 0.2, 1] }}
+            className="rounded-xl border border-border bg-card/95 backdrop-blur-sm shadow-2xl overflow-hidden"
+          >
+            <SearchFilter floating />
+          </motion.div>
+        )}
+      </AnimatePresence>,
+      document.body
+    )}
+    </>
   );
 }
