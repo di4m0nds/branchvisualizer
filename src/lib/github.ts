@@ -135,6 +135,156 @@ interface GHTag {
   commit: { sha: string };
 }
 
+// ─── CI types ──────────────────────────────────────────────────────────────
+
+export interface WorkflowRun {
+  id: number;
+  name: string | null;
+  headBranch: string | null;
+  headSha: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | 'stale' | null;
+  workflowName: string;
+  event: string;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+  actor: { login: string; avatarUrl: string } | null;
+  runNumber: number;
+  runAttempt: number;
+}
+
+export interface CheckRun {
+  id: number;
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  url: string;
+  app: { name: string; slug: string } | null;
+}
+
+export interface CommitCombinedStatus {
+  state: 'success' | 'failure' | 'pending' | 'error';
+  statuses: Array<{
+    context: string;
+    state: 'success' | 'failure' | 'pending' | 'error';
+    description: string | null;
+    targetUrl: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  totalCount: number;
+}
+
+export interface WorkflowJobStep {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | null;
+  number: number;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface WorkflowJob {
+  id: number;
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  url: string;
+  steps: WorkflowJobStep[];
+  runnerId: number | null;
+  runnerName: string | null;
+}
+
+export interface WorkflowArtifact {
+  id: number;
+  name: string;
+  sizeInBytes: number;
+  createdAt: string;
+  expiresAt: string | null;
+  expired: boolean;
+  url: string;
+}
+
+// ─── GH raw shapes for CI ─────────────────────────────────────────────────
+
+interface GHWorkflowRun {
+  id: number;
+  name: string | null;
+  head_branch: string | null;
+  head_sha: string;
+  status: WorkflowRun['status'];
+  conclusion: WorkflowRun['conclusion'];
+  event: string;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  actor: { login: string; avatar_url: string } | null;
+  run_number: number;
+  run_attempt: number;
+  path: string; // e.g. ".github/workflows/ci.yml"
+}
+
+interface GHCheckRun {
+  id: number;
+  name: string;
+  status: CheckRun['status'];
+  conclusion: CheckRun['conclusion'];
+  started_at: string | null;
+  completed_at: string | null;
+  html_url: string;
+  app: { name: string; slug: string } | null;
+}
+
+interface GHWorkflowJobStep {
+  name: string;
+  status: WorkflowJobStep['status'];
+  conclusion: WorkflowJobStep['conclusion'];
+  number: number;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+interface GHWorkflowJob {
+  id: number;
+  name: string;
+  status: WorkflowJob['status'];
+  conclusion: WorkflowJob['conclusion'];
+  started_at: string | null;
+  completed_at: string | null;
+  html_url: string;
+  steps: GHWorkflowJobStep[];
+  runner_id: number | null;
+  runner_name: string | null;
+}
+
+interface GHWorkflowArtifact {
+  id: number;
+  name: string;
+  size_in_bytes: number;
+  created_at: string;
+  expires_at: string | null;
+  expired: boolean;
+  archive_download_url: string;
+}
+
+interface GHCombinedStatus {
+  state: CommitCombinedStatus['state'];
+  statuses: Array<{
+    context: string;
+    state: CommitCombinedStatus['statuses'][0]['state'];
+    description: string | null;
+    target_url: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+  total_count: number;
+}
+
 // ─── PR / Issue types ──────────────────────────────────────────────────────
 
 export interface PRInfo {
@@ -715,6 +865,160 @@ export async function fetchDeployments(
   );
 
   return { deployments: deploymentsWithStatuses };
+}
+
+// ─── CI: Workflow Runs ────────────────────────────────────────────────────
+
+export async function fetchWorkflowRuns(
+  owner: string,
+  repo: string,
+  branch?: string,
+): Promise<{ runs: WorkflowRun[] }> {
+  const branchQ = branch ? `&branch=${encodeURIComponent(branch)}` : '';
+  const path = `/repos/${owner}/${repo}/actions/runs?per_page=30${branchQ}`;
+  const { data } = await apiFetch<{ workflow_runs: GHWorkflowRun[] }>(path, {
+    cache: true,
+    cacheTtl: 30_000,
+  });
+
+  const runs: WorkflowRun[] = (data.workflow_runs ?? []).map((r): WorkflowRun => {
+    // derive workflow name from path e.g. ".github/workflows/ci.yml" → "ci"
+    const workflowName = r.name ?? (r.path ? r.path.split('/').pop()?.replace(/\.ya?ml$/, '') ?? r.path : 'Workflow');
+    return {
+      id: r.id,
+      name: r.name,
+      headBranch: r.head_branch,
+      headSha: r.head_sha,
+      status: r.status,
+      conclusion: r.conclusion,
+      workflowName,
+      event: r.event,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      url: r.html_url,
+      actor: r.actor ? { login: r.actor.login, avatarUrl: r.actor.avatar_url } : null,
+      runNumber: r.run_number,
+      runAttempt: r.run_attempt,
+    };
+  });
+
+  return { runs };
+}
+
+// ─── CI: Jobs for a workflow run ─────────────────────────────────────────
+
+export async function fetchWorkflowJobs(
+  owner: string,
+  repo: string,
+  runId: number,
+): Promise<{ jobs: WorkflowJob[] }> {
+  const path = `/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`;
+  const { data } = await apiFetch<{ jobs: GHWorkflowJob[] }>(path, {
+    cache: true,
+    cacheTtl: 30_000,
+  });
+
+  const jobs: WorkflowJob[] = (data.jobs ?? []).map((j): WorkflowJob => ({
+    id: j.id,
+    name: j.name,
+    status: j.status,
+    conclusion: j.conclusion,
+    startedAt: j.started_at,
+    completedAt: j.completed_at,
+    url: j.html_url,
+    steps: (j.steps ?? []).map((s): WorkflowJobStep => ({
+      name: s.name,
+      status: s.status,
+      conclusion: s.conclusion,
+      number: s.number,
+      startedAt: s.started_at,
+      completedAt: s.completed_at,
+    })),
+    runnerId: j.runner_id,
+    runnerName: j.runner_name,
+  }));
+
+  return { jobs };
+}
+
+// ─── CI: Artifacts for a workflow run ────────────────────────────────────
+
+export async function fetchWorkflowArtifacts(
+  owner: string,
+  repo: string,
+  runId: number,
+): Promise<{ artifacts: WorkflowArtifact[] }> {
+  const path = `/repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=30`;
+  const { data } = await apiFetch<{ artifacts: GHWorkflowArtifact[] }>(path, {
+    cache: true,
+    cacheTtl: 60_000,
+  });
+
+  const artifacts: WorkflowArtifact[] = (data.artifacts ?? []).map((a): WorkflowArtifact => ({
+    id: a.id,
+    name: a.name,
+    sizeInBytes: a.size_in_bytes,
+    createdAt: a.created_at,
+    expiresAt: a.expires_at,
+    expired: a.expired,
+    url: a.archive_download_url,
+  }));
+
+  return { artifacts };
+}
+
+// ─── CI: Check Runs for a commit ─────────────────────────────────────────
+
+export async function fetchCommitCheckRuns(
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<{ checkRuns: CheckRun[] }> {
+  const path = `/repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=100`;
+  const { data } = await apiFetch<{ check_runs: GHCheckRun[] }>(path, {
+    cache: true,
+    cacheTtl: 30_000,
+  });
+
+  const checkRuns: CheckRun[] = (data.check_runs ?? []).map((c): CheckRun => ({
+    id: c.id,
+    name: c.name,
+    status: c.status,
+    conclusion: c.conclusion,
+    startedAt: c.started_at,
+    completedAt: c.completed_at,
+    url: c.html_url,
+    app: c.app,
+  }));
+
+  return { checkRuns };
+}
+
+// ─── CI: Combined commit status (legacy statuses API) ────────────────────
+
+export async function fetchCommitStatus(
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<CommitCombinedStatus> {
+  const path = `/repos/${owner}/${repo}/commits/${sha}/status`;
+  const { data } = await apiFetch<GHCombinedStatus>(path, {
+    cache: true,
+    cacheTtl: 30_000,
+  });
+
+  return {
+    state: data.state,
+    statuses: (data.statuses ?? []).map(s => ({
+      context: s.context,
+      state: s.state,
+      description: s.description,
+      targetUrl: s.target_url,
+      createdAt: s.created_at,
+      updatedAt: s.updated_at,
+    })),
+    totalCount: data.total_count,
+  };
 }
 
 // ─── README ───────────────────────────────────────────────────────────────
