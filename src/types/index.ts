@@ -23,6 +23,23 @@ export type {
 // routing) and do NOT belong in @codeatlas/core.
 
 export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci';
+
+// ─── Capability system (Phase 4) ───────────────────────────────────────────
+
+export type Capability =
+  | 'read:graph'
+  | 'read:files'
+  | 'ai:assist'
+  | 'compare:commits'
+  | 'write:repo';
+
+export interface CapabilityState {
+  capabilities: Capability[];
+  authenticated: boolean;
+  login: string | null;
+  backendTokenConfigured: boolean;
+  loading: boolean;
+}
 export type SplitLayout = 'single' | '2h' | '2v' | '4g';
 export type GraphDirection = 'vertical' | 'horizontal';
 export type ViewMode = 'canvas' | 'list';
@@ -98,6 +115,8 @@ export interface AppState {
   paneTab: [TabId, TabId, TabId, TabId];
   /** Graph layout direction */
   graphDirection: GraphDirection;
+  /** Phase 4: capability state (backend-derived or token-derived) */
+  capabilityState: CapabilityState;
 }
 
 // ─── Action types ──────────────────────────────────────────────────────────
@@ -121,4 +140,5 @@ export type AppAction =
   | { type: 'SET_ACTIVE_TAB'; tab: TabId }
   | { type: 'SET_SPLIT_LAYOUT'; layout: SplitLayout }
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
-  | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection };
+  | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
+  | { type: 'SET_CAPABILITIES'; payload: CapabilityState };
