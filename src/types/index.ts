@@ -89,7 +89,7 @@ export interface GraphData {
 
 // ─── UI state ──────────────────────────────────────────────────────────────
 
-export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases';
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci';
 export type SplitLayout = 'single' | '2h' | '2v' | '4g';
 export type GraphDirection = 'vertical' | 'horizontal';
 export type ViewMode = 'canvas' | 'list';
