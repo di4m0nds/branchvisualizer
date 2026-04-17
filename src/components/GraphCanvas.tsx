@@ -5,6 +5,7 @@ import { useCanvas } from '../hooks/useCanvas';
 import { renderGraph, renderMinimap, graphHeight } from '../graph/renderer';
 import { nodeCanvasX, nodeCanvasY } from '../graph/renderer';
 import type { RenderOptions, DragState } from '../graph/renderer';
+import { useCIOverlay } from '../hooks/useCIOverlay';
 import CommitTimeline from './CommitTimeline';
 import { ROW_HEIGHT, COL_WIDTH, GRAPH_PADDING_TOP, GRAPH_PADDING_LEFT } from '../graph/colors';
 
@@ -212,6 +213,37 @@ export default function GraphCanvas() {
     return matching.size > 0 ? matching : new Set<string>();
   }, [graphData, filter, branches, allCommits]);
 
+  // ── Visible node SHAs for CI overlay ─────────────────────────────────
+  const visibleNodeSHAs = useMemo<string[]>(() => {
+    if (!graphData) return [];
+    const { scale, offsetX, offsetY } = viewport;
+    const dir = graphDirection;
+    let minRow: number, maxRow: number;
+    if (dir === 'vertical') {
+      const graphTop = -offsetY / scale;
+      const graphBottom = (canvasSize.h - offsetY) / scale;
+      minRow = Math.max(0, Math.floor((graphTop - GRAPH_PADDING_TOP) / ROW_HEIGHT) - 1);
+      maxRow = Math.min(graphData.rowCount - 1, Math.ceil((graphBottom - GRAPH_PADDING_TOP) / ROW_HEIGHT) + 1);
+    } else {
+      const graphLeft = -offsetX / scale;
+      const graphRight = (canvasSize.w - offsetX) / scale;
+      minRow = Math.max(0, Math.floor((graphLeft - GRAPH_PADDING_LEFT) / COL_WIDTH) - 1);
+      maxRow = Math.min(graphData.rowCount - 1, Math.ceil((graphRight - GRAPH_PADDING_LEFT) / COL_WIDTH) + 1);
+    }
+    const shas: string[] = [];
+    for (let r = minRow; r <= maxRow; r++) {
+      const node = graphData.nodes[r];
+      if (node) shas.push(node.commit.sha);
+    }
+    return shas;
+  }, [graphData, viewport, canvasSize, graphDirection]);
+
+  const ciStatus = useCIOverlay(
+    state.repoInfo?.owner ?? '',
+    state.repoInfo?.repo ?? '',
+    visibleNodeSHAs,
+  );
+
   // ── Canvas resize observer ─────────────────────────────────────────────
   useEffect(() => {
     const container = containerRef.current;
@@ -309,6 +341,7 @@ export default function GraphCanvas() {
       showMessages:   viewport.scale > 0.6,
       theme,
       direction:      graphDirection,
+      ciStatus:       ciStatus.size > 0 ? ciStatus : undefined,
     };
 
     // Keep renderOptsRef current so animation loop always has fresh opts
@@ -328,7 +361,7 @@ export default function GraphCanvas() {
     });
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection]);
+  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection, ciStatus]);
 
   // ── Animation loop (orbiting arc + dashed edges when a node is selected) ─
   useEffect(() => {
