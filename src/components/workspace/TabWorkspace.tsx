@@ -59,6 +59,7 @@ const TABS: TabDef[] = [
     id: 'files',
     label: 'Files',
     shortLabel: 'Files',
+    requires: 'read:files',
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
         <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z"/>
@@ -79,6 +80,7 @@ const TABS: TabDef[] = [
     id: 'prs',
     label: 'PRs & Issues',
     shortLabel: 'PRs',
+    requires: 'read:files',
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
         <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"/>
@@ -89,6 +91,7 @@ const TABS: TabDef[] = [
     id: 'releases',
     label: 'Releases',
     shortLabel: 'Releases',
+    requires: 'read:files',
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
         <path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 0 1 0 2.474l-5.026 5.026a1.75 1.75 0 0 1-2.474 0l-6.25-6.25A1.752 1.752 0 0 1 1 7.775Zm1.5 0c0 .066.026.13.073.177l6.25 6.25a.25.25 0 0 0 .354 0l5.025-5.025a.25.25 0 0 0 0-.354l-6.25-6.25a.25.25 0 0 0-.177-.073H2.75a.25.25 0 0 0-.25.25ZM6 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/>
@@ -99,6 +102,7 @@ const TABS: TabDef[] = [
     id: 'ci',
     label: 'CI',
     shortLabel: 'CI',
+    requires: 'compare:commits',
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
         <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"/>
