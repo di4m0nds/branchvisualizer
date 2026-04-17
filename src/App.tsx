@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { useAppContext } from '@/store/AppContext';
 import { useRepoData } from '@/hooks/useRepoData';
+import { useCapabilities } from '@/hooks/useCapabilities';
+import { toast } from '@/services/toast';
 import Navbar from '@/components/layout/Navbar';
 import RepoSearch from '@/components/repo/RepoSearch';
 import RepoHeader from '@/components/RepoHeader';
@@ -108,13 +110,56 @@ function RepoPage() {
 
 function AppShell() {
   const { state } = useAppContext();
+  const { refresh } = useCapabilities();
+  const location = useLocation();
+  const navigate = useNavigate();
 
+  // ── Theme sync ───────────────────────────────────────────────────────────
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', state.theme);
     if (state.theme === 'dark') root.classList.add('dark');
     else root.classList.remove('dark');
   }, [state.theme]);
+
+  // ── Initial capability load (once on mount) ──────────────────────────────
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── OAuth redirect param handling ────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const authSuccess = params.get('auth_success');
+    const authError = params.get('auth_error');
+    if (!authSuccess && !authError) return;
+
+    // Grab login before clearing params
+    const login = params.get('login');
+
+    // Strip auth params from URL immediately
+    params.delete('auth_success');
+    params.delete('auth_error');
+    params.delete('login');
+    const newSearch = params.toString();
+    navigate({ search: newSearch ? `?${newSearch}` : '' }, { replace: true });
+
+    if (authSuccess === '1') {
+      refresh().then(() => {
+        toast.success('Signed in successfully', {
+          description: login ? `Welcome, ${login}!` : 'GitHub authentication successful',
+          duration: 4000,
+        });
+      });
+    } else if (authError) {
+      toast.error('Authentication failed', {
+        description: decodeURIComponent(authError),
+        duration: 6000,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   const [showPolicyModal, setShowPolicyModal] = useState<boolean>(() => !hasAcceptedPolicy());
   const [legalTab, setLegalTab] = useState<LegalTab | null>(null);
