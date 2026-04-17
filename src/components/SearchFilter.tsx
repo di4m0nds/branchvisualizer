@@ -10,7 +10,7 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-export default function SearchFilter() {
+export default function SearchFilter({ floating = false }: { floating?: boolean }) {
   const { state, dispatch } = useAppContext();
   const { filter, branches, allCommits } = state;
 
@@ -51,8 +51,7 @@ export default function SearchFilter() {
     ' focus:border-primary/50 disabled:opacity-50 transition-all px-2';
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 border-b border-border
-                    bg-muted/20 flex-shrink-0 flex-wrap">
+    <div className={`flex items-center gap-2 px-4 py-2 bg-muted/20 flex-shrink-0 flex-wrap${floating ? '' : ' border-b border-border'}`}>
       {/* Search */}
       <div className="relative flex items-center">
         <span className="absolute left-2 text-muted-foreground text-xs pointer-events-none">⌕</span>
