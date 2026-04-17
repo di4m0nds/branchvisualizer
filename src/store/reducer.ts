@@ -1,4 +1,4 @@
-import type { AppAction, AppState, FilterState, LoadState, TabId } from '../types';
+import type { AppAction, AppState, CapabilityState, FilterState, LoadState, TabId } from '../types';
 
 export const initialFilterState: FilterState = {
   search: '',
@@ -6,6 +6,14 @@ export const initialFilterState: FilterState = {
   author: '',
   dateFrom: '',
   dateTo: '',
+};
+
+export const initialCapabilityState: CapabilityState = {
+  capabilities: ['read:graph'],
+  authenticated: false,
+  login: null,
+  backendTokenConfigured: false,
+  loading: false,
 };
 
 export const initialLoadState: LoadState = {
@@ -35,6 +43,7 @@ export const initialState: AppState = {
   splitLayout: 'single',
   paneTab: ['graph', 'list', 'releases', 'prs'],
   graphDirection: 'vertical',
+  capabilityState: initialCapabilityState,
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -82,7 +91,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'RESET':
-      return { ...initialState, token: state.token };
+      return { ...initialState, token: state.token, capabilityState: state.capabilityState };
 
     case 'SELECT_NODE':
       return {
@@ -147,6 +156,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_GRAPH_DIRECTION':
       return { ...state, graphDirection: action.direction };
+
+    case 'SET_CAPABILITIES':
+      return { ...state, capabilityState: action.payload };
 
     default:
       return state;

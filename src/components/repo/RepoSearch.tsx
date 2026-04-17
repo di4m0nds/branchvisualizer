@@ -5,11 +5,14 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppContext } from '@/store/AppContext';
 import { useRepoData } from '@/hooks/useRepoData';
+import { useCapabilities } from '@/hooks/useCapabilities';
 import { validateRepoInput, parseRepoInput, tokenSchema } from '@/services/validation';
 import { toast } from '@/services/toast';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getHistory, removeFromHistory, timeAgoShort, type HistoryEntry } from '@/lib/history';
+
+const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === 'true';
 
 // ─── Fallback examples (shown when no history) ────────────────────────────────
 
@@ -153,7 +156,10 @@ function RecentCard({ entry, onLoad, onRemove, disabled }: RecentCardProps) {
 export default function RepoSearch({ compact = false }: RepoSearchProps) {
   const { state, dispatch } = useAppContext();
   const { loadRepo } = useRepoData();
+  const { backendTokenConfigured } = useCapabilities();
   const navigate = useNavigate();
+  // Hide manual token UI when backend manages the token for the user
+  const hideTokenUI = USE_BACKEND && backendTokenConfigured;
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -475,26 +481,28 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      {/* Token toggle */}
-      <div className="flex items-center justify-end mb-3">
-        <button
-          type="button"
-          onClick={() => setShowToken(v => !v)}
-          className={cn(
-            'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-all',
-            state.token || showToken
-              ? 'border-primary/40 text-primary bg-primary/5'
-              : 'border-border text-muted-fg hover:border-border hover:text-foreground',
-          )}
-        >
-          <KeyIcon className="h-3 w-3" />
-          {state.token ? 'Token active' : 'Add token'}
-        </button>
-      </div>
+      {/* Token toggle — hidden when backend manages the token */}
+      {!hideTokenUI && (
+        <div className="flex items-center justify-end mb-3">
+          <button
+            type="button"
+            onClick={() => setShowToken(v => !v)}
+            className={cn(
+              'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-all',
+              state.token || showToken
+                ? 'border-primary/40 text-primary bg-primary/5'
+                : 'border-border text-muted-fg hover:border-border hover:text-foreground',
+            )}
+          >
+            <KeyIcon className="h-3 w-3" />
+            {state.token ? 'Token active' : 'Add token'}
+          </button>
+        </div>
+      )}
 
-      {/* Token input */}
+      {/* Token input — hidden when backend manages the token */}
       <AnimatePresence>
-        {showToken && (
+        {!hideTokenUI && showToken && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
