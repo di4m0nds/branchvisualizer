@@ -7,7 +7,6 @@ import { useRepoData } from '@/hooks/useRepoData';
 import Navbar from '@/components/layout/Navbar';
 import RepoSearch from '@/components/repo/RepoSearch';
 import RepoHeader from '@/components/RepoHeader';
-import SearchFilter from '@/components/SearchFilter';
 import TabWorkspace from '@/components/workspace/TabWorkspace';
 import LoadingOverlay from '@/components/LoadingOverlay';
 import ErrorBanner from '@/components/ErrorBanner';
@@ -95,9 +94,6 @@ function RepoPage() {
 
       {/* Error */}
       <div className="flex-shrink-0"><ErrorBanner /></div>
-
-      {/* Filter bar */}
-      {hasGraph && <div className="flex-shrink-0"><SearchFilter /></div>}
 
       {/* Main workspace: tab system with graph, list, files, readme, prs */}
       <TabWorkspace />
