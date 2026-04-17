@@ -26,8 +26,10 @@ export function laneColor(lane: number): string {
 
 export const NODE_RADIUS = 5;
 export const MERGE_NODE_RADIUS = 6;
-export const LANE_WIDTH = 20;      // horizontal spacing between lanes
-export const ROW_HEIGHT = 28;      // vertical spacing between commits
+export const LANE_WIDTH = 20;      // horizontal spacing between lanes (vertical mode)
+export const ROW_HEIGHT = 28;      // vertical spacing between commits (vertical mode)
+export const COL_WIDTH = 56;       // horizontal spacing between commits (horizontal mode)
+export const LANE_HEIGHT = 28;     // vertical spacing between lanes (horizontal mode)
 export const LABEL_OFFSET_X = 14; // offset from last lane to start of commit message text
 export const GRAPH_PADDING_TOP = 20;
 export const GRAPH_PADDING_LEFT = 16;

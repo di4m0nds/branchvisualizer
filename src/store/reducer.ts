@@ -1,4 +1,4 @@
-import type { AppAction, AppState, FilterState, LoadState } from '../types';
+import type { AppAction, AppState, FilterState, LoadState, TabId } from '../types';
 
 export const initialFilterState: FilterState = {
   search: '',
@@ -22,11 +22,19 @@ export const initialState: AppState = {
   allCommits: [],
   loadState: initialLoadState,
   selectedNode: null,
+  selectedNodes: [],
   hoveredNode: null,
   filter: initialFilterState,
   viewport: { offsetX: 0, offsetY: 0, scale: 1 },
   token: '',
   rateLimit: null,
+  viewMode: 'canvas',
+  theme: 'dark',
+  panToSha: null,
+  activeTab: 'graph',
+  splitLayout: 'single',
+  paneTab: ['graph', 'list', 'releases', 'prs'],
+  graphDirection: 'vertical',
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -43,8 +51,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
         tags: [],
         allCommits: [],
         selectedNode: null,
+        selectedNodes: [],
         hoveredNode: null,
-        loadState: { phase: 'fetching-repo', message: 'Starting…', progress: 0 },
+        loadState: { phase: 'fetching-repo', message: 'Starting...', progress: 0 },
         filter: initialFilterState,
         viewport: { offsetX: 16, offsetY: 16, scale: 1 },
       };
@@ -76,19 +85,68 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...initialState, token: state.token };
 
     case 'SELECT_NODE':
-      return { ...state, selectedNode: action.node };
+      return {
+        ...state,
+        selectedNode: action.node,
+        selectedNodes: action.node ? [action.node] : [],
+      };
+
+    case 'TOGGLE_MULTI_SELECT': {
+      const idx = state.selectedNodes.findIndex(n => n.commit.sha === action.node.commit.sha);
+      if (idx >= 0) {
+        // Remove from selection
+        const newNodes = state.selectedNodes.filter(n => n.commit.sha !== action.node.commit.sha);
+        return {
+          ...state,
+          selectedNodes: newNodes,
+          selectedNode: newNodes.length > 0 ? newNodes[newNodes.length - 1] : null,
+        };
+      } else {
+        // Add to selection
+        const newNodes = [...state.selectedNodes, action.node];
+        return {
+          ...state,
+          selectedNodes: newNodes,
+          selectedNode: action.node,
+        };
+      }
+    }
 
     case 'HOVER_NODE':
       return { ...state, hoveredNode: action.node };
 
     case 'SET_FILTER':
-      return { ...state, filter: { ...state.filter, ...action.filter }, selectedNode: null };
+      return { ...state, filter: { ...state.filter, ...action.filter }, selectedNode: null, selectedNodes: [] };
 
     case 'SET_VIEWPORT':
       return { ...state, viewport: { ...state.viewport, ...action.viewport } };
 
     case 'SET_RATE_LIMIT':
       return { ...state, rateLimit: action.rateLimit };
+
+    case 'SET_VIEW_MODE':
+      return { ...state, viewMode: action.viewMode, selectedNode: null, selectedNodes: [] };
+
+    case 'SET_THEME':
+      return { ...state, theme: action.theme };
+
+    case 'SCROLL_TO_SHA':
+      return { ...state, panToSha: action.sha };
+
+    case 'SET_ACTIVE_TAB':
+      return { ...state, activeTab: action.tab };
+
+    case 'SET_SPLIT_LAYOUT':
+      return { ...state, splitLayout: action.layout };
+
+    case 'SET_PANE_TAB': {
+      const paneTab = [...state.paneTab] as [TabId, TabId, TabId, TabId];
+      paneTab[action.pane] = action.tab;
+      return { ...state, paneTab };
+    }
+
+    case 'SET_GRAPH_DIRECTION':
+      return { ...state, graphDirection: action.direction };
 
     default:
       return state;

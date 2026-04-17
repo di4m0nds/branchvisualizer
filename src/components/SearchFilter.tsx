@@ -1,10 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useAppContext } from '../store/AppContext';
 
-// ─── Debounce hook ────────────────────────────────────────────────────────────
-// Delays propagating a value until the user stops typing for `delay` ms.
-// The local state updates instantly so the input feels responsive; the
-// debounced value is what gets dispatched to the store.
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -14,32 +10,27 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-export default function SearchFilter() {
+export default function SearchFilter({ floating = false }: { floating?: boolean }) {
   const { state, dispatch } = useAppContext();
   const { filter, branches, allCommits } = state;
 
   const hasGraph = !!state.graphData;
 
-  // Local search string — updates instantly in the input, debounced before dispatch
   const [localSearch, setLocalSearch] = useState(filter.search);
   const debouncedSearch = useDebounced(localSearch, 200);
 
-  // Sync debounced value into global filter
   useEffect(() => {
     if (debouncedSearch !== filter.search) {
       dispatch({ type: 'SET_FILTER', filter: { search: debouncedSearch } });
     }
   }, [debouncedSearch, filter.search, dispatch]);
 
-  // Keep local search in sync when the filter is cleared externally (e.g. "Clear filters")
   useEffect(() => {
-    if (filter.search === '' && localSearch !== '') {
-      setLocalSearch('');
-    }
+    if (filter.search === '' && localSearch !== '') setLocalSearch('');
   }, [filter.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const authors = useMemo(() => {
-    const seen = new Map<string, string>(); // key → display name
+    const seen = new Map<string, string>();
     for (const c of allCommits) {
       const key = c.author.login || c.author.email;
       if (!seen.has(key)) seen.set(key, c.author.name);
@@ -49,38 +40,41 @@ export default function SearchFilter() {
       .slice(0, 80);
   }, [allCommits]);
 
-  const setFilter = (partial: Partial<typeof filter>) => {
+  const setFilter = (partial: Partial<typeof filter>) =>
     dispatch({ type: 'SET_FILTER', filter: partial });
-  };
 
   const hasActiveFilter =
     filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
 
+  const inputBase = 'h-7 rounded-md border border-border bg-background text-sm text-foreground' +
+    ' placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-primary/40' +
+    ' focus:border-primary/50 disabled:opacity-50 transition-all px-2';
+
   return (
-    <div className="search-filter-bar">
+    <div className={`flex items-center gap-2 px-4 py-2 bg-muted/20 flex-shrink-0 flex-wrap${floating ? '' : ' border-b border-border'}`}>
       {/* Search */}
-      <div className="search-input-wrap">
-        <span className="search-icon">⌕</span>
+      <div className="relative flex items-center">
+        <span className="absolute left-2 text-muted-foreground text-xs pointer-events-none">⌕</span>
         <input
           type="text"
-          className="search-input"
+          className={`${inputBase} pl-6 w-48`}
           placeholder="Search commits…"
           value={localSearch}
           onChange={e => setLocalSearch(e.target.value)}
           disabled={!hasGraph}
-          aria-label="Search commits by SHA, message, or author"
+          aria-label="Search commits"
         />
         {localSearch && (
           <button
-            className="search-clear"
+            className="absolute right-1.5 text-muted-foreground hover:text-foreground text-xs transition-colors"
             onClick={() => { setLocalSearch(''); dispatch({ type: 'SET_FILTER', filter: { search: '' } }); }}
           >✕</button>
         )}
       </div>
 
-      {/* Branch filter */}
+      {/* Branch */}
       <select
-        className="filter-select"
+        className={`${inputBase} pr-6 cursor-pointer`}
         value={filter.branch}
         onChange={e => setFilter({ branch: e.target.value })}
         disabled={!hasGraph}
@@ -94,9 +88,9 @@ export default function SearchFilter() {
         ))}
       </select>
 
-      {/* Author filter */}
+      {/* Author */}
       <select
-        className="filter-select"
+        className={`${inputBase} pr-6 cursor-pointer`}
         value={filter.author}
         onChange={e => setFilter({ author: e.target.value })}
         disabled={!hasGraph}
@@ -109,30 +103,31 @@ export default function SearchFilter() {
       </select>
 
       {/* Date range */}
-      <input
-        type="date"
-        className="filter-date"
-        value={filter.dateFrom}
-        onChange={e => setFilter({ dateFrom: e.target.value })}
-        disabled={!hasGraph}
-        title="From date"
-        aria-label="From date"
-      />
-      <span className="filter-date-sep">→</span>
-      <input
-        type="date"
-        className="filter-date"
-        value={filter.dateTo}
-        onChange={e => setFilter({ dateTo: e.target.value })}
-        disabled={!hasGraph}
-        title="To date"
-        aria-label="To date"
-      />
+      <div className="flex items-center gap-1.5">
+        <input
+          type="date"
+          className={`${inputBase} w-32 text-xs`}
+          value={filter.dateFrom}
+          onChange={e => setFilter({ dateFrom: e.target.value })}
+          disabled={!hasGraph}
+          aria-label="From date"
+        />
+        <span className="text-xs text-muted-foreground">→</span>
+        <input
+          type="date"
+          className={`${inputBase} w-32 text-xs`}
+          value={filter.dateTo}
+          onChange={e => setFilter({ dateTo: e.target.value })}
+          disabled={!hasGraph}
+          aria-label="To date"
+        />
+      </div>
 
-      {/* Clear all */}
+      {/* Clear */}
       {hasActiveFilter && (
         <button
-          className="filter-clear-btn"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors
+                     underline underline-offset-2"
           onClick={() => {
             setLocalSearch('');
             dispatch({ type: 'SET_FILTER', filter: { search: '', branch: '', author: '', dateFrom: '', dateTo: '' } });
@@ -144,7 +139,7 @@ export default function SearchFilter() {
 
       {/* Stats */}
       {state.graphData && (
-        <span className="filter-stats">
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums hidden sm:block">
           {state.graphData.rowCount.toLocaleString()} commit{state.graphData.rowCount !== 1 ? 's' : ''}
         </span>
       )}
