@@ -32,10 +32,10 @@ export default function GraphCanvas() {
   const { state, dispatch } = useAppContext();
   const { graphData, viewport, selectedNode, selectedNodes, hoveredNode, filter, branches, allCommits, graphDirection } = state;
 
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const minimapRef   = useRef<HTMLCanvasElement>(null);
-  const rafRef       = useRef<number>(0);
-  const animRafRef   = useRef<number>(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number>(0);
+  const animRafRef = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const renderOptsRef = useRef<RenderOptions | null>(null);
 
@@ -44,7 +44,7 @@ export default function GraphCanvas() {
   // ── Elastic drag state — updated imperatively to avoid React re-renders ──
   // The ref holds the live physics state; the render loop reads from it.
   const dragStateRef = useRef<(DragState & { vx: number; vy: number; returning: boolean }) | null>(null);
-  const dragLoopRef  = useRef<number>(0);
+  const dragLoopRef = useRef<number>(0);
 
   // ── Mouse position in graph-space (for magnetic attraction) ───────────────
   const mousePosRef = useRef<{ gx: number; gy: number } | null>(null);
@@ -91,7 +91,7 @@ export default function GraphCanvas() {
     cancelAnimationFrame(dragLoopRef.current);
 
     const STIFFNESS = 0.15;
-    const DAMPING   = 0.78; // higher = bouncier spring-back
+    const DAMPING = 0.78; // higher = bouncier spring-back
 
     function loop() {
       const ds = dragStateRef.current;
@@ -146,8 +146,8 @@ export default function GraphCanvas() {
       startDragLoop();
     } else {
       dragStateRef.current.sha = sha;
-      dragStateRef.current.dx  = dx;
-      dragStateRef.current.dy  = dy;
+      dragStateRef.current.dx = dx;
+      dragStateRef.current.dy = dy;
       dragStateRef.current.returning = false;
     }
   }, [startDragLoop]);
@@ -176,9 +176,9 @@ export default function GraphCanvas() {
     const hasFilter = filter.search || filter.branch || filter.author || filter.dateFrom || filter.dateTo;
     if (!hasFilter) return null;
 
-    const search   = filter.search.toLowerCase();
+    const search = filter.search.toLowerCase();
     const dateFrom = filter.dateFrom ? new Date(filter.dateFrom).getTime() : 0;
-    const dateTo   = filter.dateTo   ? new Date(filter.dateTo + 'T23:59:59').getTime() : Infinity;
+    const dateTo = filter.dateTo ? new Date(filter.dateTo + 'T23:59:59').getTime() : Infinity;
 
     let branchReachable: Set<string> | null = null;
     if (filter.branch) {
@@ -192,10 +192,10 @@ export default function GraphCanvas() {
       if (search) {
         const a = commit.author;
         const hit =
-          commit.sha.startsWith(search)                          ||
-          commit.subject.toLowerCase().includes(search)          ||
-          a.name.toLowerCase().includes(search)                  ||
-          (a.login?.toLowerCase().includes(search) ?? false)     ||
+          commit.sha.startsWith(search) ||
+          commit.subject.toLowerCase().includes(search) ||
+          a.name.toLowerCase().includes(search) ||
+          (a.login?.toLowerCase().includes(search) ?? false) ||
           a.email.toLowerCase().includes(search);
         if (!hit) continue;
       }
@@ -244,6 +244,25 @@ export default function GraphCanvas() {
     visibleNodeSHAs,
   );
 
+  // Sync ciStatus into renderOptsRef imperatively so it never triggers the main
+  // render effect (which would cancel the animation frame on every map update).
+  const ciStatusRef = useRef<Map<string, import('../hooks/useCIOverlay').CINodeStatus> | undefined>(undefined);
+  useEffect(() => {
+    const val = ciStatus.size > 0 ? ciStatus : undefined;
+    ciStatusRef.current = val;
+    if (renderOptsRef.current) {
+      renderOptsRef.current = { ...renderOptsRef.current, ciStatus: val };
+      // Only request a repaint if the animation loop isn't already running
+      if (!selectedNode && selectedNodes.length === 0) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => {
+          if (ctxRef.current && graphData) renderGraph(ctxRef.current, graphData, renderOptsRef.current!);
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ciStatus]);
+
   // ── Canvas resize observer ─────────────────────────────────────────────
   useEffect(() => {
     const container = containerRef.current;
@@ -267,9 +286,9 @@ export default function GraphCanvas() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width  = canvasSize.w * dpr;
+    canvas.width = canvasSize.w * dpr;
     canvas.height = canvasSize.h * dpr;
-    canvas.style.width  = `${canvasSize.w}px`;
+    canvas.style.width = `${canvasSize.w}px`;
     canvas.style.height = `${canvasSize.h}px`;
     const ctx = canvas.getContext('2d', { alpha: false });
     if (ctx) {
@@ -282,8 +301,8 @@ export default function GraphCanvas() {
       renderOptsRef.current = opts;
       if (graphData) renderGraph(ctxRef.current, graphData, opts);
     }
-  // graphData intentionally not in deps — this only handles DPR / sizing
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // graphData intentionally not in deps — this only handles DPR / sizing
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasSize]);
 
   // ── Mouse position tracking — for magnetic attraction effect ────────────
@@ -318,8 +337,8 @@ export default function GraphCanvas() {
       canvas.removeEventListener('mousemove', onMouseMove);
       canvas.removeEventListener('mouseleave', onMouseLeave);
     };
-  // renderNow is stable; graphData dep ensures re-attach when graph loads
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // renderNow is stable; graphData dep ensures re-attach when graph loads
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphData, renderNow]);
 
   // ── Main render loop ───────────────────────────────────────────────────
@@ -329,19 +348,19 @@ export default function GraphCanvas() {
 
     const theme = state.theme ?? 'dark';
     const opts: RenderOptions = {
-      width:          canvasSize.w,
-      height:         canvasSize.h,
-      scale:          viewport.scale,
-      offsetX:        viewport.offsetX,
-      offsetY:        viewport.offsetY,
-      selectedSha:    selectedNode?.commit.sha ?? null,
-      selectedShas:   selectedNodes.length > 0 ? new Set(selectedNodes.map(n => n.commit.sha)) : null,
-      hoveredSha:     hoveredNode?.commit.sha  ?? null,
+      width: canvasSize.w,
+      height: canvasSize.h,
+      scale: viewport.scale,
+      offsetX: viewport.offsetX,
+      offsetY: viewport.offsetY,
+      selectedSha: selectedNode?.commit.sha ?? null,
+      selectedShas: selectedNodes.length > 0 ? new Set(selectedNodes.map(n => n.commit.sha)) : null,
+      hoveredSha: hoveredNode?.commit.sha ?? null,
       highlightedShas,
-      showMessages:   viewport.scale > 0.6,
+      showMessages: viewport.scale > 0.6,
       theme,
-      direction:      graphDirection,
-      ciStatus:       ciStatus.size > 0 ? ciStatus : undefined,
+      direction: graphDirection,
+      ciStatus: ciStatusRef.current,
     };
 
     // Keep renderOptsRef current so animation loop always has fresh opts
@@ -361,7 +380,9 @@ export default function GraphCanvas() {
     });
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection, ciStatus]);
+    // ciStatus intentionally omitted — synced imperatively via ciStatusRef above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection]);
 
   // ── Animation loop (orbiting arc + dashed edges when a node is selected) ─
   useEffect(() => {
@@ -388,7 +409,7 @@ export default function GraphCanvas() {
 
     animRafRef.current = requestAnimationFrame(animLoop);
     return () => cancelAnimationFrame(animRafRef.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.commit.sha, selectedNodes.length, graphData]);
 
   // ── Minimap (vertical mode only) ──────────────────────────────────────
@@ -411,7 +432,7 @@ export default function GraphCanvas() {
         fitToView(canvasSize.w, canvasSize.h);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.loadState.phase, state.repoInfo]);
 
   // ── Re-fit when direction changes ─────────────────────────────────────
@@ -421,7 +442,7 @@ export default function GraphCanvas() {
       prevDirectionRef.current = graphDirection;
       fitToView(canvasSize.w, canvasSize.h);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphDirection]);
 
   // ── Smooth pan to SHA ─────────────────────────────────────────────────
@@ -469,7 +490,7 @@ export default function GraphCanvas() {
     panAnimRef.current = requestAnimationFrame(frame);
 
     return () => cancelAnimationFrame(panAnimRef.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.panToSha]);
 
   // ── Timeline jump — smooth-pan to a row's position ───────────────────────
@@ -618,11 +639,11 @@ export default function GraphCanvas() {
       {!graphData && state.loadState.phase === 'idle' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-8">
           <svg width="52" height="52" viewBox="0 0 56 56" fill="none" className="opacity-20">
-            <circle cx="28" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>
-            <circle cx="14" cy="36" r="6" stroke="currentColor" strokeWidth="2"/>
-            <circle cx="42" cy="36" r="6" stroke="currentColor" strokeWidth="2"/>
-            <line x1="28" y1="18" x2="14" y2="30" stroke="currentColor" strokeWidth="2"/>
-            <line x1="28" y1="18" x2="42" y2="30" stroke="currentColor" strokeWidth="2"/>
+            <circle cx="28" cy="12" r="6" stroke="currentColor" strokeWidth="2" />
+            <circle cx="14" cy="36" r="6" stroke="currentColor" strokeWidth="2" />
+            <circle cx="42" cy="36" r="6" stroke="currentColor" strokeWidth="2" />
+            <line x1="28" y1="18" x2="14" y2="30" stroke="currentColor" strokeWidth="2" />
+            <line x1="28" y1="18" x2="42" y2="30" stroke="currentColor" strokeWidth="2" />
           </svg>
           <p className="text-sm text-muted-foreground">
             Enter a GitHub repository URL to visualize its commit graph

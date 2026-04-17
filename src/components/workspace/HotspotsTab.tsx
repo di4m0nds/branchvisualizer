@@ -234,7 +234,7 @@ export default function HotspotsTab() {
                   </span>
                   <div className="flex items-center gap-0.5 text-[10px] font-mono tabular-nums">
                     {entry.additions > 0 && <span className="text-green-400">+{entry.additions}</span>}
-                    {entry.deletions > 0 && <span className="text-red-400">-{entry.deletions}</span>}
+                              {entry.deletions > 0 && <span className="text-red-400">-{entry.deletions}</span>}
                   </div>
                 </div>
               </div>

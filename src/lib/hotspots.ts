@@ -56,8 +56,10 @@ export function computeHotspots(
     additions: entry.additions,
     deletions: entry.deletions,
     score: entry.changeCount / maxCount,
-  }));
+   }));
 
-  _cache.set(cacheKey, result);
-  return result;
+  // Keep top 50 hotspots
+  const top = result.slice(0, 50);
+  _cache.set(cacheKey, top);
+  return top;
 }

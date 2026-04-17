@@ -397,14 +397,7 @@ export function ComparePanelLocked() {
         <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" className="text-muted-foreground/40">
           <path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-.5V4.5A3.5 3.5 0 0 0 8 1zm-2 3.5a2 2 0 1 1 4 0V6H6V4.5z"/>
         </svg>
-        <p className="text-xs text-muted-foreground">Sign in to access commit comparison</p>
-        <a
-          href="/auth/github"
-          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 border border-primary/25
-                     text-primary hover:bg-primary/20 transition-colors"
-        >
-          Sign in with GitHub
-        </a>
+        <p className="text-xs text-muted-foreground">Sign in with a GitHub token to compare commits.</p>
       </div>
     </div>
   );
