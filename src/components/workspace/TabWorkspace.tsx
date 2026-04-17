@@ -9,6 +9,8 @@ import ReadmeTab from './ReadmeTab';
 import PRsIssuesTab from './PRsIssuesTab';
 import ReleasesDeploymentsTab from './ReleasesDeploymentsTab';
 import CIStatusTab from './CIStatusTab';
+import HotspotsTab from './HotspotsTab';
+import ComparePanel, { ComparePanelLocked } from './ComparePanel';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { Capability, TabId, SplitLayout } from '@/types';
@@ -104,6 +106,17 @@ const TABS: TabDef[] = [
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
         <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'hotspots',
+    label: 'Hotspots',
+    shortLabel: 'Hot',
+    requires: 'read:files',
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8.75 1a.75.75 0 0 0-1.352-.46C5.6 3.16 5.05 5.07 5.05 6.75c0 .96.2 1.87.56 2.69A4.25 4.25 0 1 0 8.75 1zM8 13.5a2.75 2.75 0 0 1-1.95-4.7c.26.7.65 1.33 1.15 1.85.13.14.32.2.5.16a.5.5 0 0 0 .38-.44C8.2 9.24 8.75 7.8 9.5 6.77c.18.57.28 1.17.28 1.8A2.75 2.75 0 0 1 8 13.5z"/>
       </svg>
     ),
   },
@@ -372,6 +385,7 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
       {activeTab === 'prs'      && <div className="absolute inset-0 flex flex-col"><PRsIssuesTab /></div>}
       {activeTab === 'releases' && <div className="absolute inset-0 flex flex-col"><ReleasesDeploymentsTab /></div>}
       {activeTab === 'ci'       && <div className="absolute inset-0 flex flex-col"><CIStatusTab /></div>}
+      {activeTab === 'hotspots' && <div className="absolute inset-0 flex flex-col"><HotspotsTab /></div>}
     </div>
   );
 }
@@ -406,7 +420,8 @@ function SplitPane({
 
 export default function TabWorkspace() {
   const { state, dispatch } = useAppContext();
-  const { activeTab, splitLayout, selectedNode, graphData } = state;
+  const { activeTab, splitLayout, selectedNode, selectedNodes, graphData } = state;
+  const { hasCapability } = useCapabilities();
 
   // Resize state for split layouts (percentages of the first pane)
   const [splitH, setSplitH] = useState(50);   // 2h: left pane %
@@ -428,7 +443,10 @@ export default function TabWorkspace() {
     return state.paneTab.slice(0, visibleCount).some(t => t === 'list');
   })();
 
-  const showFloatingPanel = selectedNode && graphData && !hasListTabVisible;
+  // Show compare panel when exactly 2 nodes selected
+  const showComparePanel = selectedNodes.length === 2 && graphData;
+  // Show regular detail panel for single select or multi (>2) — not when compare panel is active
+  const showFloatingPanel = selectedNode && graphData && !hasListTabVisible && selectedNodes.length !== 2;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -516,6 +534,13 @@ export default function TabWorkspace() {
 
         {/* Floating detail panel — only when no list tab is currently visible */}
         {showFloatingPanel && <DetailPanel mode="floating" />}
+
+        {/* Compare panel — shown when exactly 2 nodes selected */}
+        {showComparePanel && (
+          hasCapability('compare:commits')
+            ? <ComparePanel />
+            : <ComparePanelLocked />
+        )}
       </div>
     </div>
   );

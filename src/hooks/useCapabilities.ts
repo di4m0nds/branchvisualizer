@@ -1,8 +1,6 @@
-// Phase 4 — Capability hook.
-// Source of truth:
-//   - VITE_USE_BACKEND=true  → fetches /auth/me from backend
-//   - VITE_USE_BACKEND=false → derives from local state.token (UX only; no backend call)
-
+// Phase 4+5 — Capability hook.
+// VITE_USE_BACKEND=true  → fetches /auth/me from backend
+// VITE_USE_BACKEND=false → derives from local state.token (no backend call)
 import { useCallback } from 'react';
 import { useAppContext } from '@/store/AppContext';
 import type { Capability, CapabilityState } from '@/types';
@@ -12,7 +10,6 @@ const API_URL =
   ((import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '')) ??
   'http://localhost:3001';
 
-/** Full capability response shape from GET /auth/me */
 interface AuthMeResponse {
   authenticated: boolean;
   login: string | null;
@@ -21,22 +18,15 @@ interface AuthMeResponse {
 }
 
 export interface UseCapabilitiesResult extends CapabilityState {
-  /** True if the user holds this specific capability. */
   hasCapability: (cap: Capability) => boolean;
-  /**
-   * Re-fetch /auth/me (backend mode) or recompute from token (direct mode).
-   * Safe to call multiple times.
-   */
   refresh: () => Promise<void>;
 }
 
 export function useCapabilities(): UseCapabilitiesResult {
   const { state, dispatch } = useAppContext();
 
-  // Backend mode: refresh fetches /auth/me
   const refresh = useCallback(async () => {
     if (!USE_BACKEND) return;
-
     dispatch({
       type: 'SET_CAPABILITIES',
       payload: {
@@ -47,7 +37,6 @@ export function useCapabilities(): UseCapabilitiesResult {
         loading: true,
       },
     });
-
     try {
       const res = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
       if (!res.ok) throw new Error(`/auth/me returned ${res.status}`);
@@ -63,7 +52,6 @@ export function useCapabilities(): UseCapabilitiesResult {
         },
       });
     } catch {
-      // On error fall back to anonymous read:graph
       dispatch({
         type: 'SET_CAPABILITIES',
         payload: {
@@ -77,7 +65,7 @@ export function useCapabilities(): UseCapabilitiesResult {
     }
   }, [dispatch]);
 
-  // ── Non-backend mode: derive from local token ─────────────────────────────
+  // Non-backend: derive from local token
   if (!USE_BACKEND) {
     const hasTok = !!state.token;
     const caps: Capability[] = hasTok
@@ -94,7 +82,7 @@ export function useCapabilities(): UseCapabilitiesResult {
     };
   }
 
-  // ── Backend mode: read from AppState ─────────────────────────────────────
+  // Backend: read from AppState
   const { capabilityState } = state;
   return {
     ...capabilityState,

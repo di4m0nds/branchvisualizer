@@ -22,16 +22,8 @@ export type {
 // These types are specific to the branchvisualizer app (React state, actions,
 // routing) and do NOT belong in @codeatlas/core.
 
-export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci';
-
-// ─── Capability system (Phase 4) ───────────────────────────────────────────
-
-export type Capability =
-  | 'read:graph'
-  | 'read:files'
-  | 'ai:assist'
-  | 'compare:commits'
-  | 'write:repo';
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots';
+export type Capability = 'read:graph' | 'read:files' | 'compare:commits' | 'ai:assist';
 
 export interface CapabilityState {
   capabilities: Capability[];
@@ -115,7 +107,7 @@ export interface AppState {
   paneTab: [TabId, TabId, TabId, TabId];
   /** Graph layout direction */
   graphDirection: GraphDirection;
-  /** Phase 4: capability state (backend-derived or token-derived) */
+  /** Resolved capabilities (auth state) */
   capabilityState: CapabilityState;
 }
 
