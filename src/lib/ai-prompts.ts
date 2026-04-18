@@ -12,7 +12,6 @@ export type AIFeatureId =
   | 'explain_commit'
   | 'summarize_branch'
   | 'where_to_start'
-  | 'compare_branches'
   | 'pr_description';
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -132,33 +131,6 @@ Be specific using the actual commit SHAs and subjects above.`;
   return { system: SYSTEM_PROMPT, user, featureId: 'where_to_start', promptVersion: PROMPT_VERSION };
 }
 
-// ─── Feature: Compare branches ───────────────────────────────────────────────
-
-export function buildCompareBranchesPrompt(
-  ctxA: AIContextPayload,
-  ctxB: AIContextPayload,
-  branchA: string,
-  branchB: string,
-): BuiltPrompt {
-  const listA = ctxA.commits.map(c => `  • ${c.shortSha}  ${c.subject}`).join('\n');
-  const listB = ctxB.commits.map(c => `  • ${c.shortSha}  ${c.subject}`).join('\n');
-
-  const user = `${repoHeader(ctxA)}
-
-Branch A: ${branchA}
-${listA}
-
-Branch B: ${branchB}
-${listB}
-
-Compare these two branches:
-1. What is each branch focused on?
-2. Do they overlap or conflict in any areas?
-3. Which appears more production-ready or closer to being merged?`;
-
-  return { system: SYSTEM_PROMPT, user, featureId: 'compare_branches', promptVersion: PROMPT_VERSION };
-}
-
 // ─── Feature: PR description ─────────────────────────────────────────────────
 
 export function buildPRDescriptionPrompt(
@@ -194,8 +166,6 @@ export interface BuildPromptOptions {
   ctx: AIContextPayload;
   branchName?: string;
   baseBranch?: string;
-  ctxB?: AIContextPayload;
-  branchB?: string;
 }
 
 export function buildPrompt(opts: BuildPromptOptions): BuiltPrompt {
@@ -213,9 +183,6 @@ export function buildPrompt(opts: BuildPromptOptions): BuiltPrompt {
       return buildSummarizeBranchPrompt(ctx, branchName);
     case 'where_to_start':
       return buildWhereToStartPrompt(ctx);
-    case 'compare_branches':
-      if (!opts.ctxB || !opts.branchB) throw new Error('compare_branches requires ctxB and branchB');
-      return buildCompareBranchesPrompt(ctx, opts.ctxB, branchName, opts.branchB);
     case 'pr_description':
       return buildPRDescriptionPrompt(ctx, branchName, baseBranch);
     default:
