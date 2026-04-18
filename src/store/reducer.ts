@@ -1,4 +1,10 @@
-import type { AppAction, AppState, CapabilityState, FilterState, LoadState, TabId } from '../types';
+import type { AppAction, AppState, AIConfig, CapabilityState, FilterState, LoadState, TabId } from '../types';
+
+export const initialAIConfig: AIConfig = {
+  provider: 'anthropic',
+  model: 'claude-haiku-4-5',
+  useProxy: false,
+};
 
 export const initialCapabilityState: CapabilityState = {
   capabilities: ['read:graph'],
@@ -44,6 +50,7 @@ export const initialState: AppState = {
   paneTab: ['graph', 'list', 'releases', 'prs'],
   graphDirection: 'vertical',
   capabilityState: initialCapabilityState,
+  aiConfig: initialAIConfig,
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -159,6 +166,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_CAPABILITIES':
       return { ...state, capabilityState: action.payload };
+
+    case 'SET_AI_CONFIG':
+      return { ...state, aiConfig: { ...state.aiConfig, ...action.config } };
 
     default:
       return state;

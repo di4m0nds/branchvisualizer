@@ -1,10 +1,15 @@
 import { useCallback, useEffect } from 'react';
 import { toast } from '@/services/toast';
 import { parseGitHubURL } from '../lib/parser';
-import { fetchFullRepository, setToken, setRateLimitCallback } from '../lib/github';
+import { fetchFullRepository, setToken, setRateLimitCallback, setApiBase, setGqlEndpoint } from '../lib/github';
 import { buildGraphData } from '../graph/layout';
 import { useAppContext } from '../store/AppContext';
 import { addToHistory } from '../lib/history';
+
+const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === 'true';
+const API_URL =
+  ((import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '')) ??
+  'http://localhost:3001';
 
 export function useRepoData() {
   const { state, dispatch } = useAppContext();
@@ -28,6 +33,19 @@ export function useRepoData() {
     }
 
     setToken(state.token);
+
+    // Route through proxy only when token is available — forwarded token gives
+    // the user their own 5000 req/h quota.
+    // Without a token, call GitHub directly from the browser so each visitor
+    // gets their own 60 req/h on their own IP instead of sharing the server's quota.
+    if (USE_BACKEND && state.token) {
+      setApiBase(`${API_URL}/api/github/rest`);
+      setGqlEndpoint(`${API_URL}/api/github/graphql`);
+    } else {
+      setApiBase('https://api.github.com');
+      setGqlEndpoint('https://api.github.com/graphql');
+    }
+
     dispatch({ type: 'LOAD_START' });
 
     const loadToastId = toast.loading(`Loading ${parsed.owner}/${parsed.repo}…`);
