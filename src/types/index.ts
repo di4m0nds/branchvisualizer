@@ -22,8 +22,18 @@ export type {
 // These types are specific to the branchvisualizer app (React state, actions,
 // routing) and do NOT belong in @codeatlas/core.
 
-export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots';
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots' | 'ai';
 export type Capability = 'read:graph' | 'read:files' | 'compare:commits' | 'ai:assist';
+export type { AIProviderId } from '@codeatlas/ai';
+
+export interface AIConfig {
+  provider: import('@codeatlas/ai').AIProviderId;
+  model: string;
+  /** API key — stored in sessionStorage, not persisted in AppState. */
+  apiKey?: string;
+  /** Route requests through backend proxy instead of calling provider directly. */
+  useProxy: boolean;
+}
 
 export interface CapabilityState {
   capabilities: Capability[];
@@ -82,6 +92,7 @@ import type {
 } from '@codeatlas/core';
 
 export interface AppState {
+  aiConfig: AIConfig;
   repoInfo: RepoInfo | null;
   graphData: GraphData | null;
   branches: Branch[];
@@ -133,4 +144,5 @@ export type AppAction =
   | { type: 'SET_SPLIT_LAYOUT'; layout: SplitLayout }
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
-  | { type: 'SET_CAPABILITIES'; payload: CapabilityState };
+  | { type: 'SET_CAPABILITIES'; payload: CapabilityState }
+  | { type: 'SET_AI_CONFIG'; config: Partial<AIConfig> };

@@ -114,12 +114,18 @@ function RepoStats() {
   );
 }
 
-// ─── Auth controls (backend mode only) ───────────────────────────────────
+// ─── Auth controls ────────────────────────────────────────────────────────
+// OAuth sign-in is reserved for a future phase.
+// Token-based access is managed via the token field in the search bar.
+// This component shows the OAuth user avatar + sign-out when a real session
+// exists, but hides entirely when unauthenticated (no broken "Sign in" link).
 
 function AuthControls() {
   const { authenticated, login, refresh } = useCapabilities();
 
-  if (!USE_BACKEND) return null;
+  // Only render when the user has a real OAuth session (future feature).
+  // Hides the broken OAuth redirect in the meantime.
+  if (!authenticated) return null;
 
   async function handleSignOut() {
     try {
@@ -134,48 +140,29 @@ function AuthControls() {
     }
   }
 
-  if (authenticated) {
-    // User display + sign-out
-    const initials = login ? login.slice(0, 2).toUpperCase() : '??';
-    return (
-      <div className="flex items-center gap-1.5">
-        <Tooltip content={login ?? 'Authenticated'}>
-          <div
-            className="h-7 w-7 rounded-full flex items-center justify-center
-                       bg-primary/15 border border-primary/30 text-primary
-                       text-[10px] font-bold select-none cursor-default"
-          >
-            {initials}
-          </div>
-        </Tooltip>
-        <Tooltip content="Sign out">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={handleSignOut}
-            aria-label="Sign out"
-          >
-            <SignOutIcon />
-          </Button>
-        </Tooltip>
-      </div>
-    );
-  }
-
-  // Not authenticated — show sign-in button
+  const initials = login ? login.slice(0, 2).toUpperCase() : '??';
   return (
-    <Tooltip content="Sign in with GitHub to unlock more features">
-      <Button
-        variant="outline"
-        size="sm"
-        asChild
-      >
-        <a href={`${API_URL}/auth/github`}>
-          <GitHubIconSmall />
-          Sign in
-        </a>
-      </Button>
-    </Tooltip>
+    <div className="flex items-center gap-1.5">
+      <Tooltip content={login ?? 'Authenticated'}>
+        <div
+          className="h-7 w-7 rounded-full flex items-center justify-center
+                     bg-primary/15 border border-primary/30 text-primary
+                     text-[10px] font-bold select-none cursor-default"
+        >
+          {initials}
+        </div>
+      </Tooltip>
+      <Tooltip content="Sign out">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleSignOut}
+          aria-label="Sign out"
+        >
+          <SignOutIcon />
+        </Button>
+      </Tooltip>
+    </div>
   );
 }
 

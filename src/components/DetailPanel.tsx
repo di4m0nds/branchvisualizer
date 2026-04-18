@@ -6,6 +6,8 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { fetchCommitDetails, setToken, type CommitDetails, type CommitFile } from '@/lib/github';
+import { useCapabilities } from '@/hooks/useCapabilities';
+import { AI_ENABLED } from '@/lib/features';
 import type { CommitAuthor, GraphNode } from '@/types';
 
 // ─── Author card with hover tooltip ──────────────────────────────────────────
@@ -47,8 +49,10 @@ interface HeaderProps {
 }
 
 function PanelHeader({ node, mode, minimized, onMinimize, onClose, onDragHandleMouseDown }: HeaderProps) {
-  const { state } = useAppContext();
+  const { state, dispatch } = useAppContext();
   const { graphData, repoInfo } = state;
+  const { hasCapability } = useCapabilities();
+  const aiAvailable = AI_ENABLED() && hasCapability('ai:assist');
   const [copied, setCopied] = useState(false);
 
   const { commit, color } = node;
@@ -147,6 +151,18 @@ function PanelHeader({ node, mode, minimized, onMinimize, onClose, onDragHandleM
         className="flex items-center gap-0.5 flex-shrink-0 ml-1"
         onMouseDown={e => e.stopPropagation()}
       >
+        {/* AI quick-action: switch to AI tab with this commit selected */}
+        {aiAvailable && (
+          <button
+            onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'ai' })}
+            title="Explain with AI"
+            className="w-5 h-5 rounded flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+          >
+            <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"/>
+            </svg>
+          </button>
+        )}
         {mode === 'floating' && (
           <button
             onClick={onMinimize}

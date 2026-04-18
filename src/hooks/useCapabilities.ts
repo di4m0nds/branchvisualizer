@@ -25,68 +25,60 @@ export interface UseCapabilitiesResult extends CapabilityState {
 export function useCapabilities(): UseCapabilitiesResult {
   const { state, dispatch } = useAppContext();
 
+  // refresh() pings /auth/me to pick up real OAuth sessions (future feature).
+  // In the current token-field model it's a no-op unless VITE_USE_BACKEND=true
+  // and the user has actually completed an OAuth flow.
   const refresh = useCallback(async () => {
     if (!USE_BACKEND) return;
-    dispatch({
-      type: 'SET_CAPABILITIES',
-      payload: {
-        capabilities: ['read:graph'],
-        authenticated: false,
-        login: null,
-        backendTokenConfigured: false,
-        loading: true,
-      },
-    });
     try {
-      const res = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
-      if (!res.ok) throw new Error(`/auth/me returned ${res.status}`);
+      const headers: Record<string, string> = {};
+      if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+      const res = await fetch(`${API_URL}/auth/me`, {
+        credentials: 'include',
+        headers,
+      });
+      if (!res.ok) return; // silently ignore — fall back to local token below
       const data: AuthMeResponse = await res.json();
-      dispatch({
-        type: 'SET_CAPABILITIES',
-        payload: {
-          capabilities: data.capabilities ?? ['read:graph'],
-          authenticated: data.authenticated ?? false,
-          login: data.login ?? null,
-          backendTokenConfigured: data.backendTokenConfigured ?? false,
-          loading: false,
-        },
-      });
+      // Only update state if the backend reports a real OAuth session.
+      if (data.authenticated) {
+        dispatch({
+          type: 'SET_CAPABILITIES',
+          payload: {
+            capabilities: data.capabilities ?? ['read:graph'],
+            authenticated: true,
+            login: data.login ?? null,
+            backendTokenConfigured: data.backendTokenConfigured ?? false,
+            loading: false,
+          },
+        });
+      }
     } catch {
-      dispatch({
-        type: 'SET_CAPABILITIES',
-        payload: {
-          capabilities: ['read:graph'],
-          authenticated: false,
-          login: null,
-          backendTokenConfigured: false,
-          loading: false,
-        },
-      });
+      // Ignore — capabilities are derived from state.token below.
     }
-  }, [dispatch]);
+  }, [dispatch, state.token]);
 
-  // Non-backend: derive from local token
-  if (!USE_BACKEND) {
-    const hasTok = !!state.token;
-    const caps: Capability[] = hasTok
-      ? ['read:graph', 'read:files', 'compare:commits', 'ai:assist']
-      : ['read:graph'];
-    return {
-      capabilities: caps,
-      authenticated: false,
-      login: null,
-      backendTokenConfigured: false,
-      loading: false,
-      hasCapability: (cap: Capability) => caps.includes(cap),
-      refresh,
-    };
-  }
+  // Always derive capabilities from the local token set via the UI.
+  // This covers both direct mode and backend-proxy mode:
+  //   - No token  → anonymous GitHub free tier (60 req/h), read:graph only
+  //   - Token set → 5000 req/h, all features unlocked
+  const hasTok = !!state.token;
+  const caps: Capability[] = hasTok
+    ? ['read:graph', 'read:files', 'compare:commits', 'ai:assist']
+    : ['read:graph'];
 
-  // Backend: read from AppState
+  // If a real OAuth session was detected by a previous refresh(), surface that
+  // login info. Otherwise report unauthenticated (token ≠ OAuth session).
   const { capabilityState } = state;
+  const authenticated = capabilityState.authenticated;
+  const login = capabilityState.login;
+
   return {
-    ...capabilityState,
-    hasCapability: (cap: Capability) => capabilityState.capabilities.includes(cap),
+    capabilities: caps,
+    authenticated,
+    login,
+    backendTokenConfigured: hasTok,
+    loading: false,
+    hasCapability: (cap: Capability) => caps.includes(cap),
     refresh,
   };
 }

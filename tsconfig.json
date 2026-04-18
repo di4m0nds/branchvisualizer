@@ -38,6 +38,12 @@
       ],
       "@codeatlas/core/*": [
         "../../packages/core/src/*"
+      ],
+      "@codeatlas/ai": [
+        "../../packages/ai/src/exports.ts"
+      ],
+      "@codeatlas/ai/*": [
+        "../../packages/ai/src/*"
       ]
     }
   },
