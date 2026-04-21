@@ -22,7 +22,7 @@ export type {
 // These types are specific to the branchvisualizer app (React state, actions,
 // routing) and do NOT belong in @codeatlas/core.
 
-export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots' | 'ai';
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots' | 'assistant';
 export type Capability = 'read:graph' | 'read:files' | 'compare:commits' | 'ai:assist';
 export type { AIProviderId } from '@codeatlas/ai';
 
@@ -120,6 +120,8 @@ export interface AppState {
   graphDirection: GraphDirection;
   /** Resolved capabilities (auth state) */
   capabilityState: CapabilityState;
+  /** Pending request to open an AI chat about specific commit(s). Cleared after consumed. */
+  aiChatRequest: { shas: string[]; mode: 'commit' | 'compare' } | null;
 }
 
 // ─── Action types ──────────────────────────────────────────────────────────
@@ -145,4 +147,6 @@ export type AppAction =
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
   | { type: 'SET_CAPABILITIES'; payload: CapabilityState }
-  | { type: 'SET_AI_CONFIG'; config: Partial<AIConfig> };
+  | { type: 'SET_AI_CONFIG'; config: Partial<AIConfig> }
+  | { type: 'REQUEST_AI_CHAT'; shas: string[]; mode: 'commit' | 'compare' }
+  | { type: 'CLEAR_AI_CHAT_REQUEST' };

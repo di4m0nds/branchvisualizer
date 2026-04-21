@@ -154,7 +154,7 @@ function PanelHeader({ node, mode, minimized, onMinimize, onClose, onDragHandleM
         {/* AI quick-action: switch to AI tab with this commit selected */}
         {aiAvailable && (
           <button
-            onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'ai' })}
+            onClick={() => { dispatch({ type: 'REQUEST_AI_CHAT', shas: [node.commit.sha], mode: 'commit' }); dispatch({ type: 'SET_ACTIVE_TAB', tab: 'assistant' }); }}
             title="Explain with AI"
             className="w-5 h-5 rounded flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
           >

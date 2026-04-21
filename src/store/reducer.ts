@@ -51,6 +51,7 @@ export const initialState: AppState = {
   graphDirection: 'vertical',
   capabilityState: initialCapabilityState,
   aiConfig: initialAIConfig,
+  aiChatRequest: null,
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -169,6 +170,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_AI_CONFIG':
       return { ...state, aiConfig: { ...state.aiConfig, ...action.config } };
+
+    case 'REQUEST_AI_CHAT':
+      return { ...state, aiChatRequest: { shas: action.shas, mode: action.mode } };
+
+    case 'CLEAR_AI_CHAT_REQUEST':
+      return { ...state, aiChatRequest: null };
 
     default:
       return state;

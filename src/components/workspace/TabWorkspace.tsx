@@ -10,7 +10,7 @@ import PRsIssuesTab from './PRsIssuesTab';
 import ReleasesDeploymentsTab from './ReleasesDeploymentsTab';
 import CIStatusTab from './CIStatusTab';
 import HotspotsTab from './HotspotsTab';
-import AiAssistTab from './AiAssistTab';
+import AssistantTab from './AssistantTab';
 import ComparePanel, { ComparePanelLocked } from './ComparePanel';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -122,13 +122,13 @@ const TABS: TabDef[] = [
     ),
   },
   {
-    id: 'ai',
-    label: 'AI Assist',
+    id: 'assistant',
+    label: 'AI',
     shortLabel: 'AI',
     requires: 'ai:assist',
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"/>
+        <path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25Z"/>
       </svg>
     ),
   },
@@ -397,8 +397,8 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
       {activeTab === 'prs'      && <div className="absolute inset-0 flex flex-col"><PRsIssuesTab /></div>}
       {activeTab === 'releases' && <div className="absolute inset-0 flex flex-col"><ReleasesDeploymentsTab /></div>}
       {activeTab === 'ci'       && <div className="absolute inset-0 flex flex-col"><CIStatusTab /></div>}
-      {activeTab === 'hotspots' && <div className="absolute inset-0 flex flex-col"><HotspotsTab /></div>}
-      {activeTab === 'ai'       && <div className="absolute inset-0 flex flex-col"><AiAssistTab /></div>}
+      {activeTab === 'hotspots'   && <div className="absolute inset-0 flex flex-col"><HotspotsTab /></div>}
+      {activeTab === 'assistant'  && <div className="absolute inset-0 flex flex-col overflow-hidden"><AssistantTab /></div>}
     </div>
   );
 }

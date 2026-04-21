@@ -6,11 +6,22 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { streamAI } from '@codeatlas/ai';
-import type { BuiltPrompt } from '../lib/ai-prompts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type { AIProviderId } from '@codeatlas/ai';
+
+/**
+ * Minimal prompt shape the hook actually needs.
+ * BuiltPrompt from ai-prompts is a superset and satisfies this interface.
+ */
+export interface AiPrompt {
+  system: string;
+  user: string;
+  /** Optional metadata fields (unused by hook, kept for compatibility with BuiltPrompt). */
+  featureId?: string;
+  promptVersion?: string;
+}
 
 export interface AIConfig {
   provider: import('@codeatlas/ai').AIProviderId;
@@ -27,12 +38,19 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   useProxy: false,
 };
 
+export interface TokenUsage {
+  input: number;
+  output: number;
+  total: number;
+}
+
 export interface UseAiResult {
   output: string;
   loading: boolean;
   error: string | null;
   requestId: string | null;
-  run: (prompt: BuiltPrompt, config: AIConfig) => void;
+  tokenUsage: TokenUsage | null;
+  run: (prompt: AiPrompt, config: AIConfig) => void;
   cancel: () => void;
   clear: () => void;
 }
@@ -50,9 +68,10 @@ function uuid(): string {
 // Thin adapter: converts AIStreamChunk objects from @codeatlas/ai into strings.
 
 async function* streamDirect(
-  prompt: BuiltPrompt,
+  prompt: AiPrompt,
   config: AIConfig,
   signal: AbortSignal,
+  onDone?: (tokens: { input?: number; output?: number }) => void,
 ): AsyncGenerator<string> {
   for await (const chunk of streamAI({
     provider: config.provider,
@@ -66,16 +85,20 @@ async function* streamDirect(
   })) {
     if (chunk.type === 'delta') yield chunk.text;
     if (chunk.type === 'error') throw new Error(chunk.message);
+    if (chunk.type === 'done') {
+      onDone?.({ input: chunk.inputTokens, output: chunk.outputTokens ?? chunk.totalTokens });
+    }
   }
 }
 
 // ─── Proxy stream ─────────────────────────────────────────────────────────────
 
 async function* streamProxy(
-  prompt: BuiltPrompt,
+  prompt: AiPrompt,
   config: AIConfig,
   requestId: string,
   signal: AbortSignal,
+  onDone?: (tokens: { input?: number; output?: number }) => void,
 ): AsyncGenerator<string> {
   const resp = await fetch('/api/ai/stream', {
     method: 'POST', signal,
@@ -109,6 +132,10 @@ async function* streamProxy(
       try {
         const j = JSON.parse(data);
         if (j.type === 'delta') yield j.text ?? '';
+        if (j.type === 'done') {
+          onDone?.({ input: j.inputTokens, output: j.outputTokens ?? j.totalTokens });
+          return;
+        }
         if (j.type === 'error') throw new Error(j.message ?? 'Stream error');
       } catch (e) {
         if ((e as Error)?.message?.startsWith('Stream error') ||
@@ -125,6 +152,7 @@ export function useAi(): UseAiResult {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,9 +169,10 @@ export function useAi(): UseAiResult {
     setOutput('');
     setError(null);
     setRequestId(null);
+    setTokenUsage(null);
   }, [cancel]);
 
-  const run = useCallback((prompt: BuiltPrompt, config: AIConfig) => {
+  const run = useCallback((prompt: AiPrompt, config: AIConfig) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       abortRef.current?.abort();
@@ -156,11 +185,19 @@ export function useAi(): UseAiResult {
       setError(null);
       setLoading(true);
       setRequestId(rid);
+      setTokenUsage(null);
+
+      const onDone = (tokens: { input?: number; output?: number }) => {
+        if (thisRunId !== runIdRef.current) return;
+        const input = tokens.input ?? 0;
+        const out = tokens.output ?? 0;
+        setTokenUsage({ input, output: out, total: input + out });
+      };
 
       try {
         const source = (!config.useProxy && config.apiKey)
-          ? streamDirect(prompt, config, controller.signal)
-          : streamProxy(prompt, config, rid, controller.signal);
+          ? streamDirect(prompt, config, controller.signal, onDone)
+          : streamProxy(prompt, config, rid, controller.signal, onDone);
 
         for await (const text of source) {
           if (thisRunId !== runIdRef.current || controller.signal.aborted) return;
@@ -181,5 +218,5 @@ export function useAi(): UseAiResult {
     if (debounceRef.current) clearTimeout(debounceRef.current);
   }, []);
 
-  return { output, loading, error, requestId, run, cancel, clear };
+  return { output, loading, error, requestId, tokenUsage, run, cancel, clear };
 }
