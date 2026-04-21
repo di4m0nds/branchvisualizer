@@ -440,6 +440,48 @@ export default function AssistantTab() {
   useEffect(() => {
     if (!aiChatRequest || !repoInfo) return;
     const { shas, mode } = aiChatRequest;
+    // ── Editor "Ask AI" mode: no SHAs needed -- create session with file prompt ──
+    if (mode === 'editor') {
+      const editorPrompt = aiChatRequest.editorPrompt ?? '';
+      if (!editorPrompt) { appDispatch({ type: 'CLEAR_AI_CHAT_REQUEST' }); return; }
+
+      // Dedup guard
+      const reqKey = 'editor:' + editorPrompt.slice(0, 40);
+      const now = Date.now();
+      if (lastAiChatRequestKeyRef.current?.key === reqKey && now - lastAiChatRequestKeyRef.current.ts < 300) return;
+      lastAiChatRequestKeyRef.current = { key: reqKey, ts: now };
+
+      const inheritedConfig = activeSession
+        ? { ...activeSession.config }
+        : { ...(loadedServerConfigRef.current ?? DEFAULT_SESSION_CONFIG) };
+      const inheritedKey = providerKeys[inheritedConfig.provider];
+      const hasUsableKey = inheritedConfig.useProxy || !!inheritedKey;
+
+      const session: AssistantSession = {
+        id: genId(),
+        title: 'Ask AI about file',
+        mode: 'chat',
+        config: inheritedConfig,
+        messages: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        streaming: false,
+      };
+      dispatch({ type: 'CREATE_SESSION', session });
+      setActiveSessionId(session.id);
+      appDispatch({ type: 'CLEAR_AI_CHAT_REQUEST' });
+
+      if (!hasUsableKey) {
+        pendingAutoSendRef.current = { sessionId: session.id, prompt: editorPrompt, mode: 'chat', overrideNodes: [], fetchedDetails: [] };
+        setModelPickerOpenTrigger(t => t + 1);
+        return;
+      }
+      setTimeout(() => handleSendMessage(session.id, editorPrompt, session.config, 'chat', undefined), 120);
+      return;
+    }
+
+    // Guard: commit/compare modes require at least one SHA.
+    if (shas.length === 0) { appDispatch({ type: 'CLEAR_AI_CHAT_REQUEST' }); return; }
 
     // Deduplicate: React StrictMode (dev) double-invokes effects within a few ms.
     // Use a time-windowed fingerprint: same key within 300ms = duplicate, ignore.

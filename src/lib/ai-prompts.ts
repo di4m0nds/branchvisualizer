@@ -12,7 +12,9 @@ export type AIFeatureId =
   | 'explain_commit'
   | 'summarize_branch'
   | 'where_to_start'
-  | 'pr_description';
+  | 'pr_description'
+  | 'explain_file'
+  | 'ask_about_code';
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
@@ -159,6 +161,66 @@ Base the description only on the commits listed above.`;
   return { system: SYSTEM_PROMPT, user, featureId: 'pr_description', promptVersion: PROMPT_VERSION };
 }
 
+// ─── Feature: Explain file (Phase 8) ─────────────────────────────────────────
+
+export function buildExplainFilePrompt(ctx: AIContextPayload): BuiltPrompt {
+  const es = ctx.editorState;
+  if (!es) throw new Error('editorState required for explain_file');
+
+  const selectionBlock = es.selectedText
+    ? `\nSelected text (lines around cursor):\n\`\`\`${es.language}\n${es.selectedText}\n\`\`\``
+    : '';
+
+  const contentBlock = es.content && !es.selectedText
+    ? `\nFile content:\n\`\`\`${es.language}\n${es.content}\n\`\`\``
+    : '';
+
+  const cursorNote = es.cursorLine
+    ? ` (cursor at line ${es.cursorLine}, column ${es.cursorColumn ?? 1})`
+    : '';
+
+  const user = `${repoHeader(ctx)}
+
+File: ${es.path} [${es.language}]${cursorNote}${selectionBlock}${contentBlock}
+
+Explain this file:
+1. What is the purpose of this file in the codebase?
+2. What are the key functions, classes, or exports and what do they do?
+3. Are there any notable patterns, dependencies, or design decisions?
+
+Be concise — focus on what a developer needs to understand to work with this file.`;
+
+  return { system: SYSTEM_PROMPT, user, featureId: 'explain_file', promptVersion: PROMPT_VERSION };
+}
+
+// ─── Feature: Ask about code selection (Phase 8) ─────────────────────────────
+
+export function buildAskAboutCodePrompt(
+  ctx: AIContextPayload,
+  question: string,
+): BuiltPrompt {
+  const es = ctx.editorState;
+  if (!es) throw new Error('editorState required for ask_about_code');
+
+  const selectionBlock = es.selectedText
+    ? `\nSelected code:\n\`\`\`${es.language}\n${es.selectedText}\n\`\`\``
+    : '';
+
+  const contentBlock = es.content && !es.selectedText
+    ? `\nFile content (${es.path}):\n\`\`\`${es.language}\n${es.content}\n\`\`\``
+    : `\nFile: ${es.path} [${es.language}]`;
+
+  const user = `${repoHeader(ctx)}
+${contentBlock}${selectionBlock}
+
+Question: ${question}
+
+Answer the question focusing specifically on the code shown above.
+If you need to reference line numbers, use the file content as shown.`;
+
+  return { system: SYSTEM_PROMPT, user, featureId: 'ask_about_code', promptVersion: PROMPT_VERSION };
+}
+
 // ─── Unified dispatcher ───────────────────────────────────────────────────────
 
 export interface BuildPromptOptions {
@@ -166,6 +228,8 @@ export interface BuildPromptOptions {
   ctx: AIContextPayload;
   branchName?: string;
   baseBranch?: string;
+  /** Free-form question for the ask_about_code feature. */
+  question?: string;
 }
 
 export function buildPrompt(opts: BuildPromptOptions): BuiltPrompt {
@@ -185,6 +249,10 @@ export function buildPrompt(opts: BuildPromptOptions): BuiltPrompt {
       return buildWhereToStartPrompt(ctx);
     case 'pr_description':
       return buildPRDescriptionPrompt(ctx, branchName, baseBranch);
+    case 'explain_file':
+      return buildExplainFilePrompt(ctx);
+    case 'ask_about_code':
+      return buildAskAboutCodePrompt(ctx, opts.question ?? 'What does this code do?');
     default:
       throw new Error(`Unknown AI feature: ${featureId}`);
   }

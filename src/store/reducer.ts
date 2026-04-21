@@ -52,6 +52,7 @@ export const initialState: AppState = {
   capabilityState: initialCapabilityState,
   aiConfig: initialAIConfig,
   aiChatRequest: null,
+  openFile: null,
 };
 
 export function reducer(state: AppState, action: AppAction): AppState {
@@ -176,6 +177,51 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'CLEAR_AI_CHAT_REQUEST':
       return { ...state, aiChatRequest: null };
+
+    case 'OPEN_FILE':
+      return {
+        ...state,
+        openFile: {
+          ...action.payload,
+          isDirty: false,
+          cursorLine: 1,
+          cursorColumn: 1,
+        },
+      };
+
+    case 'CLOSE_FILE':
+      return { ...state, openFile: null };
+
+    case 'UPDATE_CURSOR':
+      if (!state.openFile) return state;
+      return {
+        ...state,
+        openFile: {
+          ...state.openFile,
+          cursorLine: action.payload.line,
+          cursorColumn: action.payload.column,
+        },
+      };
+
+    case 'UPDATE_SELECTION':
+      if (!state.openFile) return state;
+      return {
+        ...state,
+        openFile: {
+          ...state.openFile,
+          selectionStart: action.payload.start,
+          selectionEnd: action.payload.end,
+        },
+      };
+
+    case 'MARK_FILE_DIRTY':
+      if (!state.openFile) return state;
+      return { ...state, openFile: { ...state.openFile, isDirty: action.payload } };
+
+    case 'ADD_EDITOR_ANNOTATION':
+    case 'CLEAR_EDITOR_ANNOTATIONS':
+      // Handled directly by MonacoEditor via editor ref; state doesn't need updating
+      return state;
 
     default:
       return state;

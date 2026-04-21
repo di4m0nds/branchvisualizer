@@ -1,6 +1,6 @@
 import { useAppContext } from '@/store/AppContext';
 import { useCapabilities } from '@/hooks/useCapabilities';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, lazy, Suspense } from 'react';
 import GraphCanvas from '@/components/GraphCanvas';
 import CommitListView from '@/components/CommitListView';
 import DetailPanel from '@/components/DetailPanel';
@@ -14,7 +14,11 @@ import AssistantTab from './AssistantTab';
 import ComparePanel, { ComparePanelLocked } from './ComparePanel';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { EDITOR_ENABLED } from '@/lib/features';
 import type { Capability, TabId, SplitLayout } from '@/types';
+
+// Lazy-load EditorTab — heavy Monaco bundle only loaded on demand
+const EditorTab = lazy(() => import('./EditorTab'));
 
 // ─── Tab config ────────────────────────────────────────────────────────────
 
@@ -132,6 +136,18 @@ const TABS: TabDef[] = [
       </svg>
     ),
   },
+  // Phase 8: Editor tab (gated by VITE_FEATURE_EDITOR)
+  ...(EDITOR_ENABLED() ? [{
+    id: 'editor' as TabId,
+    label: 'Editor',
+    shortLabel: 'Editor',
+    requires: 'read:files' as Capability,
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25ZM3.75 6.5a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5zm2.5 0a.75.75 0 0 0 0 1.5h5.5a.75.75 0 0 0 0-1.5zm-2.5 3a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5zm2.5 0a.75.75 0 0 0 0 1.5h3.5a.75.75 0 0 0 0-1.5zM3.75 3.5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5z"/>
+      </svg>
+    ),
+  }] : []),
 ];
 
 // ─── Split layout icons ────────────────────────────────────────────────────
@@ -399,6 +415,17 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
       {activeTab === 'ci'       && <div className="absolute inset-0 flex flex-col"><CIStatusTab /></div>}
       {activeTab === 'hotspots'   && <div className="absolute inset-0 flex flex-col"><HotspotsTab /></div>}
       {activeTab === 'assistant'  && <div className="absolute inset-0 flex flex-col overflow-hidden"><AssistantTab /></div>}
+      {activeTab === 'editor'     && (
+        <div className="absolute inset-0 flex flex-col overflow-hidden">
+          <Suspense fallback={
+            <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
+              Loading editor…
+            </div>
+          }>
+            <EditorTab />
+          </Suspense>
+        </div>
+      )}
     </div>
   );
 }

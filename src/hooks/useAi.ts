@@ -44,6 +44,60 @@ export interface TokenUsage {
   total: number;
 }
 
+// ─── Editor state snapshot (used by EditorToolbar) ───────────────────────────
+
+export interface EditorState {
+  path: string;
+  language: string;
+  selectedText: string;
+  cursorLine: number;
+  visibleRangeStart: number;
+  visibleRangeEnd: number;
+}
+
+/**
+ * Derives a snapshot of editor state from an OpenFile record.
+ * Returns null when no file is open.
+ */
+export function getEditorState(
+  openFile: { path: string; content: string; language: string; cursorLine: number; selectionStart?: { line: number; column: number }; selectionEnd?: { line: number; column: number } } | null
+): EditorState | null {
+  if (!openFile) return null;
+
+  const lines = openFile.content.split('\n');
+  const totalLines = lines.length;
+
+  let selectedText = '';
+  if (openFile.selectionStart && openFile.selectionEnd) {
+    const startLine = openFile.selectionStart.line - 1;
+    const endLine = openFile.selectionEnd.line - 1;
+    if (startLine === endLine) {
+      selectedText = lines[startLine]?.slice(
+        openFile.selectionStart.column - 1,
+        openFile.selectionEnd.column - 1
+      ) ?? '';
+    } else {
+      const parts = [lines[startLine]?.slice(openFile.selectionStart.column - 1) ?? ''];
+      for (let i = startLine + 1; i < endLine; i++) parts.push(lines[i] ?? '');
+      parts.push(lines[endLine]?.slice(0, openFile.selectionEnd.column - 1) ?? '');
+      selectedText = parts.join('\n');
+    }
+  }
+
+  const VISIBLE_CONTEXT = 50;
+  const visibleRangeStart = Math.max(1, openFile.cursorLine - VISIBLE_CONTEXT);
+  const visibleRangeEnd = Math.min(totalLines, openFile.cursorLine + VISIBLE_CONTEXT);
+
+  return {
+    path: openFile.path,
+    language: openFile.language,
+    selectedText,
+    cursorLine: openFile.cursorLine,
+    visibleRangeStart,
+    visibleRangeEnd,
+  };
+}
+
 export interface UseAiResult {
   output: string;
   loading: boolean;

@@ -13,3 +13,6 @@ export function isFeatureEnabled(flag: string): boolean {
 }
 
 export const AI_ENABLED = () => isFeatureEnabled('VITE_FEATURE_AI_PHASE6');
+
+/** Phase 8: Monaco editor tab + filesystem API. */
+export const EDITOR_ENABLED = () => isFeatureEnabled('VITE_FEATURE_EDITOR');
