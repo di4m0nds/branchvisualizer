@@ -22,7 +22,20 @@ export type {
 // These types are specific to the branchvisualizer app (React state, actions,
 // routing) and do NOT belong in @codeatlas/core.
 
-export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots' | 'assistant';
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci' | 'hotspots' | 'assistant' | 'editor';
+
+// ─── Editor / Open File state (Phase 8) ───────────────────────────────────
+
+export interface OpenFile {
+  path: string;           // relative to FS_ROOT e.g. "src/App.tsx"
+  content: string;        // raw file content as loaded
+  language: string;       // Monaco language id
+  isDirty: boolean;       // true if editor content differs from loaded
+  cursorLine: number;     // 1-based
+  cursorColumn: number;   // 1-based
+  selectionStart?: { line: number; column: number };
+  selectionEnd?: { line: number; column: number };
+}
 export type Capability = 'read:graph' | 'read:files' | 'compare:commits' | 'ai:assist';
 export type { AIProviderId } from '@codeatlas/ai';
 
@@ -121,7 +134,9 @@ export interface AppState {
   /** Resolved capabilities (auth state) */
   capabilityState: CapabilityState;
   /** Pending request to open an AI chat about specific commit(s). Cleared after consumed. */
-  aiChatRequest: { shas: string[]; mode: 'commit' | 'compare' } | null;
+  aiChatRequest: { shas: string[]; mode: 'commit' | 'compare' | 'editor'; editorPrompt?: string } | null;
+  /** Currently open file in the editor tab (Phase 8). */
+  openFile: OpenFile | null;
 }
 
 // ─── Action types ──────────────────────────────────────────────────────────
@@ -148,5 +163,12 @@ export type AppAction =
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
   | { type: 'SET_CAPABILITIES'; payload: CapabilityState }
   | { type: 'SET_AI_CONFIG'; config: Partial<AIConfig> }
-  | { type: 'REQUEST_AI_CHAT'; shas: string[]; mode: 'commit' | 'compare' }
-  | { type: 'CLEAR_AI_CHAT_REQUEST' };
+  | { type: 'REQUEST_AI_CHAT'; shas: string[]; mode: 'commit' | 'compare' | 'editor'; editorPrompt?: string }
+  | { type: 'CLEAR_AI_CHAT_REQUEST' }
+  | { type: 'OPEN_FILE'; payload: Pick<OpenFile, 'path' | 'content' | 'language'> }
+  | { type: 'CLOSE_FILE' }
+  | { type: 'UPDATE_CURSOR'; payload: { line: number; column: number } }
+  | { type: 'UPDATE_SELECTION'; payload: { start: { line: number; column: number }; end: { line: number; column: number } } }
+  | { type: 'MARK_FILE_DIRTY'; payload: boolean }
+  | { type: 'ADD_EDITOR_ANNOTATION'; payload: { line: number; message: string; severity: 'info' | 'warning' | 'error' } }
+  | { type: 'CLEAR_EDITOR_ANNOTATIONS' };
