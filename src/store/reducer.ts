@@ -173,7 +173,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, aiConfig: { ...state.aiConfig, ...action.config } };
 
     case 'REQUEST_AI_CHAT':
-      return { ...state, aiChatRequest: { shas: action.shas, mode: action.mode } };
+      return { ...state, aiChatRequest: { shas: action.shas, mode: action.mode, editorPrompt: action.editorPrompt } };
 
     case 'CLEAR_AI_CHAT_REQUEST':
       return { ...state, aiChatRequest: null };

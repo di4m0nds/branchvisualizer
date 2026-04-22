@@ -1,68 +1,164 @@
 // apps/branchvisualizer/src/components/workspace/EditorTab.tsx
-// Phase 8 -- Root editor tab component.
-// Layout: FileTreePanel (resizable left) + editor/preview area (right).
+// Phase 8 -- Root editor tab: hacker layout with vim, LSP, error lens, nav log.
 //
-// Vim mode: MonacoEditor.tsx handles all vim initialization (initVimMode is
-// called inside handleMount where the editor is definitely ready).
-// VimStatusBar.tsx listens for codeatlas:vim-enabled/disabled events and
-// renders itself automatically -- EditorTab just toggles via window API.
+// ┌──────────────────────────────────────────────────────────────────────────┐
+// │  TOOLBAR:  ▸find  path ●  │ EDIT DIFF PREV SPL │ VIM AI LOG            │
+// ├──────────┬─────────────────────────────────────┬──────────────────────  │
+// │          │                                     │                        │
+// │ FileTree │   Monaco Editor (+ Error Lens)       │  Navigation Log        │
+// │          │                                     │  (collapsible)         │
+// │          ├─────────────────────────────────────┤                        │
+// │          │  VimStatusBar (when vim active)      │                        │
+// │          │  EditorStatusBar                     │                        │
+// └──────────┴─────────────────────────────────────┴────────────────────────┘
 //
-// File tree: Currently shows FS_ROOT (API server working directory).
-// GitHub project integration is planned for a future phase after repo
-// cloning / sparse checkout is available server-side.
+// Emacs-style global keybindings:
+//   Ctrl+X Ctrl+F  → FileFinder
+//   Ctrl+X Ctrl+S  → save event
+//   Ctrl+X Ctrl+C  → close file
 
-import React, { useState, useRef, useCallback, useEffect, Suspense } from 'react';
+import React, {
+  useState, useRef, useCallback, useEffect, Suspense,
+} from 'react';
 import { useAppContext } from '@/store/AppContext';
 import { useCapabilities } from '@/hooks/useCapabilities';
 import { EditorToolbar, type ViewMode } from './editor/EditorToolbar';
+import FileFinder from './editor/FileFinder';
+import { emitNavLog } from './editor/ErrorLens';
+import { applyRootCssVars } from './editor/HackerTheme';
 import type { OpenFile } from '@/types';
 
-// Lazy-loaded heavy components (Monaco only loaded when editor is active)
-const MonacoEditor = React.lazy(() => import('./editor/MonacoEditor'));
+// Lazy-loaded heavy components
+const MonacoEditor  = React.lazy(() => import('./editor/MonacoEditor'));
 const FileTreePanel = React.lazy(() => import('./editor/FileTreePanel'));
-const DiffView = React.lazy(() => import('./editor/DiffView'));
-const FilePreview = React.lazy(() => import('./editor/FilePreview'));
-const VimStatusBar = React.lazy(() => import('./editor/VimStatusBar'));
+const DiffView      = React.lazy(() => import('./editor/DiffView'));
+const FilePreview   = React.lazy(() => import('./editor/FilePreview'));
+const VimStatusBar  = React.lazy(() => import('./editor/VimStatusBar'));
 const EditorStatusBar = React.lazy(() => import('./editor/EditorStatusBar'));
+const NavigationLog = React.lazy(() => import('./editor/NavigationLog'));
 
 // ---------------------------------------------------------------------------
-// Constants
+// Layout constants
 // ---------------------------------------------------------------------------
 
-const TREE_MIN = 160;
-const TREE_MAX = 400;
+const TREE_MIN    = 160;
+const TREE_MAX    = 400;
 const TREE_DEFAULT = 240;
+const LOG_MIN     = 160;
+const LOG_DEFAULT = 220;
+const LOG_MAX     = 360;
 
 // ---------------------------------------------------------------------------
-// LockedState
+// Hacker CSS (inject once)
+// ---------------------------------------------------------------------------
+
+const HACKER_STYLE_ID = 'ca-hacker-global';
+
+function ensureHackerStyles(): void {
+  if (document.getElementById(HACKER_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = HACKER_STYLE_ID;
+  // Static structural CSS only — colour values come from CSS vars set by applyRootCssVars()
+  style.textContent = `
+    .ca-editor-root * { box-sizing: border-box; }
+    .ca-editor-root ::-webkit-scrollbar { width: 6px; height: 6px; }
+    .ca-editor-root ::-webkit-scrollbar-track  { background: var(--hk-bg); }
+    .ca-editor-root ::-webkit-scrollbar-thumb  { background: var(--hk-bdr); border-radius: 2px; }
+    .ca-editor-root ::-webkit-scrollbar-thumb:hover { background: var(--hk-bdr-act); }
+    /* Error Lens inline decorations */
+    .ca-lens-error   { font-style: italic; opacity: 0.85; }
+    .ca-lens-warning { font-style: italic; opacity: 0.85; }
+    .ca-lens-info    { font-style: italic; opacity: 0.7; }
+    .ca-lens-hint    { font-style: italic; opacity: 0.5; }
+    /* Error Lens glyph icons in Monaco gutter */
+    .ca-glyph-error::before   { content: '✗'; color: var(--hk-err);  font-size: 11px; }
+    .ca-glyph-warning::before { content: '⚠'; color: var(--hk-warn); font-size: 11px; }
+    /* AI annotation decorations */
+    .ai-annotation--error   { background: color-mix(in srgb, var(--hk-err)  14%, transparent); }
+    .ai-annotation--warning { background: color-mix(in srgb, var(--hk-warn) 14%, transparent); }
+    .ai-annotation--info    { background: color-mix(in srgb, var(--hk-info) 10%, transparent); }
+    .ai-glyph--error::before   { content: '⊘'; color: var(--hk-err);  font-size: 11px; }
+    .ai-glyph--warning::before { content: '◈'; color: var(--hk-warn); font-size: 11px; }
+    .ai-glyph--info::before    { content: '◉'; color: var(--hk-info); font-size: 11px; }
+  `;
+  document.head.appendChild(style);
+}
+
+// ---------------------------------------------------------------------------
+// Locked / Empty states
 // ---------------------------------------------------------------------------
 
 function LockedState({ reason }: { reason: string }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-      <svg width="32" height="32" viewBox="0 0 16 16" fill="currentColor" className="opacity-40">
-        <path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-.5V4.5A3.5 3.5 0 0 0 8 1zm-2 3.5a2 2 0 1 1 4 0V6H6V4.5z"/>
-      </svg>
-      <span className="text-sm">{reason}</span>
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', height: '100%', gap: '8px',
+      background: 'var(--hk-bg)', fontFamily: '"JetBrains Mono", monospace',
+    }}>
+      <span style={{ color: 'var(--hk-err)', fontSize: '20px' }}>⊘</span>
+      <span style={{ color: 'var(--hk-fg-muted)', fontSize: '11px' }}>{reason}</span>
     </div>
   );
 }
 
-function EmptyState() {
+function EmptyState({ onFindFile }: { onFindFile: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
-      <svg width="32" height="32" viewBox="0 0 16 16" fill="currentColor" className="opacity-30">
-        <path d="M2.75 1h10.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75C1 1.784 1.784 1 2.75 1ZM5 4.75v6.5c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-6.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0-.75.75Z"/>
-      </svg>
-      <span className="text-sm">Select a file from the tree to open it</span>
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', height: '100%', gap: '16px',
+      background: 'var(--hk-bg)', fontFamily: '"JetBrains Mono", monospace',
+    }}>
+      <pre style={{
+        color: 'var(--hk-cursor)', opacity: 0.18,
+        fontSize: '9px', lineHeight: '1.4', margin: 0, textAlign: 'center',
+        userSelect: 'none',
+      }}>
+{`  ██████╗ ██████╗ ██████╗ ███████╗
+ ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+ ██║     ██║   ██║██║  ██║█████╗
+ ██║     ██║   ██║██║  ██║██╔══╝
+ ╚██████╗╚██████╔╝██████╔╝███████╗
+  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝`}
+      </pre>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+        <button
+          onClick={onFindFile}
+          style={{
+            background: 'none',
+            border: '1px solid var(--hk-bdr-act)',
+            color: 'var(--hk-cursor)',
+            padding: '5px 16px',
+            fontFamily: '"JetBrains Mono", monospace',
+            fontSize: '11px', cursor: 'pointer', letterSpacing: '0.1em',
+            borderRadius: '2px',
+            transition: 'background 120ms',
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'var(--hk-bg-sel)';
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'none';
+          }}
+        >
+          ▸ M-x find-file
+        </button>
+        <span style={{ color: 'var(--hk-fg-muted)', fontSize: '10px', opacity: 0.6 }}>
+          Ctrl+X Ctrl+F  ·  :e  ·  ␣ff
+        </span>
+      </div>
     </div>
   );
 }
 
-function LoadingSpinner() {
+function Spinner() {
   return (
-    <div className="flex items-center justify-center h-full">
-      <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100%', background: 'var(--hk-bg)',
+      color: 'var(--hk-fg-muted)', opacity: 0.5,
+      fontFamily: '"JetBrains Mono", monospace', fontSize: '10px',
+    }}>
+      ▸ loading…
     </div>
   );
 }
@@ -75,55 +171,65 @@ interface EditorAreaProps {
   openFile: OpenFile | null;
   viewMode: ViewMode;
   vimEnabled: boolean;
+  onFindFile: () => void;
 }
 
-function EditorArea({ openFile, viewMode, vimEnabled }: EditorAreaProps) {
+function EditorArea({ openFile, viewMode, vimEnabled, onFindFile }: EditorAreaProps) {
   const { dispatch } = useAppContext();
 
-  if (!openFile) return <EmptyState />;
+  if (!openFile) return <EmptyState onFindFile={onFindFile} />;
 
-  const handleCursorChange = (line: number, column: number) => {
+  const onCursorChange = (line: number, column: number) =>
     dispatch({ type: 'UPDATE_CURSOR', payload: { line, column } });
-  };
 
-  const handleSelectionChange = (
+  const onSelectionChange = (
     start: { line: number; column: number },
-    end: { line: number; column: number }
-  ) => {
-    dispatch({ type: 'UPDATE_SELECTION', payload: { start, end } });
-  };
+    end:   { line: number; column: number },
+  ) => dispatch({ type: 'UPDATE_SELECTION', payload: { start, end } });
 
-  const handleContentChange = (isDirty: boolean) => {
+  const onContentChange = (isDirty: boolean) =>
     dispatch({ type: 'MARK_FILE_DIRTY', payload: isDirty });
-  };
 
+  // ── Diff view ──────────────────────────────────────────────────────────
   if (viewMode === 'diff') {
+    const current = window.__codeatlasEditor?.getModel()?.getValue() ?? openFile.content;
     return (
-      <Suspense fallback={<LoadingSpinner />}>
-        <DiffView original={openFile.content} modified={openFile.content} language={openFile.language} />
+      <Suspense fallback={<Spinner />}>
+        <DiffView
+          original={openFile.content}
+          modified={current}
+          language={openFile.language}
+          filePath={openFile.path}
+        />
       </Suspense>
     );
   }
 
+  // ── Preview ───────────────────────────────────────────────────────────
   if (viewMode === 'preview') {
     return (
-      <Suspense fallback={<LoadingSpinner />}>
+      <Suspense fallback={<Spinner />}>
         <FilePreview path={openFile.path} content={openFile.content} language={openFile.language} />
       </Suspense>
     );
   }
 
+  // ── Split ─────────────────────────────────────────────────────────────
   if (viewMode === 'split') {
     return (
-      <div className="flex h-full min-h-0">
-        <div className="w-1/2 h-full min-h-0 overflow-hidden border-r border-border">
-          <Suspense fallback={<LoadingSpinner />}>
-            <MonacoEditor openFile={openFile} onCursorChange={handleCursorChange}
-              onSelectionChange={handleSelectionChange} onContentChange={handleContentChange} />
+      <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', borderRight: '1px solid var(--hk-bdr)' }}>
+          <Suspense fallback={<Spinner />}>
+            <MonacoEditor
+              openFile={openFile}
+              onCursorChange={onCursorChange}
+              onSelectionChange={onSelectionChange}
+              onContentChange={onContentChange}
+            />
           </Suspense>
         </div>
-        <div className="w-1/2 h-full min-h-0 overflow-hidden">
-          <Suspense fallback={<LoadingSpinner />}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <Suspense fallback={<Spinner />}>
             <FilePreview path={openFile.path} content={openFile.content} language={openFile.language} />
           </Suspense>
         </div>
@@ -131,20 +237,24 @@ function EditorArea({ openFile, viewMode, vimEnabled }: EditorAreaProps) {
     );
   }
 
-  // Default: editor mode
+  // ── Default: editor ───────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex-1 min-h-0">
-        <Suspense fallback={<LoadingSpinner />}>
-          <MonacoEditor openFile={openFile} onCursorChange={handleCursorChange}
-            onSelectionChange={handleSelectionChange} onContentChange={handleContentChange} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Suspense fallback={<Spinner />}>
+          <MonacoEditor
+            openFile={openFile}
+            onCursorChange={onCursorChange}
+            onSelectionChange={onSelectionChange}
+            onContentChange={onContentChange}
+          />
         </Suspense>
       </div>
-      {/* VimStatusBar self-activates via event listener -- shown only when vim is on */}
+      {/* Vim status (self-shows only when vim is active) */}
       <Suspense fallback={null}>
         <VimStatusBar />
       </Suspense>
-      {/* Editor status bar: language, cursor, encoding */}
+      {/* Editor status bar */}
       <Suspense fallback={null}>
         <EditorStatusBar openFile={openFile} />
       </Suspense>
@@ -153,110 +263,256 @@ function EditorArea({ openFile, viewMode, vimEnabled }: EditorAreaProps) {
 }
 
 // ---------------------------------------------------------------------------
-// EditorTab -- main export
+// EditorTab
 // ---------------------------------------------------------------------------
 
 export default function EditorTab() {
   const { state, dispatch } = useAppContext();
-  const { hasCapability } = useCapabilities();
-  const [treePanelWidth, setTreePanelWidth] = useState(TREE_DEFAULT);
-  const [viewMode, setViewMode] = useState<ViewMode>('editor');
-  const [vimEnabled, setVimEnabled] = useState(false);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const startWidth = useRef(TREE_DEFAULT);
+  const { hasCapability }   = useCapabilities();
 
-  // Sync vimEnabled state with MonacoEditor events
+  const [treePanelWidth, setTreePanelWidth]   = useState(TREE_DEFAULT);
+  const [logPanelWidth,  setLogPanelWidth]    = useState(LOG_DEFAULT);
+  const [viewMode,       setViewMode]         = useState<ViewMode>('editor');
+  const [vimEnabled,     setVimEnabled]       = useState(false);
+  const [logVisible,     setLogVisible]       = useState(false);
+  const [fileFinderOpen, setFileFinderOpen]   = useState(false);
+
+  const treeResizing = useRef(false);
+  const logResizing  = useRef(false);
+  const resizeStartX = useRef(0);
+  const resizeStartW = useRef(0);
+
+  // ── Inject structural CSS once + apply initial theme vars ─────────────
   useEffect(() => {
-    const onEnabled = () => setVimEnabled(true);
+    ensureHackerStyles();
+    applyRootCssVars((state.theme ?? 'dark') as 'dark' | 'light');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Re-apply CSS vars whenever app theme changes ───────────────────────
+  useEffect(() => {
+    applyRootCssVars((state.theme ?? 'dark') as 'dark' | 'light');
+  }, [state.theme]);
+
+  // ── Sync vim state from events ─────────────────────────────────────────
+  useEffect(() => {
+    const onEnabled  = () => setVimEnabled(true);
     const onDisabled = () => setVimEnabled(false);
-    window.addEventListener('codeatlas:vim-enabled', onEnabled);
+    window.addEventListener('codeatlas:vim-enabled',  onEnabled);
     window.addEventListener('codeatlas:vim-disabled', onDisabled);
-    // Restore state after hot-reload
     if (window.__codeatlasVimMode?.isEnabled()) setVimEnabled(true);
     return () => {
-      window.removeEventListener('codeatlas:vim-enabled', onEnabled);
+      window.removeEventListener('codeatlas:vim-enabled',  onEnabled);
       window.removeEventListener('codeatlas:vim-disabled', onDisabled);
     };
   }, []);
 
-  if (!hasCapability('read:files')) {
-    return <LockedState reason="Sign in to access the editor" />;
-  }
-
-  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    startX.current = e.clientX;
-    startWidth.current = treePanelWidth;
-
-    const onMouseMove = (me: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = me.clientX - startX.current;
-      setTreePanelWidth(Math.min(TREE_MAX, Math.max(TREE_MIN, startWidth.current + delta)));
+  // ── Open file-finder via DOM event (from vim ex-commands) ─────────────
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ query?: string }>) => {
+      setFileFinderOpen(true);
     };
-    const onMouseUp = () => {
-      isDragging.current = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  }, [treePanelWidth]);
+    window.addEventListener('codeatlas:open-file-finder', handler as EventListener);
+    return () => window.removeEventListener('codeatlas:open-file-finder', handler as EventListener);
+  }, []);
 
+  // ── Global emacs-style keybindings ────────────────────────────────────
+  useEffect(() => {
+    let awaitingXChord = false;
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+X chord prefix
+      if (e.ctrlKey && e.key === 'x') { awaitingXChord = true; return; }
+      if (awaitingXChord) {
+        awaitingXChord = false;
+        // Ctrl+X Ctrl+F → find file
+        if (e.ctrlKey && e.key === 'f') { e.preventDefault(); setFileFinderOpen(true); return; }
+        // Ctrl+X Ctrl+S → save
+        if (e.ctrlKey && e.key === 's') {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent('codeatlas:vim-write'));
+          return;
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
+  // ── Vim toggle ─────────────────────────────────────────────────────────
   const handleVimToggle = useCallback(() => {
     const vim = window.__codeatlasVimMode;
     if (!vim) {
-      // Editor not yet mounted (e.g. no file open) -- toggle will activate on next mount
       try {
-        const key = 'ca_editor_vim_mode';
-        const was = localStorage.getItem(key) === '1';
-        was ? localStorage.removeItem(key) : localStorage.setItem(key, '1');
+        const k = 'ca_editor_vim_mode';
+        const was = localStorage.getItem(k) === '1';
+        was ? localStorage.removeItem(k) : localStorage.setItem(k, '1');
         setVimEnabled(!was);
-      } catch { /* ignore */ }
+      } catch {}
       return;
     }
-    if (vim.isEnabled()) {
-      vim.disable();
-    } else {
-      vim.enable();
-    }
+    vim.isEnabled() ? vim.disable() : vim.enable();
   }, []);
+
+  // ── Ask AI about current file ─────────────────────────────────────────
+  const handleAskAi = useCallback(() => {
+    if (!state.openFile) return;
+    dispatch({
+      type: 'REQUEST_AI_CHAT',
+      shas: [],
+      mode: 'editor',
+      editorPrompt: `Explain this file: ${state.openFile.path}`,
+    });
+    emitNavLog({ type: 'lsp', path: state.openFile.path, detail: 'ask-ai' });
+  }, [state.openFile, dispatch]);
+
+  // ── Tree panel resize ─────────────────────────────────────────────────
+  const onTreeResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    treeResizing.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartW.current = treePanelWidth;
+    const onMove = (me: MouseEvent) => {
+      if (!treeResizing.current) return;
+      const delta = me.clientX - resizeStartX.current;
+      setTreePanelWidth(Math.min(TREE_MAX, Math.max(TREE_MIN, resizeStartW.current + delta)));
+    };
+    const onUp = () => { treeResizing.current = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [treePanelWidth]);
+
+  // ── Log panel resize ──────────────────────────────────────────────────
+  const onLogResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    logResizing.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartW.current = logPanelWidth;
+    const onMove = (me: MouseEvent) => {
+      if (!logResizing.current) return;
+      const delta = resizeStartX.current - me.clientX; // drag left to expand
+      setLogPanelWidth(Math.min(LOG_MAX, Math.max(LOG_MIN, resizeStartW.current + delta)));
+    };
+    const onUp = () => { logResizing.current = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [logPanelWidth]);
 
   void dispatch;
 
-  return (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* File tree panel */}
-      <div
-        style={{ width: treePanelWidth, flexShrink: 0 }}
-        className="flex flex-col h-full min-h-0 border-r border-border overflow-hidden"
-      >
-        <Suspense fallback={<LoadingSpinner />}>
-          <FileTreePanel />
-        </Suspense>
-      </div>
+  if (!hasCapability('read:files')) {
+    return <LockedState reason="read:files capability required" />;
+  }
 
-      {/* Resize handle */}
-      <div
-        onMouseDown={handleResizeMouseDown}
-        className="w-1 flex-shrink-0 cursor-col-resize bg-border/50 hover:bg-primary/40 active:bg-primary/60 transition-colors z-10"
-        title="Drag to resize"
+  return (
+    <div
+      className="ca-editor-root"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        width: '100%',
+        overflow: 'hidden',
+        background: 'var(--hk-bg)',
+        fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+      }}
+    >
+      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
+      <EditorToolbar
+        openFile={state.openFile}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        vimEnabled={vimEnabled}
+        onVimToggle={handleVimToggle}
+        onAskAi={handleAskAi}
+        onFindFile={() => setFileFinderOpen(true)}
+        logVisible={logVisible}
+        onToggleLog={() => setLogVisible(v => !v)}
       />
 
-      {/* Editor area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <EditorToolbar
-          openFile={state.openFile}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          vimEnabled={vimEnabled}
-          onVimToggle={handleVimToggle}
-        />
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <EditorArea openFile={state.openFile} viewMode={viewMode} vimEnabled={vimEnabled} />
+      {/* ── Body: [FileTree] [Editor] [Log] ──────────────────────────────── */}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+
+        {/* File tree panel */}
+        <div style={{
+          width: treePanelWidth,
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 0,
+          borderRight: '1px solid var(--hk-bdr)',
+          overflow: 'hidden',
+          background: 'var(--hk-bg)',
+        }}>
+          <Suspense fallback={<Spinner />}>
+            <FileTreePanel />
+          </Suspense>
         </div>
+
+        {/* Tree resize handle */}
+        <div
+          onMouseDown={onTreeResizeStart}
+          style={{
+            width: '3px',
+            flexShrink: 0,
+            cursor: 'col-resize',
+            background: 'transparent',
+            zIndex: 10,
+            transition: 'background 120ms',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'var(--hk-bdr-act)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+          title="Drag to resize tree"
+        />
+
+        {/* Editor area */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+          <EditorArea
+            openFile={state.openFile}
+            viewMode={viewMode}
+            vimEnabled={vimEnabled}
+            onFindFile={() => setFileFinderOpen(true)}
+          />
+        </div>
+
+        {/* Log panel (collapsible) */}
+        {logVisible && (
+          <>
+            {/* Log resize handle */}
+            <div
+              onMouseDown={onLogResizeStart}
+              style={{
+                width: '3px',
+                flexShrink: 0,
+                cursor: 'col-resize',
+                background: 'transparent',
+                zIndex: 10,
+                transition: 'background 120ms',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'var(--hk-bdr-act)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+              title="Drag to resize log"
+            />
+            <div style={{
+              width: logPanelWidth,
+              flexShrink: 0,
+              height: '100%',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}>
+              <Suspense fallback={null}>
+                <NavigationLog visible />
+              </Suspense>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* ── FileFinder modal ─────────────────────────────────────────────── */}
+      <FileFinder
+        open={fileFinderOpen}
+        onClose={() => setFileFinderOpen(false)}
+      />
     </div>
   );
 }

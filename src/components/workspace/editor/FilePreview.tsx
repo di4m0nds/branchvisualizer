@@ -224,10 +224,7 @@ export default function FilePreview({ path, content, language }: FilePreviewProp
   // Unknown / empty
   return (
     <div style={{ ...container, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted, #6b7280)' }}>
-      Preview not available for .{ext || 'unknown'} files.
+      Preview not available for this file type.
     </div>
   );
 }
-
-// Export extension sets for consumers
-export { MD_EXTS, PDF_EXTS, DOCX_EXTS, IMAGE_EXTS };

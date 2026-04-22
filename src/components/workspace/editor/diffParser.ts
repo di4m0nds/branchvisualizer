@@ -68,8 +68,7 @@ function stripPrefix(p: string): string {
 
 export function parsePatch(patch: string): FileDiff[] {
   const results: FileDiff[] = [];
-  const lines = patch.split('
-');
+  const lines = patch.split('\n');
 
   let oldPath = '';
   let newPath = '';
@@ -83,10 +82,8 @@ export function parsePatch(patch: string): FileDiff[] {
     results.push({
       path,
       oldPath,
-      original: originalLines.join('
-'),
-      modified: modifiedLines.join('
-'),
+      original: originalLines.join('\n'),
+      modified: modifiedLines.join('\n'),
       language: detectLanguage(path),
     });
   };
@@ -107,13 +104,13 @@ export function parsePatch(patch: string): FileDiff[] {
 
     // Old path
     if (line.startsWith('--- ')) {
-      oldPath = stripPrefix(line.slice(4).split('	')[0]!.trim());
+      oldPath = stripPrefix(line.slice(4).split('\t')[0]!.trim());
       continue;
     }
 
     // New path
     if (line.startsWith('+++ ')) {
-      newPath = stripPrefix(line.slice(4).split('	')[0]!.trim());
+      newPath = stripPrefix(line.slice(4).split('\t')[0]!.trim());
       continue;
     }
 
@@ -121,7 +118,7 @@ export function parsePatch(patch: string): FileDiff[] {
     if (line.startsWith('@@ ')) continue;
 
     // No-newline marker — skip
-    if (line.startsWith('\ ')) continue;
+    if (line.startsWith('\\ ')) continue;
 
     // Binary diff — mark as non-parseable
     if (line.startsWith('Binary files')) {
@@ -166,14 +163,13 @@ export function parseSingleFilePatch(
   patch: string,
   path: string,
 ): Pick<FileDiff, 'original' | 'modified' | 'language'> {
-  const lines = patch.split('
-');
+  const lines = patch.split('\n');
   const originalLines: string[] = [];
   const modifiedLines: string[] = [];
 
   for (const line of lines) {
     if (line.startsWith('@@ ')) continue;
-    if (line.startsWith('\ ')) continue;
+    if (line.startsWith('\\ ')) continue;
     if (line.startsWith('-')) { originalLines.push(line.slice(1)); continue; }
     if (line.startsWith('+')) { modifiedLines.push(line.slice(1)); continue; }
     const content = line.startsWith(' ') ? line.slice(1) : line;
@@ -182,10 +178,8 @@ export function parseSingleFilePatch(
   }
 
   return {
-    original: originalLines.join('
-'),
-    modified: modifiedLines.join('
-'),
+    original: originalLines.join('\n'),
+    modified: modifiedLines.join('\n'),
     language: detectLanguage(path),
   };
 }

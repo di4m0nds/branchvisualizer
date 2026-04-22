@@ -1082,25 +1082,24 @@ export default function AssistantTab() {
                 />
                 <button
                   onClick={() => handleConfigUpdate({ useProxy: !activeSession.config.useProxy })}
-                  title={activeSession.config.useProxy ? 'Using proxy' : 'Using direct API'}
+                  title={activeSession.config.useProxy ? 'Using proxy (no API key needed)' : 'Using direct API key'}
                   className={cn(
-                    'text-[9px] px-1.5 py-0.5 rounded border transition-colors ml-auto',
+                    'text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors flex-shrink-0',
                     activeSession.config.useProxy
-                      ? 'border-primary/30 bg-primary/10 text-primary/70'
-                      : 'border-border/40 text-muted-foreground/40 hover:border-border',
+                      ? 'border-primary/40 text-primary/70 bg-primary/10'
+                      : 'border-border/40 text-muted-foreground/50 hover:border-border hover:text-muted-foreground',
                   )}
                 >
                   {activeSession.config.useProxy ? 'proxy' : 'direct'}
                 </button>
               </div>
-
-              {/* Composer */}
+              {/* Chat input */}
               <ChatComposer
-                onSend={(text, node) => handleSendMessage(
-                  activeSession.id, text, activeSession.config, activeSession.mode, node,
-                )}
-                onCancel={() => aiCancel()}
-                onAttachFile={repoInfo ? (path, ref) => attachFile(path, ref, repoInfo) : undefined}
+                onSend={(text, attachedNode) =>
+                  handleSendMessage(activeSession.id, text, activeSession.config, activeSession.mode, attachedNode)
+                }
+                onCancel={aiCancel}
+                onAttachFile={selectedNode ? attachFile : undefined}
                 streaming={isStreamingThis}
                 disabled={false}
                 selectedNode={selectedNode}

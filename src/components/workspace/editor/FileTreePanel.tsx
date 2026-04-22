@@ -502,16 +502,14 @@ export default function FileTreePanel({ kinds }: FileTreePanelProps) {
 
               {/* Change indicator badge */}
               {kind && (
-                <span
-                  style={{
-                    flexShrink: 0,
-                    width: '14px',
-                    textAlign: 'center',
-                    fontSize: '10px',
-                    fontWeight: 600,
-                    color: kindColor(kind),
-                  }}
-                >
+                <span style={{
+                  fontSize: '9px',
+                  fontWeight: 700,
+                  color: kindColor(kind),
+                  flexShrink: 0,
+                  minWidth: '12px',
+                  textAlign: 'right',
+                }}>
                   {kindLabel(kind)}
                 </span>
               )}
