@@ -127,13 +127,19 @@ function runAction(
 // ---------------------------------------------------------------------------
 
 function configureLanguageServices(monaco: typeof MonacoType): void {
+  // monaco-editor 0.55+: standalone language service typings removed.
+  // Runtime globals still present — cast to any to keep existing config.
+  const ts = (monaco.languages as any).typescript;
+  const json = (monaco.languages as any).json;
+  const css = (monaco.languages as any).css;
+
   // TypeScript / TSX
-  const tsDefaults = monaco.languages.typescript.typescriptDefaults;
-  tsDefaults.setCompilerOptions({
-    target: monaco.languages.typescript.ScriptTarget.ESNext,
-    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-    module: monaco.languages.typescript.ModuleKind.ESNext,
-    jsx: monaco.languages.typescript.JsxEmit.ReactJSX,
+  const tsDefaults = ts?.typescriptDefaults;
+  tsDefaults?.setCompilerOptions({
+    target: ts.ScriptTarget.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    module: ts.ModuleKind.ESNext,
+    jsx: ts.JsxEmit.ReactJSX,
     allowSyntheticDefaultImports: true,
     esModuleInterop: true,
     strict: true,
@@ -143,7 +149,7 @@ function configureLanguageServices(monaco: typeof MonacoType): void {
     baseUrl: '.',
     paths: { '@/*': ['./src/*'] },
   });
-  tsDefaults.setDiagnosticsOptions({
+  tsDefaults?.setDiagnosticsOptions({
     noSemanticValidation: false,
     noSyntaxValidation: false,
     noSuggestionDiagnostics: false,
@@ -151,20 +157,20 @@ function configureLanguageServices(monaco: typeof MonacoType): void {
   });
 
   // JavaScript
-  const jsDefaults = monaco.languages.typescript.javascriptDefaults;
-  jsDefaults.setCompilerOptions({
-    target: monaco.languages.typescript.ScriptTarget.ESNext,
-    module: monaco.languages.typescript.ModuleKind.ESNext,
+  const jsDefaults = ts?.javascriptDefaults;
+  jsDefaults?.setCompilerOptions({
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
     allowJs: true,
     checkJs: true,
   });
-  jsDefaults.setDiagnosticsOptions({
+  jsDefaults?.setDiagnosticsOptions({
     noSemanticValidation: false,
     noSyntaxValidation: false,
   });
 
   // JSON — enable schema validation
-  monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+  json?.jsonDefaults?.setDiagnosticsOptions({
     validate: true,
     allowComments: false,
     schemas: [],
@@ -172,9 +178,9 @@ function configureLanguageServices(monaco: typeof MonacoType): void {
   });
 
   // CSS / SCSS / Less
-  monaco.languages.css.cssDefaults.setOptions({ validate: true, lint: { compatibleVendorPrefixes: 'ignore' } });
-  monaco.languages.css.scssDefaults.setOptions({ validate: true });
-  monaco.languages.css.lessDefaults.setOptions({ validate: true });
+  css?.cssDefaults?.setOptions({ validate: true, lint: { compatibleVendorPrefixes: 'ignore' } });
+  css?.scssDefaults?.setOptions({ validate: true });
+  css?.lessDefaults?.setOptions({ validate: true });
 }
 
 // ---------------------------------------------------------------------------

@@ -100,7 +100,7 @@ interface FilePreviewProps {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function FilePreview({ path, content, language }: FilePreviewProps) {
+export default function FilePreview({ path, content }: FilePreviewProps) {
   const ext = getExt(path);
   const [html, setHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

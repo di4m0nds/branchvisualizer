@@ -174,7 +174,7 @@ interface EditorAreaProps {
   onFindFile: () => void;
 }
 
-function EditorArea({ openFile, viewMode, vimEnabled, onFindFile }: EditorAreaProps) {
+function EditorArea({ openFile, viewMode, onFindFile }: EditorAreaProps) {
   const { dispatch } = useAppContext();
 
   if (!openFile) return <EmptyState onFindFile={onFindFile} />;
@@ -309,7 +309,7 @@ export default function EditorTab() {
 
   // ── Open file-finder via DOM event (from vim ex-commands) ─────────────
   useEffect(() => {
-    const handler = (e: CustomEvent<{ query?: string }>) => {
+    const handler = (_e: CustomEvent<{ query?: string }>) => {
       setFileFinderOpen(true);
     };
     window.addEventListener('codeatlas:open-file-finder', handler as EventListener);

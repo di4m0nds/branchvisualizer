@@ -47,6 +47,8 @@ const EMPTY_SESSIONS: SessionMap = {
   summarize_branch: { output: '', error: null },
   explain_commit:   { output: '', error: null },
   pr_description:   { output: '', error: null },
+  explain_file:     { output: '', error: null },
+  ask_about_code:   { output: '', error: null },
 };
 
 // ─── AI config storage ────────────────────────────────────────────────────────
