@@ -22,6 +22,7 @@ pub fn run() {
       git::git_full_repository,
       git::git_commit_details,
       git::git_status,
+      git::git_checkout_branch,
       pty::spawn_pty,
       pty::write_pty,
       pty::resize_pty,

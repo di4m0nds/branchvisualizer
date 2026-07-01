@@ -105,6 +105,7 @@ export type SplitLayout = 'single' | '2h' | '2v' | '4g';
 export type GraphDirection = 'vertical' | 'horizontal';
 export type ViewMode = 'canvas' | 'list';
 export type Theme = 'dark' | 'light';
+export type LogDensity = 'verbose' | 'clean';
 
 // ─── App state ─────────────────────────────────────────────────────────────
 
@@ -169,6 +170,12 @@ export interface AppState {
   source: RepoSource;
   /** Absolute path to the local repo when source === 'local' */
   localPath: string | null;
+  /** Full, unfiltered commit list (source of truth for checkpoint toggling). */
+  rawCommits: Commit[];
+  /** Whether t3 checkpoint commits are shown in the graph. Default false. */
+  showCheckpoints: boolean;
+  /** Agent-log verbosity for the chat transcript. */
+  logDensity: LogDensity;
   /** Agent sessions (IDE mode). Additive — does not affect the flat repo view. */
   sessions: Session[];
   activeSessionId: string | null;
@@ -192,7 +199,7 @@ export type AppAction =
   | { type: 'SET_TOKEN'; token: string }
   | { type: 'LOAD_START' }
   | { type: 'SET_LOAD_STATE'; state: Partial<LoadState> }
-  | { type: 'LOAD_SUCCESS'; repoInfo: RepoInfo; graphData: GraphData; branches: Branch[]; tags: Tag[]; allCommits: Commit[] }
+  | { type: 'LOAD_SUCCESS'; repoInfo: RepoInfo; graphData: GraphData; branches: Branch[]; tags: Tag[]; allCommits: Commit[]; rawCommits?: Commit[] }
   | { type: 'LOAD_ERROR'; message: string }
   | { type: 'RESET' }
   | { type: 'SELECT_NODE'; node: GraphNode | null }
@@ -208,6 +215,8 @@ export type AppAction =
   | { type: 'SET_SPLIT_LAYOUT'; layout: SplitLayout }
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
+  | { type: 'SET_SHOW_CHECKPOINTS'; show: boolean }
+  | { type: 'SET_LOG_DENSITY'; density: LogDensity }
   | { type: 'SET_SOURCE'; source: RepoSource; localPath?: string | null }
   // ── Agent sessions ──
   | { type: 'CREATE_SESSION'; session: Session }

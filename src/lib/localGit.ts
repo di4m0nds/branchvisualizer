@@ -60,3 +60,8 @@ export interface LocalGitStatus {
 export async function fetchStatus(repoPath: string): Promise<LocalGitStatus> {
   return invoke<LocalGitStatus>('git_status', { repoPath });
 }
+
+/** Check out a branch; resolves to the branch git actually landed on. */
+export async function checkoutBranch(repoPath: string, name: string): Promise<string> {
+  return invoke<string>('git_checkout_branch', { repoPath, name });
+}

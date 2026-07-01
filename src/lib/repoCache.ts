@@ -13,7 +13,10 @@ export interface CachedRepo {
   graphData: GraphData;
   branches: Branch[];
   tags: Tag[];
+  /** Currently-displayed commits (checkpoint filter applied). */
   allCommits: Commit[];
+  /** Full, unfiltered commit set — lets the checkpoint toggle rebuild. */
+  rawCommits: Commit[];
   source: RepoSource;
 }
 

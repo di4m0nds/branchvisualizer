@@ -8,7 +8,7 @@ import TerminalDock from '@/components/terminal/TerminalDock';
 import ChatPanel from '@/components/agent/ChatPanel';
 import ChatConfigStrip from './ChatConfigStrip';
 import BvConfigStrip from './BvConfigStrip';
-import { createDefaultContext, nextId, type Session } from '@/types/session';
+import { createDefaultContext, nextId, sessionProjectKey, type Session } from '@/types/session';
 import { fetchStatus } from '@/lib/localGit';
 import { useActiveSession } from '@/hooks/useActiveSession';
 import { useRepoData } from '@/hooks/useRepoData';
@@ -127,6 +127,7 @@ export default function IdeWorkspace() {
         branches: cached.branches,
         tags: cached.tags,
         allCommits: cached.allCommits,
+        rawCommits: cached.rawCommits,
       });
       return;
     }
@@ -212,12 +213,15 @@ export default function IdeWorkspace() {
                 max={75}
               />
 
-              {/* Terminal dock (sized) */}
+              {/* Terminal dock (sized). Keyed by PROJECT, not session, so
+                  switching sessions within the same repo keeps the shells,
+                  server, and nvim alive — only the agent view (ChatPanel, keyed
+                  by session id) hot-swaps. A different project remounts it. */}
               <div
                 className="min-h-0 overflow-hidden border-t border-border bg-background"
                 style={{ flex: `0 0 ${dockHeight}%` }}
               >
-                <TerminalDock key={active.id} sessionId={active.id} cwd={active.cwd ?? '.'} />
+                <TerminalDock key={sessionProjectKey(active)} sessionId={active.id} cwd={active.cwd ?? '.'} />
               </div>
             </div>
           </div>

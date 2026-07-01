@@ -11,11 +11,11 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  // Persist model choice + pinned rules on any change (cheap; localStorage only).
+  // Persist model choice + pinned rules + UI prefs on change (cheap; localStorage).
   useEffect(() => {
     persistState(state);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.currentModel, state.pinnedRules]);
+  }, [state.currentModel, state.pinnedRules, state.showCheckpoints, state.logDensity]);
   // Persist sessions separately and debounced: the sessions array gets a new
   // identity on every streamed token, so writing synchronously would thrash
   // localStorage during agent turns.

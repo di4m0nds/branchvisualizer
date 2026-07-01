@@ -204,7 +204,7 @@ function PaneTabBar({
 
 function WorkspaceToolbar() {
   const { state, dispatch } = useAppContext();
-  const { splitLayout, graphDirection, graphData } = state;
+  const { splitLayout, graphDirection, graphData, showCheckpoints } = state;
 
   if (!graphData) return null;
 
@@ -255,6 +255,27 @@ function WorkspaceToolbar() {
           </button>
         </div>
       </div>
+
+      <div className="h-4 w-px bg-border hidden sm:block" />
+
+      {/* Checkpoint visibility — t3 checkpoint commits are hidden by default. */}
+      <button
+        onClick={() => dispatch({ type: 'SET_SHOW_CHECKPOINTS', show: !showCheckpoints })}
+        title={showCheckpoints ? 'Hide t3 checkpoint commits' : 'Show t3 checkpoint commits'}
+        className={cn(
+          'flex items-center gap-1.5 h-6 px-2 rounded border text-[10px] font-medium transition-colors',
+          showCheckpoints
+            ? 'border-primary/40 bg-primary/10 text-primary'
+            : 'border-border bg-muted/30 text-muted-foreground hover:text-foreground',
+        )}
+      >
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="6" cy="6" r="2.2" />
+          <line x1="6" y1="1" x2="6" y2="3.8" />
+          <line x1="6" y1="8.2" x2="6" y2="11" />
+        </svg>
+        <span className="hidden sm:inline">Checkpoints</span>
+      </button>
 
       <div className="h-4 w-px bg-border hidden sm:block" />
 

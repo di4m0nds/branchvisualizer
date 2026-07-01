@@ -1,11 +1,34 @@
-import type { AppAction, AppState, FilterState, LoadState, TabId } from '../types';
+import type { AppAction, AppState, FilterState, LoadState, LogDensity, TabId } from '../types';
 import type { PinnedRule, Session, SessionContext } from '../types/session';
 import { DEFAULT_PINNED_RULES, createDefaultContext } from '../types/session';
+import { buildGraphData } from '../graph/layout';
+import { filterCheckpoints } from '../lib/refs';
 
 const PINNED_RULES_STORAGE_KEY = 'code-agent:pinned_rules';
 const CURRENT_MODEL_STORAGE_KEY = 'code-agent:current_model';
 const SESSIONS_STORAGE_KEY = 'code-agent:sessions';
 const ACTIVE_SESSION_STORAGE_KEY = 'code-agent:active_session';
+const SHOW_CHECKPOINTS_STORAGE_KEY = 'code-agent:show_checkpoints';
+const LOG_DENSITY_STORAGE_KEY = 'code-agent:log_density';
+
+function loadBoolPref(key: string, fallback: boolean): boolean {
+  if (typeof localStorage === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : raw === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+function loadLogDensity(): LogDensity {
+  if (typeof localStorage === 'undefined') return 'verbose';
+  try {
+    return localStorage.getItem(LOG_DENSITY_STORAGE_KEY) === 'clean' ? 'clean' : 'verbose';
+  } catch {
+    return 'verbose';
+  }
+}
 
 /** Cap persisted history so the localStorage blob stays bounded. */
 const MAX_PERSISTED_MESSAGES = 100;
@@ -94,6 +117,8 @@ export function persistState(state: AppState): void {
   try {
     localStorage.setItem(PINNED_RULES_STORAGE_KEY, JSON.stringify(state.pinnedRules));
     localStorage.setItem(CURRENT_MODEL_STORAGE_KEY, JSON.stringify(state.currentModel));
+    localStorage.setItem(SHOW_CHECKPOINTS_STORAGE_KEY, String(state.showCheckpoints));
+    localStorage.setItem(LOG_DENSITY_STORAGE_KEY, state.logDensity);
   } catch { /* quota / private mode */ }
 }
 
@@ -134,6 +159,9 @@ export const initialState: AppState = {
   graphDirection: 'vertical',
   source: 'github',
   localPath: null,
+  rawCommits: [],
+  showCheckpoints: loadBoolPref(SHOW_CHECKPOINTS_STORAGE_KEY, false),
+  logDensity: loadLogDensity(),
   sessions: loadSessions(),
   activeSessionId: resolveInitialActiveSession(),
   currentModel: loadCurrentModel(),
@@ -171,6 +199,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         branches: [],
         tags: [],
         allCommits: [],
+        rawCommits: [],
         selectedNode: null,
         selectedNodes: [],
         hoveredNode: null,
@@ -193,8 +222,29 @@ export function reducer(state: AppState, action: AppAction): AppState {
         branches: action.branches,
         tags: action.tags,
         allCommits: action.allCommits,
+        // Keep the full commit set so the checkpoint toggle can rebuild without
+        // a refetch. Falls back to the displayed set when the loader didn't
+        // pass a raw list (e.g. cached swap-ins).
+        rawCommits: action.rawCommits ?? action.allCommits,
         loadState: { phase: 'done', message: '', progress: 100 },
       };
+
+    case 'SET_SHOW_CHECKPOINTS': {
+      if (!state.graphData) return { ...state, showCheckpoints: action.show };
+      const displayCommits = filterCheckpoints(state.rawCommits, action.show);
+      const graphData = buildGraphData(displayCommits, state.branches, state.tags);
+      return {
+        ...state,
+        showCheckpoints: action.show,
+        allCommits: displayCommits,
+        graphData,
+        selectedNode: null,
+        selectedNodes: [],
+      };
+    }
+
+    case 'SET_LOG_DENSITY':
+      return { ...state, logDensity: action.density };
 
     case 'LOAD_ERROR':
       return {

@@ -8,6 +8,7 @@ import { useAppContext } from '../store/AppContext';
 import { addToHistory } from '../lib/history';
 import { DesktopOnlyError } from '../lib/platform';
 import { setCachedRepo } from '../lib/repoCache';
+import { filterCheckpoints } from '../lib/refs';
 
 export function useRepoData() {
   const { state, dispatch } = useAppContext();
@@ -58,10 +59,12 @@ export function useRepoData() {
 
       dispatch({ type: 'SET_LOAD_STATE', state: { message: 'Building graph…', progress: 90 } });
 
+      // Hide t3 checkpoint commits by default; keep the full set for the toggle.
+      const displayCommits = filterCheckpoints(commits, state.showCheckpoints);
       const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
         requestAnimationFrame(() => {
           try {
-            resolve(buildGraphData(commits, branches, tags));
+            resolve(buildGraphData(displayCommits, branches, tags));
           } catch (e) {
             reject(e);
           }
@@ -74,12 +77,13 @@ export function useRepoData() {
         graphData,
         branches,
         tags,
-        allCommits: commits,
+        allCommits: displayCommits,
+        rawCommits: commits,
       });
 
       // Cache by repoRef so IDE sessions can swap this repo in without a refetch.
       setCachedRepo(repoInfo.fullName, {
-        repoInfo, graphData, branches, tags, allCommits: commits, source: 'github',
+        repoInfo, graphData, branches, tags, allCommits: displayCommits, rawCommits: commits, source: 'github',
       });
 
       // Record in visit history
@@ -98,7 +102,7 @@ export function useRepoData() {
       toast.dismiss(loadToastId);
       toast.error('Failed to load repository', { description: msg });
     }
-  }, [state.token, dispatch]);
+  }, [state.token, state.showCheckpoints, dispatch]);
 
   // ── Local repository loader ──────────────────────────────────────────────
   // Mirrors loadRepo but sources from the local `git` binary via Tauri. Feeds
@@ -127,10 +131,12 @@ export function useRepoData() {
 
       dispatch({ type: 'SET_LOAD_STATE', state: { message: 'Building graph…', progress: 90 } });
 
+      // Hide t3 checkpoint commits by default; keep the full set for the toggle.
+      const displayCommits = filterCheckpoints(commits, state.showCheckpoints);
       const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
         requestAnimationFrame(() => {
           try {
-            resolve(buildGraphData(commits, branches, tags));
+            resolve(buildGraphData(displayCommits, branches, tags));
           } catch (e) {
             reject(e);
           }
@@ -143,12 +149,13 @@ export function useRepoData() {
         graphData,
         branches,
         tags,
-        allCommits: commits,
+        allCommits: displayCommits,
+        rawCommits: commits,
       });
 
       // Cache by the absolute path (== a local session's repoRef) for swap-in.
       setCachedRepo(cleaned, {
-        repoInfo, graphData, branches, tags, allCommits: commits, source: 'local',
+        repoInfo, graphData, branches, tags, allCommits: displayCommits, rawCommits: commits, source: 'local',
       });
 
       addToHistory(`local:${label}`, cleaned);
@@ -168,7 +175,7 @@ export function useRepoData() {
       toast.dismiss(loadToastId);
       toast.error('Failed to load local repository', { description: msg });
     }
-  }, [dispatch]);
+  }, [state.showCheckpoints, dispatch]);
 
   return { loadRepo, loadLocalRepo };
 }

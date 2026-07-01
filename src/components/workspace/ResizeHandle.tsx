@@ -27,6 +27,8 @@ export function ResizeHandle({
   const isDragging = useRef(false);
   const startPosRef = useRef(0);
   const startSizeRef = useRef(size);
+  const rafRef = useRef<number>(0);
+  const pendingRef = useRef<number | null>(null);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -34,18 +36,31 @@ export function ResizeHandle({
     startPosRef.current = direction === 'h' ? e.clientX : e.clientY;
     startSizeRef.current = size;
 
+    // Coalesce mousemove → one state update per frame. Raw mousemove can fire
+    // far more often than the display refreshes; funnelling through rAF keeps the
+    // drag buttery and avoids flooding React with per-pixel re-renders.
+    const flush = () => {
+      rafRef.current = 0;
+      if (pendingRef.current != null) {
+        onSizeChange(pendingRef.current);
+        pendingRef.current = null;
+      }
+    };
+
     const onMouseMove = (me: MouseEvent) => {
       if (!isDragging.current) return;
       const container = containerRef.current;
       if (!container) return;
       const containerSize = direction === 'h' ? container.offsetWidth : container.offsetHeight;
       const delta = (direction === 'h' ? me.clientX : me.clientY) - startPosRef.current;
-      const newSize = Math.min(max, Math.max(min, startSizeRef.current + (delta / containerSize) * 100));
-      onSizeChange(newSize);
+      pendingRef.current = Math.min(max, Math.max(min, startSizeRef.current + (delta / containerSize) * 100));
+      if (!rafRef.current) rafRef.current = requestAnimationFrame(flush);
     };
 
     const onMouseUp = () => {
       isDragging.current = false;
+      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
+      if (pendingRef.current != null) { onSizeChange(pendingRef.current); pendingRef.current = null; }
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { useAppContext } from '@/store/AppContext';
@@ -138,6 +138,11 @@ function AppShell() {
   const [showPolicyModal, setShowPolicyModal] = useState<boolean>(() => !hasAcceptedPolicy());
   const [legalTab, setLegalTab] = useState<LegalTab | null>(null);
 
+  // Legal footer belongs on the marketing/visualizer surfaces, not the IDE
+  // workspace where vertical space is precious. Keep it everywhere except /ide.
+  const { pathname } = useLocation();
+  const showFooter = pathname !== '/ide';
+
   return (
     <div className="flex flex-col h-full bg-background text-foreground">
       <Navbar />
@@ -168,16 +173,18 @@ function AppShell() {
         <LegalPage initialTab={legalTab} onClose={() => setLegalTab(null)} />
       )}
 
-      <footer className="flex items-center justify-center gap-3 px-6 py-3 border-t border-border
-                         text-xs text-muted-foreground bg-background/80 backdrop-blur-sm flex-shrink-0">
-        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('privacy')}>Privacy</button>
-        <span className="opacity-30">·</span>
-        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('terms')}>Terms</button>
-        <span className="opacity-30">·</span>
-        <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('cookies')}>Cookies</button>
-        <span className="opacity-30">·</span>
-        <span>© {new Date().getFullYear()} BranchVisualizer</span>
-      </footer>
+      {showFooter && (
+        <footer className="flex items-center justify-center gap-3 px-6 py-3 border-t border-border
+                           text-xs text-muted-foreground bg-background/80 backdrop-blur-sm flex-shrink-0">
+          <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('privacy')}>Privacy</button>
+          <span className="opacity-30">·</span>
+          <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('terms')}>Terms</button>
+          <span className="opacity-30">·</span>
+          <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('cookies')}>Cookies</button>
+          <span className="opacity-30">·</span>
+          <span>© {new Date().getFullYear()} BranchVisualizer</span>
+        </footer>
+      )}
     </div>
   );
 }

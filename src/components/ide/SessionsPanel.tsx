@@ -64,10 +64,17 @@ export default function SessionsPanel({
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
-  const sessions = useMemo(
-    () => (filterRepoRef ? state.sessions.filter((s) => s.repoRef === filterRepoRef) : state.sessions),
-    [state.sessions, filterRepoRef],
-  );
+  const sessions = useMemo(() => {
+    const ref = filterRepoRef?.trim();
+    if (!ref) return state.sessions;
+    // Normalize: GitHub refs are case-insensitive (owner/repo), and a session
+    // may key off either its repoRef or its local cwd. Match on either so the
+    // standalone visualizer page lists the same sessions the IDE does.
+    const norm = ref.toLowerCase();
+    return state.sessions.filter(
+      (s) => s.repoRef.toLowerCase() === norm || (s.cwd && s.cwd.toLowerCase() === norm),
+    );
+  }, [state.sessions, filterRepoRef]);
 
   const openSession = (id: string) => {
     dispatch({ type: 'SET_ACTIVE_SESSION', id });

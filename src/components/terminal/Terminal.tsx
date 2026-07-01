@@ -111,16 +111,24 @@ export default function Terminal({
       term.write(`\r\n\x1b[31m[failed to start: ${msg}]\x1b[0m\r\n`);
     });
 
+    // Coalesce resize bursts to one fit per frame — a dock drag fires many
+    // ResizeObserver callbacks and refitting xterm on each is expensive.
+    let fitRaf = 0;
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        resizePty(id, term.cols, term.rows).catch(() => {});
-      } catch { /* noop */ }
+      if (fitRaf) return;
+      fitRaf = requestAnimationFrame(() => {
+        fitRaf = 0;
+        try {
+          fit.fit();
+          resizePty(id, term.cols, term.rows).catch(() => {});
+        } catch { /* noop */ }
+      });
     });
     ro.observe(containerRef.current);
 
     return () => {
       disposed = true;
+      if (fitRaf) cancelAnimationFrame(fitRaf);
       ro.disconnect();
       dataDisposable.dispose();
       unlistenData();

@@ -6,12 +6,16 @@ import type {
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
 } from '../transport';
 
+// Anthropic model IDs are date-suffixed on the API. Using the bare alias (e.g.
+// `claude-haiku-4-5`) 404s → the probe silently degrades to "detected · request
+// failed" and the picker shows UNKNOWN. Pin the suffixed ids the API resolves.
+const PROBE_MODEL = 'claude-haiku-4-5-20251001';
 const MODELS: ModelInfo[] = [
-  { id: 'claude-fable-5',    label: 'Fable 5',    defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000 },
+  { id: 'claude-fable-5',            label: 'Fable 5',    defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'claude-opus-4-8',          label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'claude-opus-4-7',          label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'claude-sonnet-4-6',        label: 'Sonnet 4.6', defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000 },
 ];
 
 async function resolveKey(): Promise<string | null> {
@@ -123,7 +127,7 @@ export const anthropicProvider: Provider = {
       // A tiny count_tokens probe: cheap, exposes rate-limit headers.
       const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
       const resp = await client.messages.countTokens({
-        model: 'claude-haiku-4-5',
+        model: PROBE_MODEL,
         messages: [{ role: 'user', content: 'hi' }],
       });
       // If we can count tokens, the key is live. Anthropic doesn't cleanly expose

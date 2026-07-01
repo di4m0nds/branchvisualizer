@@ -146,3 +146,13 @@ export function nextId(prefix: string): string {
   _seq += 1;
   return `${prefix}_${_seq}`;
 }
+
+/**
+ * Stable identity of a session's *project* (repo + working tree). Sessions that
+ * share a project key are the same filesystem context — switching between them
+ * must not re-init the terminal/nvim/branchvisualizer, only the agent view.
+ * Local sessions key off their cwd; GitHub sessions off their repoRef.
+ */
+export function sessionProjectKey(s: Session): string {
+  return s.repoSource === 'local' ? (s.cwd ?? s.repoRef) : s.repoRef;
+}

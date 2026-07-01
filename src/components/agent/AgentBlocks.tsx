@@ -1,5 +1,10 @@
+import { useState } from 'react';
+import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import type { AgentBlock } from '@/types/session';
+import type { LogDensity } from '@/types';
+import { parseQuestions, filterBlocksByDensity, type AgentQuestion } from './blocks';
 
 // Renders the structured blocks parsed from an assistant message.
 
@@ -46,7 +51,105 @@ function CodeBlock({ inner }: { inner: string }) {
   );
 }
 
-function BlockView({ block }: { block: AgentBlock }) {
+// ─── Interactive multiple-choice Q&A ────────────────────────────────────────
+// Blocks the turn until every question is answered, then threads the answers
+// back to the agent as a follow-up user message. Supports single- and
+// multi-select and renders all questions in the block simultaneously.
+
+function QuestionsBlock({
+  questions, interactive, onSubmit,
+}: {
+  questions: AgentQuestion[];
+  interactive: boolean;
+  onSubmit?: (text: string) => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [submitted, setSubmitted] = useState(false);
+
+  const toggle = (q: AgentQuestion, choiceId: string) => {
+    setAnswers((prev) => {
+      const cur = prev[q.id] ?? [];
+      if (q.multi) {
+        return { ...prev, [q.id]: cur.includes(choiceId) ? cur.filter((c) => c !== choiceId) : [...cur, choiceId] };
+      }
+      return { ...prev, [q.id]: [choiceId] };
+    });
+  };
+
+  const allAnswered = questions.every((q) => (answers[q.id]?.length ?? 0) > 0);
+
+  const submit = () => {
+    if (!allAnswered || !onSubmit) return;
+    const lines = questions.map((q) => {
+      const picked = (answers[q.id] ?? [])
+        .map((cid) => q.choices.find((c) => c.id === cid)?.label ?? cid)
+        .join(', ');
+      return `- ${q.text} → ${picked}`;
+    });
+    setSubmitted(true);
+    onSubmit(`Answers to your questions:\n${lines.join('\n')}`);
+  };
+
+  const locked = submitted || !interactive;
+
+  return (
+    <div className="rounded-md border border-primary/40 bg-primary/5 overflow-hidden">
+      <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary border-b border-primary/20">
+        {submitted ? 'Answered' : 'The agent needs your input'}
+      </div>
+      <div className="p-2.5 space-y-3">
+        {questions.map((q) => (
+          <div key={q.id} className="space-y-1.5">
+            <p className="text-xs font-medium text-foreground/90">
+              {q.text}{q.multi && <span className="text-[10px] text-muted-foreground/60 ml-1">(select all that apply)</span>}
+            </p>
+            <div className="flex flex-col gap-1">
+              {q.choices.map((c) => {
+                const chosen = (answers[q.id] ?? []).includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    disabled={locked}
+                    onClick={() => toggle(q, c.id)}
+                    className={cn(
+                      'flex items-start gap-2 w-full text-left px-2.5 py-1.5 rounded border text-xs transition-colors disabled:opacity-70 disabled:cursor-default',
+                      chosen
+                        ? 'border-primary/50 bg-primary/10 text-foreground'
+                        : 'border-border bg-background/40 text-muted-foreground hover:text-foreground hover:border-border/80',
+                    )}
+                  >
+                    <span className={cn('mt-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-sm border flex-shrink-0',
+                      chosen ? 'bg-primary border-primary text-primary-foreground' : 'border-border')}>
+                      {chosen && <Check className="w-2.5 h-2.5" />}
+                    </span>
+                    <span className="flex flex-col min-w-0">
+                      <span className="font-medium">{c.label}</span>
+                      {c.description && <span className="text-[10px] text-muted-foreground/70">{c.description}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {!submitted && interactive && (
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-[10px] text-muted-foreground/60">
+              {allAnswered ? 'Ready to send' : 'Answer every question to continue'}
+            </span>
+            <Button size="xs" onClick={submit} disabled={!allAnswered}>Submit answers</Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BlockView({ block, interactive, onSubmitAnswers }: {
+  block: AgentBlock;
+  interactive: boolean;
+  onSubmitAnswers?: (text: string) => void;
+}) {
   const inner = String(block.data?.inner ?? '');
 
   switch (block.type) {
@@ -54,6 +157,8 @@ function BlockView({ block }: { block: AgentBlock }) {
       return <p className="text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed">{block.raw}</p>;
     case 'action_log':
       return <ActionLog data={block.data ?? {}} />;
+    case 'questions_for_user':
+      return <QuestionsBlock questions={parseQuestions(inner)} interactive={interactive} onSubmit={onSubmitAnswers} />;
     case 'plan':
       return <LabeledCard label="Plan" tone="text-primary" inner={inner} />;
     case 'agent_status':
@@ -79,11 +184,22 @@ function BlockView({ block }: { block: AgentBlock }) {
   }
 }
 
-export default function AgentBlocks({ blocks }: { blocks: AgentBlock[] }) {
-  if (blocks.length === 0) return null;
+export default function AgentBlocks({
+  blocks, density = 'verbose', interactive = false, onSubmitAnswers,
+}: {
+  blocks: AgentBlock[];
+  density?: LogDensity;
+  /** When true, an unanswered Q&A block is actionable (latest turn only). */
+  interactive?: boolean;
+  onSubmitAnswers?: (text: string) => void;
+}) {
+  const shown = filterBlocksByDensity(blocks, density);
+  if (shown.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
-      {blocks.map((b, i) => <BlockView key={i} block={b} />)}
+      {shown.map((b, i) => (
+        <BlockView key={i} block={b} interactive={interactive} onSubmitAnswers={onSubmitAnswers} />
+      ))}
     </div>
   );
 }

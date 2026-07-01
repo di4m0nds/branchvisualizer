@@ -483,3 +483,22 @@ pub fn git_status(repo_path: String) -> Result<GitStatus, String> {
 
     Ok(status)
 }
+
+/// Check out an existing branch. `name` may be a local branch (`main`) or a
+/// remote-tracking ref (`origin/feature`) — for the latter git creates/switches
+/// to a local tracking branch. Returns the resolved current branch name.
+#[tauri::command]
+pub fn git_checkout_branch(repo_path: String, name: String) -> Result<String, String> {
+    let branch = name.trim();
+    if branch.is_empty() {
+        return Err("branch name is empty".to_string());
+    }
+    // Strip a `remotes/` prefix if present; `git checkout origin/x` DWIMs a
+    // local tracking branch, which is what users expect from the switcher.
+    let target = branch.strip_prefix("remotes/").unwrap_or(branch);
+    run_git(&repo_path, &["checkout", target])?;
+
+    // Report the branch git actually landed on (handles detached-HEAD edge cases).
+    let head = run_git(&repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    Ok(head.trim().to_string())
+}

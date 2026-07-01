@@ -31,12 +31,23 @@ const AUTO_CLOSE_ON_EXIT: Record<TerminalRole, boolean> = {
   server: false,
 };
 
-function makeTerminal(role: TerminalRole, cwd: string, opts?: { args?: string[] }): TerminalDef {
+// Title is derived from how many terminals of this role already exist in THIS
+// dock — not the process-lifetime `nextId` counter (which climbs forever and
+// produced labels like "Shell 14" with a single terminal open). First of a role
+// is unnumbered ("Shell"), the next is "Shell 2", etc.
+function makeTerminal(
+  role: TerminalRole,
+  cwd: string,
+  existing: TerminalDef[],
+  opts?: { args?: string[] },
+): TerminalDef {
   const id = nextId('term');
   if (role === 'nvim') {
     return { id, role, title: 'nvim', cwd, cmd: 'nvim', args: opts?.args };
   }
-  return { id, role, title: `${ROLE_LABEL[role]} ${id.split('_').pop()}`, cwd };
+  const n = existing.filter((t) => t.role === role).length;
+  const title = n === 0 ? ROLE_LABEL[role] : `${ROLE_LABEL[role]} ${n + 1}`;
+  return { id, role, title, cwd };
 }
 
 /**
@@ -53,18 +64,22 @@ export default function TerminalDock({
   cwd: string;
   sessionId: string;
 }) {
-  const [terminals, setTerminals] = useState<TerminalDef[]>(() => [makeTerminal('shell', cwd)]);
+  const [terminals, setTerminals] = useState<TerminalDef[]>(() => [makeTerminal('shell', cwd, [])]);
   const [activeId, setActiveId] = useState<string>(() => terminals[0]?.id ?? '');
+
+  // Mirror of `terminals` for synchronous reads inside `add` (numbering the new
+  // tab off the live list without threading it through the updater).
+  const terminalsRef = useRef<TerminalDef[]>(terminals);
+  terminalsRef.current = terminals;
 
   // Registered per-terminal writers so we can send ex-commands (`:e path\r`) to
   // an already-running nvim without a round-trip through Tauri events.
   const writersRef = useRef<Record<string, (data: string) => Promise<void>>>({});
 
-  const add = useCallback((role: TerminalRole, opts?: { args?: string[] }): TerminalDef => {
-    const t = makeTerminal(role, cwd, opts);
+  const add = useCallback((role: TerminalRole, opts?: { args?: string[] }): void => {
+    const t = makeTerminal(role, cwd, terminalsRef.current, opts);
     setTerminals((prev) => [...prev, t]);
     setActiveId(t.id);
-    return t;
   }, [cwd]);
 
   const close = useCallback((id: string) => {

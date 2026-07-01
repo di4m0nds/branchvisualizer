@@ -277,58 +277,74 @@ const DEFAULT_IGNORE: &[&str] = &[
 
 /// Walk the tree under `root`, jailed. Skips a common ignore list and dot-dirs.
 /// `max_depth` bounds recursion (0 = unlimited).
+///
+/// Emits entries in depth-first pre-order — each directory is immediately
+/// followed by its descendants — with siblings sorted (dirs first, alpha
+/// within). A global sort would scatter a directory's files away from the
+/// directory, breaking the front-end's nesting (which relies on parents being
+/// contiguous with their children).
 #[tauri::command]
 pub fn walk_tree(root: String, max_depth: Option<u32>) -> Result<Vec<TreeEntry>, String> {
-    let jailed = jail(&root, ".")?;
-    let base = jailed.clone();
+    let base = jail(&root, ".")?;
     let max = max_depth.unwrap_or(0);
     let mut out: Vec<TreeEntry> = Vec::new();
-    let mut stack: Vec<(PathBuf, u32)> = vec![(jailed, 0)];
+    walk_dir_ordered(&base, &base, 0, max, &mut out);
+    Ok(out)
+}
 
-    while let Some((dir, depth)) = stack.pop() {
+/// Recursive DFS helper: reads one directory, sorts its siblings, and emits each
+/// entry followed by its subtree.
+fn walk_dir_ordered(dir: &Path, base: &Path, depth: u32, max: u32, out: &mut Vec<TreeEntry>) {
+    if out.len() >= WALK_MAX_ENTRIES {
+        return;
+    }
+    let read = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    // Collect this directory's visible children before sorting.
+    let mut siblings: Vec<(PathBuf, String, bool, u64)> = Vec::new();
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if DEFAULT_IGNORE.contains(&name.as_str()) {
+            continue;
+        }
+        // Skip hidden entries only at the top level; keep e.g. `.cargo` visible
+        // when the user drills down explicitly.
+        if name.starts_with('.') && depth == 0 {
+            continue;
+        }
+        let full = entry.path();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        siblings.push((full, name, is_dir, size_bytes));
+    }
+
+    // Siblings only: directories first, then files, case-insensitive alpha.
+    siblings.sort_by(|a, b| {
+        (!a.2, a.1.to_lowercase()).cmp(&(!b.2, b.1.to_lowercase()))
+    });
+
+    for (full, name, is_dir, size_bytes) in siblings {
         if out.len() >= WALK_MAX_ENTRIES {
             break;
         }
-        let entries = match fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if DEFAULT_IGNORE.contains(&name.as_str()) {
-                continue;
-            }
-            if name.starts_with('.') && depth == 0 {
-                // Only skip hidden entries at the top level; keep e.g. Rust's
-                // `.cargo` visible if the user drills down explicitly.
-                continue;
-            }
-            let full = entry.path();
-            let rel = full
-                .strip_prefix(&base)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| name.clone());
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            out.push(TreeEntry {
-                path: rel,
-                name,
-                is_dir,
-                size_bytes,
-                depth,
-            });
-            if is_dir && (max == 0 || depth + 1 < max) {
-                stack.push((full, depth + 1));
-            }
-            if out.len() >= WALK_MAX_ENTRIES {
-                break;
-            }
+        let rel = full
+            .strip_prefix(base)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| name.clone());
+        out.push(TreeEntry {
+            path: rel,
+            name,
+            is_dir,
+            size_bytes,
+            depth,
+        });
+        if is_dir && (max == 0 || depth + 1 < max) {
+            walk_dir_ordered(&full, base, depth + 1, max, out);
         }
     }
-
-    // Deterministic order: directories first, then files, alpha within.
-    out.sort_by(|a, b| (b.is_dir, &a.path).cmp(&(a.is_dir, &b.path)));
-    Ok(out)
 }
 
 /// Read a file as base64 (for PDF / docx viewers). Jailed.

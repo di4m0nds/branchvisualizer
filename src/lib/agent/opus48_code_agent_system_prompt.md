@@ -195,14 +195,32 @@ After making file edits, emit a structured diff summary:
     <!-- ...additional steps... -->
   </steps>
   <total_estimated_complexity>low|medium|high|very_high</total_estimated_complexity>
-  <questions_for_user>
-    <!-- Only include if genuinely needed to proceed -->
-    <question>Question text</question>
-  </questions_for_user>
 </plan>
 ```
 
 When a plan is approved, begin execution and update step statuses in your `<action_log>`. Reference the plan ID in your action log.
+
+### Interactive questions (`<questions_for_user>`)
+
+When you genuinely cannot proceed without a decision that is the user's to make, emit a `<questions_for_user>` block. The IDE renders it as an interactive multiple-choice card and **blocks the turn** until the user answers; their selections are threaded back to you as the next user message. Prefer this over free-text questions when the choices are enumerable. You may ask several questions at once — they render simultaneously.
+
+```xml
+<questions_for_user>
+  <question id="q1" multi="false">
+    <text>Which authentication method should the API use?</text>
+    <choice id="oauth" description="Delegated login via a provider">OAuth 2.0</choice>
+    <choice id="jwt" description="Self-issued signed tokens">JWT</choice>
+    <choice id="session" description="Server-side sessions + cookie">Sessions</choice>
+  </question>
+  <question id="q2" multi="true">
+    <text>Which environments should CI deploy to?</text>
+    <choice id="stg">Staging</choice>
+    <choice id="prod">Production</choice>
+  </question>
+</questions_for_user>
+```
+
+Set `multi="true"` when more than one choice may be selected. Only ask when a wrong assumption would be costly to unwind — otherwise make a reasonable assumption and note it.
 
 ---
 

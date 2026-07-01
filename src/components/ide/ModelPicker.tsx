@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, RotateCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppContext } from '@/store/AppContext';
 import { PROVIDERS } from '@/lib/agent/providers';
@@ -38,19 +38,32 @@ function stateLabel(s: ProbeState): string {
 // ─── Panel row ───────────────────────────────────────────────────────────────
 
 function ProviderRow({
-  provider, status, selected, onSelectModel, onSaveKey,
+  provider, status, selected, onSelectModel, onSaveKey, onRetry,
 }: {
   provider: Provider;
   status: ProbeResult | null;
   selected: { providerId: string; modelId: string };
   onSelectModel: (providerId: string, modelId: string) => void;
   onSaveKey: (providerId: string, key: string) => Promise<void>;
+  onRetry: (providerId: string) => Promise<void>;
 }) {
   const detected = status?.state ?? 'not_detected';
   const keyProvider = KEY_PROVIDER_ID[provider.id];
   const [showKey, setShowKey] = useState(false);
   const [keyInput, setKeyInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  // A failed-but-keyed probe carries the underlying error; surface it inline
+  // (not just in the title tooltip) so the failure is diagnosable at a glance.
+  const statusText = status?.error
+    ? `${status.label ?? stateLabel(detected)} — ${status.error}`
+    : status?.label ?? stateLabel(detected);
+
+  const retry = async () => {
+    setRetrying(true);
+    try { await onRetry(provider.id); } finally { setRetrying(false); }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -71,9 +84,21 @@ function ProviderRow({
         <span className={cn('px-1.5 py-0.5 rounded border text-[9px] font-mono uppercase tracking-wider', tierColor(status?.tier))}>
           {status?.tier ?? 'unknown'}
         </span>
-        <span className="text-[10px] text-muted-foreground/70 truncate max-w-52 flex-1" title={status?.label}>
-          {status?.label ?? stateLabel(detected)}
+        <span
+          className={cn('text-[10px] truncate max-w-52 flex-1',
+            status?.error ? 'text-amber-400/90' : 'text-muted-foreground/70')}
+          title={statusText}
+        >
+          {statusText}
         </span>
+        <button
+          onClick={retry}
+          disabled={retrying}
+          className="flex items-center justify-center h-5 w-5 rounded border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          title="Re-check this provider"
+        >
+          <RotateCw className={cn('w-3 h-3', retrying && 'animate-spin')} />
+        </button>
         {keyProvider && (
           <button
             onClick={() => setShowKey((v) => !v)}
@@ -223,6 +248,7 @@ export default function ModelPicker() {
                   status={(state.providerStatus[p.id] ?? null) as ProbeResult | null}
                   selected={selected}
                   onSaveKey={saveKey}
+                  onRetry={probeOne}
                   onSelectModel={(providerId, modelId) => {
                     dispatch({ type: 'SET_MODEL', model: { providerId, modelId } });
                     setOpen(false);

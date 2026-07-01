@@ -56,18 +56,38 @@ pub fn spawn_pty(
 
     let shell = cmd.unwrap_or_else(default_shell);
     let mut builder = CommandBuilder::new(&shell);
+
+    // Login-shell flag for known interactive shells so rc files (which set up
+    // PATH, prompt, aliases) are sourced — otherwise zsh/bash can exit right
+    // away and the user sees `[process exited]`. Only when no explicit cmd/args
+    // were supplied (i.e. this is a plain shell, not `nvim <file>`).
+    if args.is_empty() && is_login_shell(&shell) {
+        builder.arg("-l");
+    }
     for a in &args {
         builder.arg(a);
     }
-    if !cwd.is_empty() {
-        builder.cwd(cwd);
+
+    // portable-pty does NOT inherit the parent environment by default. Without
+    // HOME/PATH/USER/LANG a login shell (and nvim's runtime lookup) fails
+    // immediately. Forward the parent env, then override TERM for xterm.
+    for (k, v) in std::env::vars() {
+        if k == "TERM" {
+            continue;
+        }
+        builder.env(k, v);
     }
     builder.env("TERM", "xterm-256color");
+
+    // Validate cwd: fall back to HOME (then /) when empty or missing, so an
+    // invalid working dir doesn't silently kill the child.
+    let dir = resolve_cwd(&cwd);
+    builder.cwd(&dir);
 
     let child = pair
         .slave
         .spawn_command(builder)
-        .map_err(|e| format!("failed to spawn {shell}: {e}"))?;
+        .map_err(|e| format!("failed to spawn {shell} in {dir}: {e}"))?;
     // Slave is held by the child; drop our handle so EOF propagates on exit.
     drop(pair.slave);
 
@@ -169,4 +189,22 @@ pub fn kill_pty(state: State<'_, PtyState>, id: String) -> Result<(), String> {
 
 fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// Whether a shell binary path is a login shell that accepts `-l`.
+fn is_login_shell(shell: &str) -> bool {
+    let name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(shell);
+    matches!(name, "bash" | "zsh" | "sh" | "fish")
+}
+
+/// Resolve a usable working directory: the requested cwd if it exists, else
+/// $HOME, else `/`. Prevents an invalid path from silently killing the child.
+fn resolve_cwd(cwd: &str) -> String {
+    if !cwd.is_empty() && std::path::Path::new(cwd).is_dir() {
+        return cwd.to_string();
+    }
+    std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
 }

@@ -9,6 +9,7 @@ import type { AgentTransport } from '@/lib/agent/transport';
 import { createTransportFor } from '@/lib/agent/providers';
 import { runAgentTurn, type PendingAction } from '@/lib/agent/loop';
 import type { AgentMessage, Session } from '@/types/session';
+import type { LogDensity } from '@/types';
 
 // ─── Pending-action approval card ────────────────────────────────────────────
 
@@ -44,7 +45,12 @@ function PendingActionCard({
 
 // ─── Message bubble ──────────────────────────────────────────────────────────
 
-function MessageView({ msg }: { msg: AgentMessage }) {
+function MessageView({ msg, density, interactive, onSubmitAnswers }: {
+  msg: AgentMessage;
+  density: LogDensity;
+  interactive: boolean;
+  onSubmitAnswers: (text: string) => void;
+}) {
   const isUser = msg.role === 'user';
   const isActionLog = msg.blocks.length > 0 && msg.blocks.every((b) => b.type === 'action_log');
   return (
@@ -60,7 +66,12 @@ function MessageView({ msg }: { msg: AgentMessage }) {
       )}>
         {isUser
           ? <p className="whitespace-pre-wrap text-foreground/90">{msg.text}</p>
-          : <AgentBlocks blocks={msg.blocks.length ? msg.blocks : [{ type: 'text', raw: msg.text }]} />}
+          : <AgentBlocks
+              blocks={msg.blocks.length ? msg.blocks : [{ type: 'text', raw: msg.text }]}
+              density={density}
+              interactive={interactive}
+              onSubmitAnswers={onSubmitAnswers}
+            />}
       </div>
     </div>
   );
@@ -162,7 +173,16 @@ export default function ChatPanel({ session }: { session: Session }) {
             Actions are gated by the access level above.
           </div>
         )}
-        {live.messages.map((m) => <MessageView key={m.id} msg={m} />)}
+        {live.messages.map((m) => (
+          <MessageView
+            key={m.id}
+            msg={m}
+            density={state.logDensity}
+            // Only the latest, settled assistant turn can still take answers.
+            interactive={!busy && m.id === last?.id && m.role === 'assistant' && !m.streaming}
+            onSubmitAnswers={(text) => runTurn(text)}
+          />
+        ))}
         {pending && (
           <PendingActionCard
             pending={pending}
