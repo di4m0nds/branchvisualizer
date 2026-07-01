@@ -12,6 +12,7 @@ import LoadingOverlay from '@/components/LoadingOverlay';
 import ErrorBanner from '@/components/ErrorBanner';
 import PolicyModal, { hasAcceptedPolicy } from '@/components/PolicyModal';
 import LegalPage, { type LegalTab } from '@/components/LegalPage';
+import IdeWorkspace from '@/components/ide/IdeWorkspace';
 
 // ─── Home page (/) ─────────────────────────────────────────────────────────────
 
@@ -126,6 +127,8 @@ function AppShell() {
       <div className="flex flex-col flex-1 min-h-0">
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/ide" element={<IdeWorkspace />} />
+          <Route path="/local" element={<RepoPage />} />
           <Route path="/:owner/:repo" element={<RepoPage />} />
         </Routes>
       </div>

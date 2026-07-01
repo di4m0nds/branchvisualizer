@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { fetchCommitDetails, setToken, type CommitDetails, type CommitFile } from '@/lib/github';
+import { fetchCommitDetails as fetchLocalCommitDetails } from '@/lib/localGit';
 import type { CommitAuthor, GraphNode } from '@/types';
 
 // ─── Author card with hover tooltip ──────────────────────────────────────────
@@ -609,7 +610,7 @@ function InlineBody({ node, details, detailsLoading }: { node: GraphNode; detail
 
 function useCommitDetails(node: GraphNode | null) {
   const { state } = useAppContext();
-  const { repoInfo, token } = state;
+  const { repoInfo, token, source, localPath } = state;
   const [commitDetails, setCommitDetails] = useState<CommitDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const fetchedShaRef = useRef<string | null>(null);
@@ -626,9 +627,13 @@ function useCommitDetails(node: GraphNode | null) {
     fetchedShaRef.current = sha;
     setCommitDetails(null);
     setDetailsLoading(true);
-    setToken(token);
 
-    fetchCommitDetails(repoInfo.owner, repoInfo.repo, sha)
+    const detailsPromise =
+      source === 'local' && localPath
+        ? fetchLocalCommitDetails(localPath, sha)
+        : (setToken(token), fetchCommitDetails(repoInfo.owner, repoInfo.repo, sha));
+
+    detailsPromise
       .then(d => {
         if (fetchedShaRef.current === sha) setCommitDetails(d);
       })
@@ -636,7 +641,7 @@ function useCommitDetails(node: GraphNode | null) {
       .finally(() => {
         if (fetchedShaRef.current === sha) setDetailsLoading(false);
       });
-  }, [node?.commit.sha, repoInfo, token]);
+  }, [node?.commit.sha, repoInfo, token, source, localPath]);
 
   return { commitDetails, detailsLoading };
 }

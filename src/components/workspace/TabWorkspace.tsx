@@ -1,5 +1,5 @@
 import { useAppContext } from '@/store/AppContext';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import GraphCanvas from '@/components/GraphCanvas';
 import CommitListView from '@/components/CommitListView';
 import DetailPanel from '@/components/DetailPanel';
@@ -8,7 +8,11 @@ import ReadmeTab from './ReadmeTab';
 import PRsIssuesTab from './PRsIssuesTab';
 import ReleasesDeploymentsTab from './ReleasesDeploymentsTab';
 import CIStatusTab from './CIStatusTab';
+import LocalFilesTab from './LocalFilesTab';
+import LocalReadmeTab from './LocalReadmeTab';
+import LocalDocsTab from './LocalDocsTab';
 import { cn } from '@/lib/utils';
+import { ResizeHandle } from './ResizeHandle';
 import type { TabId, SplitLayout } from '@/types';
 
 // ─── Tab config ────────────────────────────────────────────────────────────
@@ -66,6 +70,16 @@ const TABS: TabDef[] = [
     icon: (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
         <path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25ZM7.25 8a.75.75 0 0 1-.22.53l-2.25 2.25a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L5.44 8 3.72 6.28a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l2.25 2.25c.141.14.22.331.22.53Zm1.5 1.5h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1 0-1.5Z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'docs',
+    label: 'Docs',
+    shortLabel: 'Docs',
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M2 2.75C2 1.784 2.784 1 3.75 1h6.5c.966 0 1.75.784 1.75 1.75V13a1 1 0 0 1-1 1H4.75c-.69 0-1.25.56-1.25 1.25 0 .414.336.75.75.75h8.25a.75.75 0 0 1 0 1.5H4.25A2.25 2.25 0 0 1 2 15.25V2.75ZM5.25 4a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-5Zm0 3a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-5Z"/>
       </svg>
     ),
   },
@@ -146,72 +160,12 @@ function IconGrid4() {
   );
 }
 
-// ─── Resize handle ────────────────────────────────────────────────────────
-
-interface ResizeHandleProps {
-  direction: 'h' | 'v'; // h = left|right drag, v = top|bottom drag
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  size: number; // current first-pane percentage
-  onSizeChange: (newSize: number) => void;
-}
-
-function ResizeHandle({ direction, containerRef, size, onSizeChange }: ResizeHandleProps) {
-  const isDragging = useRef(false);
-  const startPosRef = useRef(0);
-  const startSizeRef = useRef(size);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    startPosRef.current = direction === 'h' ? e.clientX : e.clientY;
-    startSizeRef.current = size;
-
-    const onMouseMove = (me: MouseEvent) => {
-      if (!isDragging.current) return;
-      const container = containerRef.current;
-      if (!container) return;
-      const containerSize = direction === 'h' ? container.offsetWidth : container.offsetHeight;
-      const delta = (direction === 'h' ? me.clientX : me.clientY) - startPosRef.current;
-      const newSize = Math.min(80, Math.max(20, startSizeRef.current + (delta / containerSize) * 100));
-      onSizeChange(newSize);
-    };
-
-    const onMouseUp = () => {
-      isDragging.current = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  }, [direction, containerRef, size, onSizeChange]);
-
-  return (
-    <div
-      onMouseDown={handleMouseDown}
-      className={cn(
-        'flex-shrink-0 group relative flex items-center justify-center',
-        'bg-border/50 hover:bg-primary/40 active:bg-primary/60 transition-colors z-10',
-        direction === 'h'
-          ? 'w-1 cursor-col-resize hover:w-1.5 active:w-1.5'
-          : 'h-1 cursor-row-resize hover:h-1.5 active:h-1.5',
-      )}
-      title="Drag to resize"
-    >
-      {/* Grab dots */}
-      <div className={cn(
-        'flex gap-0.5 opacity-0 group-hover:opacity-60 transition-opacity',
-        direction === 'h' ? 'flex-col' : 'flex-row',
-      )}>
-        {[0, 1, 2].map(i => (
-          <div key={i} className="w-1 h-1 rounded-full bg-foreground" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ─── Single pane tab bar ───────────────────────────────────────────────────
+
+// Tabs available for local git repositories. PRs/Releases/CI stay GitHub-only —
+// no equivalent from a local repo. Files/README/Docs use the Rust walk + fs
+// commands (see LocalFilesTab / LocalReadmeTab / LocalDocsTab).
+const LOCAL_TAB_IDS: TabId[] = ['graph', 'list', 'files', 'readme', 'docs'];
 
 function PaneTabBar({
   activeTab,
@@ -222,9 +176,11 @@ function PaneTabBar({
   onTabChange: (tab: TabId) => void;
   compact?: boolean;
 }) {
+  const { state } = useAppContext();
+  const tabs = state.source === 'local' ? TABS.filter(t => LOCAL_TAB_IDS.includes(t.id)) : TABS;
   return (
     <div className="flex items-center gap-0 border-b border-border flex-shrink-0 overflow-x-auto scrollbar-hide">
-      {TABS.map(tab => (
+      {tabs.map(tab => (
         <button
           key={tab.id}
           onClick={() => onTabChange(tab.id)}
@@ -327,6 +283,12 @@ function WorkspaceToolbar() {
 // ─── Tab content renderer ──────────────────────────────────────────────────
 
 function TabContent({ activeTab }: { activeTab: TabId }) {
+  const { state } = useAppContext();
+  const isLocal = state.source === 'local';
+  // PRs/Releases/CI are GitHub-only; hide with a note if opened in local mode.
+  const githubOnlyIssue = isLocal && (['prs', 'releases', 'ci', 'docs'].indexOf(activeTab) === -1)
+    ? false
+    : isLocal && (['prs', 'releases', 'ci'] as TabId[]).includes(activeTab);
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* Graph and List are always mounted for state preservation */}
@@ -336,11 +298,29 @@ function TabContent({ activeTab }: { activeTab: TabId }) {
       <div className={cn('absolute inset-0 flex flex-col', activeTab !== 'list' && 'invisible pointer-events-none')}>
         <CommitListView isActive={activeTab === 'list'} />
       </div>
-      {activeTab === 'files'    && <div className="absolute inset-0 flex flex-col"><FilesTab /></div>}
-      {activeTab === 'readme'   && <div className="absolute inset-0 flex flex-col"><ReadmeTab /></div>}
-      {activeTab === 'prs'      && <div className="absolute inset-0 flex flex-col"><PRsIssuesTab /></div>}
-      {activeTab === 'releases' && <div className="absolute inset-0 flex flex-col"><ReleasesDeploymentsTab /></div>}
-      {activeTab === 'ci'       && <div className="absolute inset-0 flex flex-col"><CIStatusTab /></div>}
+      {githubOnlyIssue && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+          This view is only available for GitHub repositories.
+        </div>
+      )}
+      {activeTab === 'files'    && (isLocal
+        ? <div className="absolute inset-0 flex flex-col"><LocalFilesTab /></div>
+        : <div className="absolute inset-0 flex flex-col"><FilesTab /></div>)}
+      {activeTab === 'readme'   && (isLocal
+        ? <div className="absolute inset-0 flex flex-col"><LocalReadmeTab /></div>
+        : <div className="absolute inset-0 flex flex-col"><ReadmeTab /></div>)}
+      {activeTab === 'docs'     && (
+        <div className="absolute inset-0 flex flex-col">
+          {isLocal ? <LocalDocsTab /> : (
+            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+              Docs viewer is available for local repositories.
+            </div>
+          )}
+        </div>
+      )}
+      {!isLocal && activeTab === 'prs'      && <div className="absolute inset-0 flex flex-col"><PRsIssuesTab /></div>}
+      {!isLocal && activeTab === 'releases' && <div className="absolute inset-0 flex flex-col"><ReleasesDeploymentsTab /></div>}
+      {!isLocal && activeTab === 'ci'       && <div className="absolute inset-0 flex flex-col"><CIStatusTab /></div>}
     </div>
   );
 }

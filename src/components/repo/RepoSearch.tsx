@@ -10,6 +10,7 @@ import { toast } from '@/services/toast';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getHistory, removeFromHistory, timeAgoShort, type HistoryEntry } from '@/lib/history';
+import { isTauri } from '@/lib/platform';
 
 // ─── Fallback examples (shown when no history) ────────────────────────────────
 
@@ -148,12 +149,50 @@ function RecentCard({ entry, onLoad, onRemove, disabled }: RecentCardProps) {
   );
 }
 
+// ─── Source toggle (GitHub ⟷ Local) ──────────────────────────────────────────
+
+function SourceToggle({
+  source,
+  onChange,
+}: {
+  source: 'github' | 'local';
+  onChange: (s: 'github' | 'local') => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md border border-border bg-muted/30 shrink-0">
+      <button
+        type="button"
+        onClick={() => onChange('github')}
+        className={cn(
+          'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+          source === 'github' ? 'bg-accent text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+        )}
+        title="GitHub repository"
+      >
+        <GitHubIcon className="h-3.5 w-3.5" /> GitHub
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('local')}
+        className={cn(
+          'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+          source === 'local' ? 'bg-accent text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+        )}
+        title="Local git repository"
+      >
+        <FolderIcon className="h-3.5 w-3.5" /> Local
+      </button>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RepoSearch({ compact = false }: RepoSearchProps) {
   const { state, dispatch } = useAppContext();
-  const { loadRepo } = useRepoData();
+  const { loadRepo, loadLocalRepo } = useRepoData();
   const navigate = useNavigate();
+  const isLocal = state.source === 'local';
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -224,6 +263,22 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
 
   function doLoad(raw: string) {
     const trimmed = raw.trim();
+
+    // ── Local repository path ──────────────────────────────────────────────
+    if (isLocal) {
+      if (!trimmed) {
+        setError('Enter a local repository path');
+        return;
+      }
+      setError('');
+      navigate('/local');
+      loadLocalRepo(trimmed).catch(e =>
+        toast.error(e instanceof Error ? e.message : 'Failed to load local repository'),
+      );
+      return;
+    }
+
+    // ── GitHub owner/repo ──────────────────────────────────────────────────
     const validation = validateRepoInput(trimmed);
     if (!validation.ok) {
       setError(validation.error ?? 'Invalid repository');
@@ -238,6 +293,36 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load repository');
+    }
+  }
+
+  function setSource(source: 'github' | 'local') {
+    if (source === state.source) return;
+    dispatch({ type: 'SET_SOURCE', source });
+    setValue('');
+    setError('');
+  }
+
+  async function handleBrowse() {
+    if (!isTauri()) {
+      toast.info('Folder picker requires the desktop app', {
+        description: 'Run `pnpm tauri dev`, or paste a repository path.',
+      });
+      return;
+    }
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({ directory: true, multiple: false, title: 'Open a git repository' });
+      if (typeof picked === 'string') {
+        setValue(picked);
+        setError('');
+        navigate('/local');
+        loadLocalRepo(picked).catch(e =>
+          toast.error(e instanceof Error ? e.message : 'Failed to load local repository'),
+        );
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open folder picker');
     }
   }
 
@@ -330,8 +415,9 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
 
     return (
       <div className="flex items-center gap-2 w-full max-w-lg">
+        <SourceToggle source={state.source} onChange={setSource} />
         {/* Rate limit indicator — compact pill to the left of the input */}
-        {rateLimit && (
+        {!isLocal && rateLimit && (
           <div className="relative group flex-shrink-0 select-none">
             <button
               type="button"
@@ -417,7 +503,9 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <GitHubIcon className="absolute left-2.5 h-3.5 w-3.5 text-muted-fg shrink-0" />
+            {isLocal
+              ? <FolderIcon className="absolute left-2.5 h-3.5 w-3.5 text-muted-fg shrink-0" />
+              : <GitHubIcon className="absolute left-2.5 h-3.5 w-3.5 text-muted-fg shrink-0" />}
             <input
               ref={inputRef}
               type="text"
@@ -427,7 +515,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               onBlur={() => setTimeout(() => setIsInputFocused(false), 150)}
               onKeyDown={handleKeyDown}
               disabled={isLoading}
-              placeholder="owner/repository"
+              placeholder={isLocal ? '/path/to/local/repo' : 'owner/repository'}
               spellCheck={false}
               autoComplete="off"
               className="h-full w-full bg-transparent pl-8 pr-8 text-sm text-foreground placeholder:text-muted-fg/60 focus:outline-none font-mono"
@@ -442,6 +530,11 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               </button>
             )}
           </div>
+          {isLocal && (
+            <Button type="button" size="sm" variant="outline" onClick={handleBrowse} title="Browse for a folder">
+              Browse…
+            </Button>
+          )}
           <Button
             type="submit"
             size="sm"
@@ -475,21 +568,24 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      {/* Token toggle */}
-      <div className="flex items-center justify-end mb-3">
-        <button
-          type="button"
-          onClick={() => setShowToken(v => !v)}
-          className={cn(
-            'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-all',
-            state.token || showToken
-              ? 'border-primary/40 text-primary bg-primary/5'
-              : 'border-border text-muted-fg hover:border-border hover:text-foreground',
-          )}
-        >
-          <KeyIcon className="h-3 w-3" />
-          {state.token ? 'Token active' : 'Add token'}
-        </button>
+      {/* Source + token toggles */}
+      <div className="flex items-center justify-between mb-3">
+        <SourceToggle source={state.source} onChange={setSource} />
+        {!isLocal && (
+          <button
+            type="button"
+            onClick={() => setShowToken(v => !v)}
+            className={cn(
+              'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-all',
+              state.token || showToken
+                ? 'border-primary/40 text-primary bg-primary/5'
+                : 'border-border text-muted-fg hover:border-border hover:text-foreground',
+            )}
+          >
+            <KeyIcon className="h-3 w-3" />
+            {state.token ? 'Token active' : 'Add token'}
+          </button>
+        )}
       </div>
 
       {/* Token input */}
@@ -559,7 +655,9 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <GitHubIcon className="absolute left-4 h-4 w-4 text-muted-fg shrink-0" />
+            {isLocal
+              ? <FolderIcon className="absolute left-4 h-4 w-4 text-muted-fg shrink-0" />
+              : <GitHubIcon className="absolute left-4 h-4 w-4 text-muted-fg shrink-0" />}
             <input
               ref={inputRef}
               type="text"
@@ -569,7 +667,11 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               onBlur={() => setTimeout(() => setIsInputFocused(false), 150)}
               onKeyDown={handleKeyDown}
               disabled={isLoading}
-              placeholder={isDragTarget ? 'Drop repository here…' : 'github.com/owner/repository or owner/repo'}
+              placeholder={
+                isLocal
+                  ? '/path/to/local/repo'
+                  : isDragTarget ? 'Drop repository here…' : 'github.com/owner/repository or owner/repo'
+              }
               spellCheck={false}
               autoComplete="off"
               className="h-full w-full bg-transparent pl-11 pr-32 text-sm text-foreground placeholder:text-muted-fg/50 focus:outline-none font-mono"
@@ -584,6 +686,11 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                   <XIcon className="h-3.5 w-3.5" />
                 </button>
               )}
+              {isLocal && (
+                <Button type="button" size="sm" variant="outline" onClick={handleBrowse} title="Browse for a folder">
+                  Browse…
+                </Button>
+              )}
               <Button
                 type="submit"
                 size="sm"
@@ -594,7 +701,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                            dark:hover:bg-green-300/20 dark:hover:border-green-300/50
                            font-mono tracking-wide transition-all"
               >
-                {isLoading ? 'Loading…' : 'Visualize →'}
+                {isLoading ? 'Loading…' : isLocal ? 'Open →' : 'Visualize →'}
               </Button>
             </div>
           </div>
@@ -657,7 +764,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               </AnimatePresence>
             </motion.div>
           </>
-        ) : (
+        ) : !isLocal ? (
           <>
             <div className="flex items-center gap-2 mb-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
@@ -688,13 +795,21 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
               ))}
             </div>
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );
 }
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
+
+function FolderIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+      <path d="M1.5 3.5A1.5 1.5 0 0 1 3 2h3l1.5 1.5H13a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 13 12.5H3A1.5 1.5 0 0 1 1.5 11z"/>
+    </svg>
+  );
+}
 
 function GitHubIcon({ className }: { className?: string }) {
   return (

@@ -1,3 +1,13 @@
+import type {
+  AccessLevel, BuildMode, PinnedRule, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
+} from './session';
+import type { ProbeResult } from '@/lib/agent/transport';
+
+export interface ModelRef {
+  providerId: string;
+  modelId: string;
+}
+
 // ─── Repository & API types ────────────────────────────────────────────────
 
 export interface RepoInfo {
@@ -89,7 +99,8 @@ export interface GraphData {
 
 // ─── UI state ──────────────────────────────────────────────────────────────
 
-export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'prs' | 'releases' | 'ci';
+export type TabId = 'graph' | 'list' | 'files' | 'readme' | 'docs' | 'prs' | 'releases' | 'ci';
+export type RepoSource = 'github' | 'local';
 export type SplitLayout = 'single' | '2h' | '2v' | '4g';
 export type GraphDirection = 'vertical' | 'horizontal';
 export type ViewMode = 'canvas' | 'list';
@@ -154,6 +165,19 @@ export interface AppState {
   paneTab: [TabId, TabId, TabId, TabId];
   /** Graph layout direction */
   graphDirection: GraphDirection;
+  /** Data source for the current repo view */
+  source: RepoSource;
+  /** Absolute path to the local repo when source === 'local' */
+  localPath: string | null;
+  /** Agent sessions (IDE mode). Additive — does not affect the flat repo view. */
+  sessions: Session[];
+  activeSessionId: string | null;
+  /** Currently selected model — provider + model id. */
+  currentModel: ModelRef;
+  /** Cached probe result per provider id. */
+  providerStatus: Record<string, ProbeResult>;
+  /** App-global pinned rules. Seeds new sessions; edited via the rules editor. */
+  pinnedRules: PinnedRule[];
 }
 
 export interface RateLimit {
@@ -183,4 +207,28 @@ export type AppAction =
   | { type: 'SET_ACTIVE_TAB'; tab: TabId }
   | { type: 'SET_SPLIT_LAYOUT'; layout: SplitLayout }
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
-  | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection };
+  | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
+  | { type: 'SET_SOURCE'; source: RepoSource; localPath?: string | null }
+  // ── Agent sessions ──
+  | { type: 'CREATE_SESSION'; session: Session }
+  | { type: 'SET_ACTIVE_SESSION'; id: string }
+  | { type: 'CLOSE_SESSION'; id: string }
+  | { type: 'SET_ACCESS_LEVEL'; sessionId: string; level: AccessLevel }
+  | { type: 'SET_BUILD_MODE'; sessionId: string; mode: BuildMode }
+  | { type: 'SET_REASONING_BUDGET'; sessionId: string; budget: ReasoningBudget }
+  | { type: 'TOGGLE_SKILL'; sessionId: string; skillId: string }
+  | { type: 'PATCH_SESSION_CONTEXT'; sessionId: string; patch: Partial<SessionContext> }
+  | { type: 'SET_SESSION_STATUS'; sessionId: string; status: SessionStatus }
+  | { type: 'UPDATE_CONTEXT_TOKENS'; sessionId: string; used: number; max?: number }
+  | { type: 'SET_SESSION_GIT'; sessionId: string; branch: string | null; statusSummary: string | null }
+  | { type: 'ADD_AGENT_MESSAGE'; sessionId: string; message: AgentMessage }
+  | { type: 'UPDATE_AGENT_MESSAGE'; sessionId: string; messageId: string; patch: Partial<AgentMessage> }
+  // ── Model + provider status ──
+  | { type: 'SET_MODEL'; model: ModelRef }
+  | { type: 'SET_PROVIDER_STATUS'; providerId: string; status: ProbeResult }
+  // ── Pinned rules (app-global CRUD) ──
+  | { type: 'ADD_PINNED_RULE'; rule: PinnedRule }
+  | { type: 'UPDATE_PINNED_RULE'; ruleId: string; patch: Partial<PinnedRule> }
+  | { type: 'REMOVE_PINNED_RULE'; ruleId: string }
+  | { type: 'REPLACE_PINNED_RULES'; rules: PinnedRule[] }
+  | { type: 'SYNC_SESSION_RULES_FROM_GLOBAL'; sessionId: string };

@@ -1,0 +1,345 @@
+// ─── Agent filesystem / exec bridge ─────────────────────────────────────────
+// Backs the agent's dedicated tools (read_file, write_file, list_dir, grep,
+// run_command). Every path is jailed to the session's `root` in Rust — the model
+// cannot escape the working tree even under prompt injection. This is the
+// security boundary; the access-level gating in the frontend loop is layered on
+// top of it.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use serde::Serialize;
+
+/// Resolve `target` against `root` and reject anything that escapes the jail.
+/// `target` may be absolute (must still be inside root) or relative to root.
+fn jail(root: &str, target: &str) -> Result<PathBuf, String> {
+    let root_path = Path::new(root);
+    let canon_root = root_path
+        .canonicalize()
+        .map_err(|e| format!("invalid root {root}: {e}"))?;
+
+    let joined = if Path::new(target).is_absolute() {
+        PathBuf::from(target)
+    } else {
+        canon_root.join(target)
+    };
+
+    // Canonicalize the parent for non-existent files (writes); fall back to the
+    // lexical join when the parent doesn't exist yet either.
+    let resolved = match joined.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            let parent = joined.parent().unwrap_or(&canon_root);
+            let canon_parent = parent
+                .canonicalize()
+                .map_err(|e| format!("invalid path {target}: {e}"))?;
+            canon_parent.join(joined.file_name().unwrap_or_default())
+        }
+    };
+
+    if !resolved.starts_with(&canon_root) {
+        return Err(format!("path escapes project root: {target}"));
+    }
+    Ok(resolved)
+}
+
+/// Read a file (jailed to root).
+#[tauri::command]
+pub fn agent_read_file(root: String, path: String) -> Result<String, String> {
+    let p = jail(&root, &path)?;
+    fs::read_to_string(&p).map_err(|e| format!("read {path}: {e}"))
+}
+
+/// Write (create/overwrite) a file (jailed to root).
+#[tauri::command]
+pub fn agent_write_file(root: String, path: String, content: String) -> Result<(), String> {
+    let p = jail(&root, &path)?;
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {path}: {e}"))?;
+    }
+    fs::write(&p, content).map_err(|e| format!("write {path}: {e}"))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    name: String,
+    is_dir: bool,
+}
+
+/// List a directory (jailed to root).
+#[tauri::command]
+pub fn agent_list_dir(root: String, path: String) -> Result<Vec<DirEntry>, String> {
+    let p = jail(&root, &path)?;
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&p).map_err(|e| format!("readdir {path}: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        out.push(DirEntry { name, is_dir });
+    }
+    out.sort_by(|a, b| (b.is_dir, &a.name).cmp(&(a.is_dir, &b.name)));
+    Ok(out)
+}
+
+/// Grep (regex) within root. Shells out to `grep -rInE`, capped at 200 matches.
+#[tauri::command]
+pub fn agent_grep(root: String, pattern: String, path: Option<String>) -> Result<String, String> {
+    let search_root = jail(&root, &path.unwrap_or_else(|| ".".to_string()))?;
+    let output = Command::new("grep")
+        .args(["-rInE", "--max-count=200", "--", &pattern])
+        .arg(&search_root)
+        .output()
+        .map_err(|e| format!("grep failed: {e}"))?;
+    // grep exits 1 on no matches — treat as empty, not error.
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandResult {
+    stdout: String,
+    stderr: String,
+    code: Option<i32>,
+}
+
+/// Run a one-shot command in root, capturing output. Distinct from the PTY
+/// (which is for interactive terminals) — tool results need captured output.
+#[tauri::command]
+pub fn agent_run_command(root: String, command: String) -> Result<CommandResult, String> {
+    let cwd = jail(&root, ".")?;
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    Ok(CommandResult {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code: output.status.code(),
+    })
+}
+
+/// Return the Anthropic API key from the environment (never bundled, never
+/// logged). Kept for backward compatibility; prefer `get_provider_key`.
+#[tauri::command]
+pub fn get_api_key() -> Option<String> {
+    std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty())
+}
+
+/// Return the API key for a given provider from the environment. Keyed lookup
+/// so the frontend transports don't hardcode env-var names. Returns None when
+/// the var is missing/empty.
+#[tauri::command]
+pub fn get_provider_key(name: String) -> Option<String> {
+    let vars: &[&str] = match name.as_str() {
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "openai" | "openai_codex" => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+        "gemini" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "minimax" => &["MINIMAX_API_KEY"],
+        "opencode" => &["OPENCODE_API_KEY"],
+        _ => &[],
+    };
+    for v in vars {
+        if let Ok(val) = std::env::var(v) {
+            if !val.is_empty() {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliProbe {
+    detected: bool,
+    connected: bool,
+    version: Option<String>,
+    auth_kind: Option<String>,
+    error: Option<String>,
+}
+
+/// Probe a CLI-based provider (codex / opencode). Uses a strict allow-list so
+/// the model can't drive `check_cli_provider` into arbitrary shells.
+#[tauri::command]
+pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
+    let binary = match name.as_str() {
+        "codex" => "codex",
+        "opencode" => "opencode",
+        other => return Err(format!("unknown CLI provider: {other}")),
+    };
+
+    // Detected?
+    let version_out = Command::new(binary).arg("--version").output();
+    let detected = version_out.as_ref().map(|o| o.status.success()).unwrap_or(false);
+    let version = version_out
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        });
+
+    if !detected {
+        return Ok(CliProbe {
+            detected: false,
+            connected: false,
+            version,
+            auth_kind: None,
+            error: Some(format!("{binary} not on PATH")),
+        });
+    }
+
+    // Connected? Codex has no `auth status` subcommand (only `login`/`logout`),
+    // so we rely on the on-disk credential files. OpenCode DOES have `auth list`
+    // but the JSON is what actually matters — either way, prefer file presence.
+    // Paths are XDG-default; we probe a small candidate list per provider.
+    let (candidate_paths, list_args): (&[&str], Option<&[&str]>) = match name.as_str() {
+        "codex" => (&[".codex/auth.json"], None),
+        "opencode" => (
+            &[".local/share/opencode/auth.json", ".opencode/auth.json"],
+            Some(&["auth", "list"]),
+        ),
+        _ => (&[], None),
+    };
+
+    // Optional CLI list probe (opencode); ignore its exit code — we only surface
+    // the error if the file check *also* misses.
+    let cli_err = list_args
+        .and_then(|args| Command::new(binary).args(args).output().ok())
+        .and_then(|o| if o.status.success() { None } else {
+            Some(String::from_utf8_lossy(&o.stderr).trim().to_string())
+        });
+
+    let home = dirs_home();
+    let matched_auth_path = candidate_paths.iter().find_map(|rel| {
+        home.as_ref().and_then(|h| {
+            let p = h.join(rel);
+            if p.exists() { Some(p) } else { None }
+        })
+    });
+
+    let connected = matched_auth_path.is_some();
+    let auth_kind = matched_auth_path
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .map(|s| {
+            if s.contains("chatgpt") || s.contains("oauth") || s.contains("refresh_token") {
+                "oauth".to_string()
+            } else if s.contains("api_key") || s.contains("apiKey") {
+                "apikey".to_string()
+            } else {
+                "unknown".to_string()
+            }
+        });
+
+    Ok(CliProbe {
+        detected,
+        connected,
+        version,
+        auth_kind,
+        error: if connected { None } else { cli_err },
+    })
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+// ─── Filesystem walk (for the local Files / Docs tabs) ──────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeEntry {
+    path: String,       // relative to root
+    name: String,
+    is_dir: bool,
+    size_bytes: u64,
+    depth: u32,
+}
+
+/// Cap so a giant monorepo can't lock up the renderer. Front-end can paginate
+/// or drill down into subtrees via a smaller root.
+const WALK_MAX_ENTRIES: usize = 5000;
+
+const DEFAULT_IGNORE: &[&str] = &[
+    ".git", "node_modules", "target", "dist", "build", ".venv",
+    "__pycache__", ".next", ".turbo", ".cache",
+];
+
+/// Walk the tree under `root`, jailed. Skips a common ignore list and dot-dirs.
+/// `max_depth` bounds recursion (0 = unlimited).
+#[tauri::command]
+pub fn walk_tree(root: String, max_depth: Option<u32>) -> Result<Vec<TreeEntry>, String> {
+    let jailed = jail(&root, ".")?;
+    let base = jailed.clone();
+    let max = max_depth.unwrap_or(0);
+    let mut out: Vec<TreeEntry> = Vec::new();
+    let mut stack: Vec<(PathBuf, u32)> = vec![(jailed, 0)];
+
+    while let Some((dir, depth)) = stack.pop() {
+        if out.len() >= WALK_MAX_ENTRIES {
+            break;
+        }
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if DEFAULT_IGNORE.contains(&name.as_str()) {
+                continue;
+            }
+            if name.starts_with('.') && depth == 0 {
+                // Only skip hidden entries at the top level; keep e.g. Rust's
+                // `.cargo` visible if the user drills down explicitly.
+                continue;
+            }
+            let full = entry.path();
+            let rel = full
+                .strip_prefix(&base)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| name.clone());
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push(TreeEntry {
+                path: rel,
+                name,
+                is_dir,
+                size_bytes,
+                depth,
+            });
+            if is_dir && (max == 0 || depth + 1 < max) {
+                stack.push((full, depth + 1));
+            }
+            if out.len() >= WALK_MAX_ENTRIES {
+                break;
+            }
+        }
+    }
+
+    // Deterministic order: directories first, then files, alpha within.
+    out.sort_by(|a, b| (b.is_dir, &a.path).cmp(&(a.is_dir, &b.path)));
+    Ok(out)
+}
+
+/// Read a file as base64 (for PDF / docx viewers). Jailed.
+#[tauri::command]
+pub fn agent_read_file_bytes(root: String, path: String) -> Result<String, String> {
+    let p = jail(&root, &path)?;
+    let bytes = fs::read(&p).map_err(|e| format!("read {path}: {e}"))?;
+    Ok(base64_of(&bytes))
+}
+
+fn base64_of(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}

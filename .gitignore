@@ -25,3 +25,10 @@ pnpm-debug.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Design docs / planning material (local only)
+docs/
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/schemas/

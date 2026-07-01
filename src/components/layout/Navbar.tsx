@@ -156,6 +156,12 @@ export default function Navbar() {
       <div className="flex items-center gap-2">
         <RepoStats />
 
+        <Tooltip content="Open the code-agent IDE">
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/ide" className="font-mono text-xs">IDE</Link>
+          </Button>
+        </Tooltip>
+
         <Separator orientation="vertical" className="h-4" />
 
         <Tooltip content="View on GitHub">

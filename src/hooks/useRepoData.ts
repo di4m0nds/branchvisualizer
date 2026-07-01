@@ -2,21 +2,25 @@ import { useCallback, useEffect } from 'react';
 import { toast } from '@/services/toast';
 import { parseGitHubURL } from '../lib/parser';
 import { fetchFullRepository, setToken, setRateLimitCallback } from '../lib/github';
+import * as localGit from '../lib/localGit';
 import { buildGraphData } from '../graph/layout';
 import { useAppContext } from '../store/AppContext';
 import { addToHistory } from '../lib/history';
+import { DesktopOnlyError } from '../lib/platform';
 
 export function useRepoData() {
   const { state, dispatch } = useAppContext();
 
   // Register rate-limit callback once — fires after every GitHub API call
   // so the token counter updates in real-time across the entire session.
+  // GitHub-only: local git has no rate limit concept.
   useEffect(() => {
+    if (state.source !== 'github') return;
     setRateLimitCallback((rateLimit) => {
       dispatch({ type: 'SET_RATE_LIMIT', rateLimit });
     });
     return () => setRateLimitCallback(null);
-  }, [dispatch]);
+  }, [dispatch, state.source]);
 
   const loadRepo = useCallback(async (url: string) => {
     const parsed = parseGitHubURL(url);
@@ -90,5 +94,70 @@ export function useRepoData() {
     }
   }, [state.token, dispatch]);
 
-  return { loadRepo };
+  // ── Local repository loader ──────────────────────────────────────────────
+  // Mirrors loadRepo but sources from the local `git` binary via Tauri. Feeds
+  // the identical buildGraphData + LOAD_SUCCESS path.
+  const loadLocalRepo = useCallback(async (path: string) => {
+    const cleaned = path.trim();
+    if (!cleaned) {
+      const msg = 'Enter a local repository path.';
+      dispatch({ type: 'LOAD_ERROR', message: msg });
+      return;
+    }
+
+    dispatch({ type: 'SET_SOURCE', source: 'local', localPath: cleaned });
+    dispatch({ type: 'LOAD_START' });
+
+    const label = cleaned.replace(/\/+$/, '').split('/').pop() || cleaned;
+    const loadToastId = toast.loading(`Reading ${label}…`);
+
+    try {
+      const { repoInfo, branches, tags, commits } = await localGit.fetchFullRepository(
+        cleaned,
+        (message, progress) => {
+          dispatch({ type: 'SET_LOAD_STATE', state: { message, progress } });
+        },
+      );
+
+      dispatch({ type: 'SET_LOAD_STATE', state: { message: 'Building graph…', progress: 90 } });
+
+      const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
+        requestAnimationFrame(() => {
+          try {
+            resolve(buildGraphData(commits, branches, tags));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+
+      dispatch({
+        type: 'LOAD_SUCCESS',
+        repoInfo,
+        graphData,
+        branches,
+        tags,
+        allCommits: commits,
+      });
+
+      addToHistory(`local:${label}`, cleaned);
+
+      toast.dismiss(loadToastId);
+      toast.success(repoInfo.fullName, {
+        description: `${commits.length.toLocaleString()} commits · ${branches.length} branches · ${tags.length} tags`,
+      });
+    } catch (err) {
+      const msg =
+        err instanceof DesktopOnlyError
+          ? 'Local git requires the desktop app. Run `pnpm tauri dev`.'
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      dispatch({ type: 'LOAD_ERROR', message: msg });
+      toast.dismiss(loadToastId);
+      toast.error('Failed to load local repository', { description: msg });
+    }
+  }, [dispatch]);
+
+  return { loadRepo, loadLocalRepo };
 }
