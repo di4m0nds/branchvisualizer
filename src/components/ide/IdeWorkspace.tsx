@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppContext } from '@/store/AppContext';
 import { cn } from '@/lib/utils';
@@ -6,11 +6,15 @@ import { ResizeHandle } from '@/components/workspace/ResizeHandle';
 import TabWorkspace from '@/components/workspace/TabWorkspace';
 import TerminalDock from '@/components/terminal/TerminalDock';
 import ChatPanel from '@/components/agent/ChatPanel';
-import SessionContextBar from './SessionContextBar';
-import ModelPicker from './ModelPicker';
+import ChatConfigStrip from './ChatConfigStrip';
+import BvConfigStrip from './BvConfigStrip';
 import { createDefaultContext, nextId, type Session } from '@/types/session';
 import { fetchStatus } from '@/lib/localGit';
 import { useActiveSession } from '@/hooks/useActiveSession';
+import { useRepoData } from '@/hooks/useRepoData';
+import { getCachedRepo } from '@/lib/repoCache';
+import { loadIdeLayout, saveIdeLayout, type IdeLayout } from '@/lib/ideLayout';
+import { loadAgentDefaults } from '@/lib/agentDefaults';
 
 // ─── Session switcher (left rail) ────────────────────────────────────────────
 
@@ -77,16 +81,63 @@ function SessionRail({
 
 // ─── IDE workspace (fixed 3-zone chrome) ─────────────────────────────────────
 
+// Does the app-global repo currently loaded match this session's repo?
+function matchesRef(state: ReturnType<typeof useAppContext>['state'], s: Session): boolean {
+  if (!state.graphData) return false;
+  if (s.repoSource === 'local') return state.source === 'local' && state.localPath === s.cwd;
+  return state.repoInfo?.fullName === s.repoRef;
+}
+
 export default function IdeWorkspace() {
   const { state, dispatch } = useAppContext();
   const { sessions, activeSessionId, repoInfo, graphData } = state;
   const active = useActiveSession();
+  const { loadLocalRepo } = useRepoData();
 
-  // Zone sizes (percentages).
-  const [chatWidth, setChatWidth] = useState(32); // right rail width %
-  const [dockHeight, setDockHeight] = useState(28); // bottom dock height %
-  const centerRef = useRef<HTMLDivElement>(null);
-  const stackRef = useRef<HTMLDivElement>(null);
+  // Panel sizes + collapse state (persisted; see src/lib/ideLayout.ts).
+  const [layout, setLayout] = useState<IdeLayout>(loadIdeLayout);
+  const { midWidth, dockHeight, cfgCollapsed, bvCollapsed } = layout;
+  const setLayoutKey = <K extends keyof IdeLayout>(key: K, val: IdeLayout[K]) =>
+    setLayout((l) => ({ ...l, [key]: val }));
+
+  const rootRowRef = useRef<HTMLDivElement>(null);   // outer middle|right row (horizontal handle)
+  const agentStackRef = useRef<HTMLDivElement>(null); // chat/terminal stack (vertical handle)
+
+  // Debounced persist so a drag (fires per mousemove) doesn't hammer localStorage.
+  useEffect(() => {
+    const t = setTimeout(() => saveIdeLayout(layout), 250);
+    return () => clearTimeout(t);
+  }, [layout]);
+
+  // Per-session repo view: swap the graph to the active session's repo. Reuses
+  // the cache for an instant swap, else loads a local repo via the existing
+  // path. Idempotent (matchesRef early-out) so StrictMode's double-invoke is a
+  // no-op and switching back to an already-shown repo doesn't reload.
+  useEffect(() => {
+    if (!active) return;
+    if (matchesRef(state, active)) return;
+
+    const cached = getCachedRepo(active.repoRef);
+    if (cached) {
+      dispatch({ type: 'SET_SOURCE', source: cached.source, localPath: active.cwd });
+      dispatch({
+        type: 'LOAD_SUCCESS',
+        repoInfo: cached.repoInfo,
+        graphData: cached.graphData,
+        branches: cached.branches,
+        tags: cached.tags,
+        allCommits: cached.allCommits,
+      });
+      return;
+    }
+    const busy = !['idle', 'error', 'done'].includes(state.loadState.phase);
+    if (active.repoSource === 'local' && active.cwd && !busy) {
+      void loadLocalRepo(active.cwd);
+    }
+    // GitHub sessions with no cache keep the empty state (memory cache is lost
+    // on reload); reopen from the visualizer to repopulate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id]);
 
   function newSession() {
     const repoRef = state.source === 'local'
@@ -94,13 +145,14 @@ export default function IdeWorkspace() {
       : (repoInfo ? repoInfo.fullName : 'untitled');
     const title = repoInfo?.repo
       ?? (state.localPath ? state.localPath.split('/').pop() ?? 'local' : 'Session');
+    const defaults = loadAgentDefaults();
     const session: Session = {
       id: nextId('session'),
       title: title || 'Session',
       repoSource: state.source,
       repoRef,
       cwd: state.source === 'local' ? state.localPath : null,
-      context: createDefaultContext(),
+      context: { ...createDefaultContext(), accessLevel: defaults.accessLevel, buildMode: defaults.buildMode },
       messages: [],
       terminals: [],
     };
@@ -134,13 +186,58 @@ export default function IdeWorkspace() {
           Select or create a session to begin.
         </div>
       ) : (
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Center + terminal dock stack */}
-          <div ref={stackRef} className="flex flex-col flex-1 min-w-0 min-h-0">
-            <SessionContextBar session={active} />
+        <div ref={rootRowRef} className="flex flex-1 min-h-0 overflow-hidden">
+          {/* ── MIDDLE column: agent chat (top) + terminal dock (bottom) ── */}
+          <div
+            className="flex flex-col min-w-0 min-h-0 bg-muted/5"
+            style={{ flex: `0 0 ${midWidth}%` }}
+          >
+            <ChatConfigStrip
+              session={active}
+              collapsed={cfgCollapsed}
+              onToggle={() => setLayoutKey('cfgCollapsed', !cfgCollapsed)}
+            />
+            <div ref={agentStackRef} className="flex flex-col flex-1 min-h-0">
+              {/* Chat pane (remainder) */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <ChatPanel key={active.id} session={active} />
+              </div>
 
-            {/* Center repo views */}
-            <div ref={centerRef} className="flex-1 min-h-0 overflow-hidden" style={{ height: `${100 - dockHeight}%` }}>
+              <ResizeHandle
+                direction="v"
+                containerRef={agentStackRef}
+                size={100 - dockHeight}
+                onSizeChange={(s) => setLayoutKey('dockHeight', 100 - s)}
+                min={12}
+                max={75}
+              />
+
+              {/* Terminal dock (sized) */}
+              <div
+                className="min-h-0 overflow-hidden border-t border-border bg-background"
+                style={{ flex: `0 0 ${dockHeight}%` }}
+              >
+                <TerminalDock key={active.id} sessionId={active.id} cwd={active.cwd ?? '.'} />
+              </div>
+            </div>
+          </div>
+
+          <ResizeHandle
+            direction="h"
+            containerRef={rootRowRef}
+            size={midWidth}
+            onSizeChange={(s) => setLayoutKey('midWidth', s)}
+            min={25}
+            max={70}
+          />
+
+          {/* ── RIGHT column: BranchVisualizer ── */}
+          <div className="flex flex-col flex-1 min-w-0 min-h-0 border-l border-border">
+            <BvConfigStrip
+              collapsed={bvCollapsed}
+              onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+            />
+            <div className="flex-1 min-h-0 overflow-hidden">
               {graphData ? (
                 <TabWorkspace />
               ) : (
@@ -151,38 +248,6 @@ export default function IdeWorkspace() {
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Terminal dock (filled in M3) */}
-            <ResizeHandle
-              direction="v"
-              containerRef={stackRef}
-              size={100 - dockHeight}
-              onSizeChange={(s) => setDockHeight(100 - s)}
-              min={10}
-              max={70}
-            />
-            <div className="flex-shrink-0 border-t border-border bg-background" style={{ height: `${dockHeight}%` }}>
-              <TerminalDock key={active.id} sessionId={active.id} cwd={active.cwd ?? '.'} />
-            </div>
-          </div>
-
-          {/* Chat rail (filled in M4) */}
-          <ResizeHandle
-            direction="h"
-            containerRef={stackRef}
-            size={100 - chatWidth}
-            onSizeChange={(s) => setChatWidth(100 - s)}
-            min={20}
-            max={60}
-          />
-          <div className="flex-shrink-0 border-l border-border bg-muted/5 flex flex-col" style={{ width: `${chatWidth}%` }}>
-            <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Agent</span>
-              <ModelPicker />
-            </div>
-            <div className="flex-1 min-h-0">
-              <ChatPanel key={active.id} session={active} />
             </div>
           </div>
         </div>

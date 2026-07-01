@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { invoke, isTauri } from '../../platform';
+import { getProviderKey } from '../../providerKeys';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -32,6 +33,8 @@ async function checkCli(): Promise<CliProbePayload | null> {
 }
 
 async function resolveKey(): Promise<string | null> {
+  const stored = await getProviderKey('openai');
+  if (stored) return stored;
   if (isTauri()) {
     const k = await invoke<string | null>('get_provider_key', { name: 'openai' }).catch(() => null);
     if (k) return k;
@@ -148,11 +151,13 @@ export const openaiCodexProvider: Provider = {
   async probe(): Promise<ProbeResult> {
     const cli = await checkCli();
     if (cli?.connected) {
-      const authLabel = cli.authKind === 'oauth' ? 'ChatGPT plan (OAuth)' : cli.authKind ?? 'API key';
+      // OAuth = signed in with a ChatGPT account (not billed API usage) → 'free'.
+      // Only a real API key is 'paid'.
+      const isOauth = cli.authKind === 'oauth';
       return {
         state: 'connected',
-        tier: cli.authKind === 'oauth' ? 'paid' : 'paid',
-        label: `codex CLI · ${authLabel}`,
+        tier: isOauth ? 'free' : 'paid',
+        label: `codex CLI · ${isOauth ? 'ChatGPT account' : cli.authKind ?? 'API key'}`,
         version: cli.version,
       };
     }

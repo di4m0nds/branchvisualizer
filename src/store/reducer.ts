@@ -1,9 +1,70 @@
 import type { AppAction, AppState, FilterState, LoadState, TabId } from '../types';
 import type { PinnedRule, Session, SessionContext } from '../types/session';
-import { DEFAULT_PINNED_RULES } from '../types/session';
+import { DEFAULT_PINNED_RULES, createDefaultContext } from '../types/session';
 
 const PINNED_RULES_STORAGE_KEY = 'code-agent:pinned_rules';
 const CURRENT_MODEL_STORAGE_KEY = 'code-agent:current_model';
+const SESSIONS_STORAGE_KEY = 'code-agent:sessions';
+const ACTIVE_SESSION_STORAGE_KEY = 'code-agent:active_session';
+
+/** Cap persisted history so the localStorage blob stays bounded. */
+const MAX_PERSISTED_MESSAGES = 100;
+
+// Sessions are persisted so they survive reloads and are reachable from the
+// visualizer views. We strip runtime-only fields (live terminals, mid-stream
+// flags, transient status) and cap history length before writing.
+function stripSessionForStorage(s: Session): Session {
+  return {
+    ...s,
+    terminals: [],
+    context: { ...s.context, status: 'idle' },
+    messages: s.messages
+      .slice(-MAX_PERSISTED_MESSAGES)
+      .map((m) => ({ ...m, streaming: false })),
+  };
+}
+
+function loadSessions(): Session[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Coerce each session's context through defaults so older persisted blobs
+    // missing newly-added context fields still load cleanly (schema drift).
+    return (parsed as Session[]).map((s) => ({
+      ...s,
+      terminals: [],
+      messages: Array.isArray(s.messages) ? s.messages : [],
+      context: { ...createDefaultContext(), ...s.context, status: 'idle' },
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function loadActiveSessionId(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as string | null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist only sessions + active id (debounced by the caller). */
+export function persistSessions(state: AppState): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(
+      SESSIONS_STORAGE_KEY,
+      JSON.stringify(state.sessions.map(stripSessionForStorage)),
+    );
+    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(state.activeSessionId));
+  } catch { /* quota / private mode */ }
+}
 
 function loadPinnedRules(): PinnedRule[] {
   if (typeof localStorage === 'undefined') return DEFAULT_PINNED_RULES.map((r) => ({ ...r }));
@@ -73,12 +134,19 @@ export const initialState: AppState = {
   graphDirection: 'vertical',
   source: 'github',
   localPath: null,
-  sessions: [],
-  activeSessionId: null,
+  sessions: loadSessions(),
+  activeSessionId: resolveInitialActiveSession(),
   currentModel: loadCurrentModel(),
   providerStatus: {},
   pinnedRules: loadPinnedRules(),
 };
+
+// Drop a persisted active id that no longer points at a loaded session.
+function resolveInitialActiveSession(): string | null {
+  const id = loadActiveSessionId();
+  if (!id) return null;
+  return loadSessions().some((s) => s.id === id) ? id : null;
+}
 
 // Immutably update one session's fields by id.
 function mapSession(state: AppState, id: string, fn: (s: Session) => Session): AppState {

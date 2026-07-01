@@ -13,10 +13,13 @@ import ErrorBanner from '@/components/ErrorBanner';
 import PolicyModal, { hasAcceptedPolicy } from '@/components/PolicyModal';
 import LegalPage, { type LegalTab } from '@/components/LegalPage';
 import IdeWorkspace from '@/components/ide/IdeWorkspace';
+import SessionsPanel from '@/components/ide/SessionsPanel';
+import { useAppZoom } from '@/hooks/useAppZoom';
 
 // ─── Home page (/) ─────────────────────────────────────────────────────────────
 
 function HomePage() {
+  const { state } = useAppContext();
   return (
     <div className="flex flex-col flex-1 overflow-y-auto">
       <main className="flex flex-col items-center justify-start sm:justify-center flex-1
@@ -42,6 +45,19 @@ function HomePage() {
         <div className="w-full max-w-2xl">
           <RepoSearch compact={false} />
         </div>
+
+        {/* Recent sessions (persisted; jump straight back into the IDE) */}
+        {state.sessions.length > 0 && (
+          <div className="w-full max-w-2xl">
+            <div className="flex items-center gap-2 mb-2 px-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent sessions</span>
+              <span className="text-[10px] text-muted-foreground/50">{state.sessions.length}</span>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-1.5">
+              <SessionsPanel variant="inline" />
+            </div>
+          </div>
+        )}
 
         {/* Feature highlights */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 w-full max-w-2xl">
@@ -86,8 +102,9 @@ function RepoPage() {
   return (
     <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Compact search bar — relative + z-20 so its dropdown overlays the canvas below */}
-      <div className="relative z-20 flex-shrink-0 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm">
-        <RepoSearch compact={true} />
+      <div className="relative z-20 flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm">
+        <div className="flex-1 min-w-0"><RepoSearch compact={true} /></div>
+        <SessionsPanel variant="popover" filterRepoRef={state.repoInfo?.fullName ?? state.localPath ?? undefined} />
       </div>
 
       {/* Repo metadata */}
@@ -109,6 +126,7 @@ function RepoPage() {
 
 function AppShell() {
   const { state } = useAppContext();
+  useAppZoom(); // installs Ctrl+/-/0 hotkeys and applies persisted zoom on load
 
   useEffect(() => {
     const root = document.documentElement;

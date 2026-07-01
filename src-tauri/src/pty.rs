@@ -107,7 +107,14 @@ pub fn spawn_pty(
         );
     });
 
-    state.0.lock().unwrap().insert(
+    let mut map = state.0.lock().unwrap();
+    // Evict any stale session reusing this id (e.g. a StrictMode double-mount
+    // whose first spawn resolved after cleanup) so we never leave two live
+    // shells both pumping to `pty://data/<id>`.
+    if let Some(mut old) = map.remove(&id) {
+        let _ = old.child.kill();
+    }
+    map.insert(
         id,
         PtySession {
             master: pair.master,

@@ -1,0 +1,49 @@
+// ─── IDE layout persistence ──────────────────────────────────────────────────
+// Panel sizes + config-strip collapse state for the IDE workspace. Kept out of
+// the app reducer on purpose: it's pure UI chrome, and drag fires per mousemove
+// — routing it through the reducer would re-render/persist the whole app tree on
+// every frame. Stored in localStorage under one key, written debounced.
+
+const KEY = 'code-agent:ide_layout';
+
+export interface IdeLayout {
+  /** Middle (agent + terminal) column width, % of the middle|right row. */
+  midWidth: number;
+  /** Terminal dock height, % of the agent stack. */
+  dockHeight: number;
+  /** Agent config strip collapsed. */
+  cfgCollapsed: boolean;
+  /** BranchVisualizer config strip collapsed. */
+  bvCollapsed: boolean;
+}
+
+export const DEFAULT_IDE_LAYOUT: IdeLayout = {
+  midWidth: 46,
+  dockHeight: 30,
+  cfgCollapsed: false,
+  bvCollapsed: false,
+};
+
+export function loadIdeLayout(): IdeLayout {
+  if (typeof localStorage === 'undefined') return { ...DEFAULT_IDE_LAYOUT };
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return { ...DEFAULT_IDE_LAYOUT };
+    const parsed = JSON.parse(raw) as Partial<IdeLayout>;
+    return { ...DEFAULT_IDE_LAYOUT, ...parsed };
+  } catch {
+    return { ...DEFAULT_IDE_LAYOUT };
+  }
+}
+
+export function saveIdeLayout(layout: IdeLayout): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(layout));
+  } catch { /* quota / private mode */ }
+}
+
+export function resetIdeLayout(): void {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.removeItem(KEY); } catch { /* noop */ }
+}

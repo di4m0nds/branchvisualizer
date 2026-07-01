@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { TerminalSquare, Server, FileCode, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import Terminal from './Terminal';
@@ -11,6 +12,13 @@ const ROLE_LABEL: Record<TerminalRole, string> = {
   shell: 'Shell',
   server: 'Server',
   nvim: 'nvim',
+};
+
+const ROLE_DOT: Record<TerminalRole, string> = {
+  nvim: 'bg-green-400',
+  server: 'bg-blue-400',
+  agent: 'bg-purple-400',
+  shell: 'bg-muted-foreground/50',
 };
 
 // Terminals that should close when their process exits. Nvim closes on
@@ -90,48 +98,64 @@ export default function TerminalDock({
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Tab strip */}
-      <div className="flex items-center gap-0.5 px-1.5 py-1 border-b border-border bg-muted/20 flex-shrink-0 overflow-x-auto scrollbar-hide">
-        {terminals.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActiveId(t.id)}
-            className={cn(
-              'group flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-mono transition-colors flex-shrink-0',
-              t.id === activeId ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <span className={cn('w-1.5 h-1.5 rounded-full',
-              t.role === 'nvim' ? 'bg-green-400' : t.role === 'server' ? 'bg-blue-400' : 'bg-muted-foreground/50')} />
-            {t.title}
-            <span
-              onClick={(e) => { e.stopPropagation(); close(t.id); }}
-              className="opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-destructive"
+      <div className="flex items-center gap-1 px-1.5 h-8 border-b border-border bg-muted/20 flex-shrink-0">
+        <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto scrollbar-hide">
+          {terminals.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActiveId(t.id)}
+              className={cn(
+                'group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-[11px] font-mono transition-colors flex-shrink-0 border',
+                t.id === activeId
+                  ? 'bg-background text-foreground border-border shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground border-transparent hover:bg-accent/30',
+              )}
             >
-              ✕
-            </span>
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
-          <DockButton onClick={() => add('shell')}>+ Shell</DockButton>
-          <DockButton onClick={() => add('server')}>+ Server</DockButton>
-          <DockButton onClick={() => add('nvim')}>+ nvim</DockButton>
+              <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', ROLE_DOT[t.role])} />
+              <span className="truncate max-w-32">{t.title}</span>
+              <span
+                onClick={(e) => { e.stopPropagation(); close(t.id); }}
+                className="flex items-center justify-center opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-destructive rounded-sm"
+                title="Close terminal"
+              >
+                <X className="w-3 h-3" />
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-0.5 flex-shrink-0 pl-1 border-l border-border/60">
+          <DockButton onClick={() => add('shell')} icon={<TerminalSquare className="w-3 h-3" />}>Shell</DockButton>
+          <DockButton onClick={() => add('server')} icon={<Server className="w-3 h-3" />}>Server</DockButton>
+          <DockButton onClick={() => add('nvim')} icon={<FileCode className="w-3 h-3" />}>nvim</DockButton>
         </div>
       </div>
 
       {/* Terminal panes — all mounted, visibility toggled */}
       <div className="relative flex-1 min-h-0">
         {terminals.length === 0 && (
-          <div className="h-full flex items-center justify-center text-xs text-muted-foreground/60">
-            {isTauri() ? 'No terminals — add one above.' : 'Terminals require the desktop app.'}
+          <div className="h-full flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground/60">
+            {isTauri() ? (
+              <>
+                <TerminalSquare className="w-5 h-5 opacity-50" />
+                <span>No terminals open.</span>
+                <button
+                  onClick={() => add('shell')}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border hover:bg-accent/40 text-[11px] font-mono"
+                >
+                  <Plus className="w-3 h-3" /> New shell
+                </button>
+              </>
+            ) : 'Terminals require the desktop app.'}
           </div>
         )}
         {terminals.map((t) => (
           <div
             key={t.id}
-            className={cn('absolute inset-0 p-1', t.id !== activeId && 'invisible pointer-events-none')}
+            className={cn('absolute inset-0 p-1.5', t.id !== activeId && 'invisible pointer-events-none')}
           >
             <Terminal
               def={t}
+              active={t.id === activeId}
               onExit={AUTO_CLOSE_ON_EXIT[t.role] ? () => setTimeout(() => close(t.id), 120) : undefined}
               registerWriter={(w) => { writersRef.current[t.id] = w; }}
             />
@@ -142,12 +166,13 @@ export default function TerminalDock({
   );
 }
 
-function DockButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function DockButton({ onClick, icon, children }: { onClick: () => void; icon?: React.ReactNode; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
-      className="px-1.5 py-0.5 rounded text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono"
+      className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono"
     >
+      {icon}
       {children}
     </button>
   );

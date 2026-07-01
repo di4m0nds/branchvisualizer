@@ -2,6 +2,7 @@
   "name": "branchvisualizer",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Interactive GitHub repository commit/branch graph visualizer",
   "packageManager": "pnpm@9.15.4",
   "engines": {

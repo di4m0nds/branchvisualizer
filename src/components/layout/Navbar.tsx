@@ -1,10 +1,13 @@
+import { useState } from 'react';
 import { Link, useParams, useMatch } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { Settings } from 'lucide-react';
 import { useAppContext } from '@/store/AppContext';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip } from '@/components/ui/tooltip';
 import { formatCount } from '@/lib/utils';
+import SettingsPanel from '@/components/settings/SettingsPanel';
 
 // ─── Theme toggle ─────────────────────────────────────────────────────────
 
@@ -111,6 +114,7 @@ function RepoStats() {
 
 export default function Navbar() {
   const { owner, repo } = useParams<{ owner: string; repo: string }>();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <motion.header
@@ -172,8 +176,16 @@ export default function Navbar() {
           </Button>
         </Tooltip>
 
+        <Tooltip content="Settings">
+          <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} aria-label="Settings">
+            <Settings className="w-4 h-4" />
+          </Button>
+        </Tooltip>
+
         <ThemeToggle />
       </div>
+
+      <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
     </motion.header>
   );
 }

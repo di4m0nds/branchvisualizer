@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
+import { KeyRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppContext } from '@/store/AppContext';
 import { PROVIDERS } from '@/lib/agent/providers';
+import { setProviderKey } from '@/lib/providerKeys';
 import type { ProbeResult, ProbeState, Provider } from '@/lib/agent/transport';
+
+// Providers whose key can be pasted in manually (env/CLI-authed ones excluded
+// from needing it, but all accept a manual override).
+const KEY_PROVIDER_ID: Record<string, string> = {
+  anthropic: 'anthropic',
+  openai_codex: 'openai',
+  gemini: 'gemini',
+  minimax: 'minimax',
+};
 
 // Model picker + probe status panel — the "easy way to verify the IDE is
 // actually detecting the models and connected to them" surface. Shows every
@@ -27,14 +38,31 @@ function stateLabel(s: ProbeState): string {
 // ─── Panel row ───────────────────────────────────────────────────────────────
 
 function ProviderRow({
-  provider, status, selected, onSelectModel,
+  provider, status, selected, onSelectModel, onSaveKey,
 }: {
   provider: Provider;
   status: ProbeResult | null;
   selected: { providerId: string; modelId: string };
   onSelectModel: (providerId: string, modelId: string) => void;
+  onSaveKey: (providerId: string, key: string) => Promise<void>;
 }) {
   const detected = status?.state ?? 'not_detected';
+  const keyProvider = KEY_PROVIDER_ID[provider.id];
+  const [showKey, setShowKey] = useState(false);
+  const [keyInput, setKeyInput] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSaveKey(keyProvider, keyInput.trim());
+      setKeyInput('');
+      setShowKey(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="border border-border rounded-md bg-muted/10">
       <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border/40">
@@ -43,10 +71,40 @@ function ProviderRow({
         <span className={cn('px-1.5 py-0.5 rounded border text-[9px] font-mono uppercase tracking-wider', tierColor(status?.tier))}>
           {status?.tier ?? 'unknown'}
         </span>
-        <span className="ml-auto text-[10px] text-muted-foreground/70 truncate max-w-64" title={status?.label}>
+        <span className="text-[10px] text-muted-foreground/70 truncate max-w-52 flex-1" title={status?.label}>
           {status?.label ?? stateLabel(detected)}
         </span>
+        {keyProvider && (
+          <button
+            onClick={() => setShowKey((v) => !v)}
+            className={cn('flex items-center justify-center h-5 w-5 rounded border transition-colors',
+              showKey ? 'border-primary/40 text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground')}
+            title="Enter API token manually"
+          >
+            <KeyRound className="w-3 h-3" />
+          </button>
+        )}
       </div>
+      {showKey && keyProvider && (
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border/40 bg-background/40">
+          <input
+            type="password"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void save(); }}
+            placeholder={`Paste ${provider.label} API key`}
+            className="flex-1 min-w-0 px-2 py-1 rounded border border-border bg-background text-[11px] font-mono focus:outline-none focus:border-primary/50"
+            autoFocus
+          />
+          <button
+            onClick={save}
+            disabled={saving || !keyInput.trim()}
+            className="px-2 py-1 rounded text-[10px] font-mono border border-border hover:bg-accent/40 disabled:opacity-50"
+          >
+            {saving ? 'saving…' : 'save'}
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1 p-1.5">
         {provider.models().map((m) => {
           const isSelected = selected.providerId === provider.id && selected.modelId === m.id;
@@ -82,6 +140,16 @@ export default function ModelPicker() {
   const activeModel = activeProvider?.models().find((m) => m.id === selected.modelId);
   const activeStatus = state.providerStatus[selected.providerId] as ProbeResult | undefined;
 
+  const probeOne = async (providerId: string) => {
+    const p = PROVIDERS.find((x) => x.id === providerId);
+    if (!p) return;
+    const status = await p.probe().catch((e: unknown) => ({
+      state: 'not_detected' as ProbeState, tier: 'unknown' as const,
+      label: e instanceof Error ? e.message : 'probe failed',
+    }));
+    dispatch({ type: 'SET_PROVIDER_STATUS', providerId, status });
+  };
+
   const runProbes = async () => {
     setProbing(true);
     try {
@@ -97,6 +165,14 @@ export default function ModelPicker() {
     } finally {
       setProbing(false);
     }
+  };
+
+  // Save a manually-entered key, then re-probe the matching provider so its
+  // status pill flips to connected without a manual refresh.
+  const saveKey = async (keyProviderName: string, key: string) => {
+    await setProviderKey(keyProviderName, key);
+    const providerId = Object.keys(KEY_PROVIDER_ID).find((id) => KEY_PROVIDER_ID[id] === keyProviderName);
+    if (providerId) await probeOne(providerId);
   };
 
   // Probe once on mount so the trigger label reflects reality without a click.
@@ -146,6 +222,7 @@ export default function ModelPicker() {
                   provider={p}
                   status={(state.providerStatus[p.id] ?? null) as ProbeResult | null}
                   selected={selected}
+                  onSaveKey={saveKey}
                   onSelectModel={(providerId, modelId) => {
                     dispatch({ type: 'SET_MODEL', model: { providerId, modelId } });
                     setOpen(false);

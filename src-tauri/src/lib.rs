@@ -1,5 +1,6 @@
 mod fs;
 mod git;
+mod keys;
 mod pty;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -35,6 +36,9 @@ pub fn run() {
       fs::get_api_key,
       fs::get_provider_key,
       fs::check_cli_provider,
+      keys::set_secure_key,
+      keys::get_secure_key,
+      keys::delete_secure_key,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

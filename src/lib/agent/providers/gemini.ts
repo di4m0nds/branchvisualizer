@@ -1,5 +1,6 @@
 import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from '@google/genai';
 import { invoke, isTauri } from '../../platform';
+import { getProviderKey } from '../../providerKeys';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -12,6 +13,8 @@ const MODELS: ModelInfo[] = [
 ];
 
 async function resolveKey(): Promise<string | null> {
+  const stored = await getProviderKey('gemini');
+  if (stored) return stored;
   if (isTauri()) {
     const k = await invoke<string | null>('get_provider_key', { name: 'gemini' }).catch(() => null);
     if (k) return k;

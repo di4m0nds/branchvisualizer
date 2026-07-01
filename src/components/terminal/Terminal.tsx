@@ -8,8 +8,24 @@ import { spawnPty, writePty, resizePty, killPty, onPtyData, onPtyExit } from '@/
 import { useAppContext } from '@/store/AppContext';
 import type { TerminalDef } from '@/types/terminal';
 
-const DARK_THEME = { background: '#0a0a0a', foreground: '#e4e4e7', cursor: '#e4e4e7' };
-const LIGHT_THEME = { background: '#ffffff', foreground: '#18181b', cursor: '#18181b' };
+const DARK_THEME = {
+  background: '#0a0a0a', foreground: '#e4e4e7', cursor: '#e4e4e7',
+  cursorAccent: '#0a0a0a', selectionBackground: '#3f3f46',
+  black: '#18181b', red: '#f87171', green: '#4ade80', yellow: '#facc15',
+  blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e4e4e7',
+  brightBlack: '#52525b', brightRed: '#fca5a5', brightGreen: '#86efac',
+  brightYellow: '#fde047', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe',
+  brightCyan: '#67e8f9', brightWhite: '#fafafa',
+};
+const LIGHT_THEME = {
+  background: '#ffffff', foreground: '#18181b', cursor: '#18181b',
+  cursorAccent: '#ffffff', selectionBackground: '#e4e4e7',
+  black: '#18181b', red: '#dc2626', green: '#16a34a', yellow: '#ca8a04',
+  blue: '#2563eb', magenta: '#9333ea', cyan: '#0891b2', white: '#f4f4f5',
+  brightBlack: '#52525b', brightRed: '#ef4444', brightGreen: '#22c55e',
+  brightYellow: '#eab308', brightBlue: '#3b82f6', brightMagenta: '#a855f7',
+  brightCyan: '#06b6d4', brightWhite: '#fafafa',
+};
 
 export interface TerminalHandle {
   writeLine(text: string): void;
@@ -24,10 +40,13 @@ export interface TerminalHandle {
  */
 export default function Terminal({
   def,
+  active = true,
   onExit,
   registerWriter,
 }: {
   def: TerminalDef;
+  /** Whether this terminal's tab is currently visible. Drives refit-on-show. */
+  active?: boolean;
   onExit?: (code: number | null) => void;
   registerWriter?: (write: (data: string) => Promise<void>) => void;
 }) {
@@ -39,6 +58,9 @@ export default function Terminal({
   onExitRef.current = onExit;
   const registerWriterRef = useRef(registerWriter);
   registerWriterRef.current = registerWriter;
+  // Held so a separate effect can refit when the tab becomes visible.
+  const termRef = useRef<XTerm | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     if (!isTauri() || !containerRef.current) return;
@@ -46,11 +68,16 @@ export default function Terminal({
     const term = new XTerm({
       fontFamily: 'ui-monospace, "Geist Mono", "SFMono-Regular", Menlo, monospace',
       fontSize: 13,
+      lineHeight: 1.2,
+      letterSpacing: 0,
       cursorBlink: true,
+      scrollback: 5000,
       theme: themeRef.current === 'dark' ? DARK_THEME : LIGHT_THEME,
       allowProposedApi: true,
     });
+    termRef.current = term;
     const fit = new FitAddon();
+    fitRef.current = fit;
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
@@ -75,6 +102,10 @@ export default function Terminal({
         onExitRef.current?.(code);
       });
       await spawnPty({ id, cmd: def.cmd, args: def.args, cwd: def.cwd, cols: term.cols, rows: term.rows });
+      // If the component unmounted while spawn was in flight (StrictMode double
+      // mount, fast tab close), tear the just-spawned PTY down so it can't
+      // survive as an orphan echoing a second prompt.
+      if (disposed) { void killPty(id); }
     })().catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       term.write(`\r\n\x1b[31m[failed to start: ${msg}]\x1b[0m\r\n`);
@@ -96,9 +127,26 @@ export default function Terminal({
       unlistenExit();
       killPty(id).catch(() => {});
       term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [def.id]);
+
+  // Refit when this tab becomes visible: hidden panes fit to a stale/zero size,
+  // so a terminal opened while the dock was small renders cramped until shown.
+  useEffect(() => {
+    if (!active) return;
+    const raf = requestAnimationFrame(() => {
+      const term = termRef.current, fit = fitRef.current;
+      if (!term || !fit) return;
+      try {
+        fit.fit();
+        resizePty(def.id, term.cols, term.rows).catch(() => {});
+      } catch { /* not laid out yet */ }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [active, def.id]);
 
   if (!isTauri()) {
     return (

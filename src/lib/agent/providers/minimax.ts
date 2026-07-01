@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '../../platform';
+import { getProviderKey } from '../../providerKeys';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, ProbeResult, Provider, StreamCallbacks,
@@ -16,6 +17,8 @@ const MODELS: ModelInfo[] = [
 ];
 
 async function resolveKey(): Promise<string | null> {
+  const stored = await getProviderKey('minimax');
+  if (stored) return stored;
   if (isTauri()) {
     const k = await invoke<string | null>('get_provider_key', { name: 'minimax' }).catch(() => null);
     if (k) return k;

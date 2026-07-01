@@ -7,6 +7,7 @@ import { buildGraphData } from '../graph/layout';
 import { useAppContext } from '../store/AppContext';
 import { addToHistory } from '../lib/history';
 import { DesktopOnlyError } from '../lib/platform';
+import { setCachedRepo } from '../lib/repoCache';
 
 export function useRepoData() {
   const { state, dispatch } = useAppContext();
@@ -76,6 +77,11 @@ export function useRepoData() {
         allCommits: commits,
       });
 
+      // Cache by repoRef so IDE sessions can swap this repo in without a refetch.
+      setCachedRepo(repoInfo.fullName, {
+        repoInfo, graphData, branches, tags, allCommits: commits, source: 'github',
+      });
+
       // Record in visit history
       addToHistory(
         `${parsed.owner}/${parsed.repo}`,
@@ -138,6 +144,11 @@ export function useRepoData() {
         branches,
         tags,
         allCommits: commits,
+      });
+
+      // Cache by the absolute path (== a local session's repoRef) for swap-in.
+      setCachedRepo(cleaned, {
+        repoInfo, graphData, branches, tags, allCommits: commits, source: 'local',
       });
 
       addToHistory(`local:${label}`, cleaned);

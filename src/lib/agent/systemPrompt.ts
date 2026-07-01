@@ -3,7 +3,7 @@
 // Per-turn volatile context (<session_context>) is injected separately as a
 // mid-conversation {role:'system'} message so the cached prefix stays intact.
 
-import baseDoc from '../../../docs/opus48_code_agent_system_prompt.md?raw';
+import baseDoc from './opus48_code_agent_system_prompt.md?raw';
 import type { Session, SkillFlag } from '@/types/session';
 
 /** The frozen base prompt (cache prefix). */

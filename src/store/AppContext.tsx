@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useReducer, type ReactNode, type Dispatch } from 'react';
 import type { AppAction, AppState } from '../types';
-import { initialState, persistState, reducer } from './reducer';
+import { initialState, persistSessions, persistState, reducer } from './reducer';
 
 interface AppContextValue {
   state: AppState;
@@ -16,6 +16,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     persistState(state);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.currentModel, state.pinnedRules]);
+  // Persist sessions separately and debounced: the sessions array gets a new
+  // identity on every streamed token, so writing synchronously would thrash
+  // localStorage during agent turns.
+  useEffect(() => {
+    const t = setTimeout(() => persistSessions(state), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.sessions, state.activeSessionId]);
   return (
     <AppContext.Provider value={{ state, dispatch }}>
       {children}
