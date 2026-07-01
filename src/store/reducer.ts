@@ -1,12 +1,13 @@
 import type { AppAction, AppState, FilterState, LoadState, LogDensity, TabId } from '../types';
-import type { PinnedRule, Session, SessionContext } from '../types/session';
-import { DEFAULT_PINNED_RULES, createDefaultContext } from '../types/session';
+import type { PinnedRule, Project, Session, SessionContext } from '../types/session';
+import { DEFAULT_PINNED_RULES, createDefaultContext, nextId, sessionProjectKey } from '../types/session';
 import { buildGraphData } from '../graph/layout';
 import { filterCheckpoints } from '../lib/refs';
 
 const PINNED_RULES_STORAGE_KEY = 'code-agent:pinned_rules';
 const CURRENT_MODEL_STORAGE_KEY = 'code-agent:current_model';
 const SESSIONS_STORAGE_KEY = 'code-agent:sessions';
+const PROJECTS_STORAGE_KEY = 'code-agent:projects';
 const ACTIVE_SESSION_STORAGE_KEY = 'code-agent:active_session';
 const SHOW_CHECKPOINTS_STORAGE_KEY = 'code-agent:show_checkpoints';
 const LOG_DENSITY_STORAGE_KEY = 'code-agent:log_density';
@@ -47,24 +48,79 @@ function stripSessionForStorage(s: Session): Session {
   };
 }
 
-function loadSessions(): Session[] {
+function readRawSessions(): Session[] {
   if (typeof localStorage === 'undefined') return [];
   try {
     const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    // Coerce each session's context through defaults so older persisted blobs
-    // missing newly-added context fields still load cleanly (schema drift).
-    return (parsed as Session[]).map((s) => ({
-      ...s,
-      terminals: [],
-      messages: Array.isArray(s.messages) ? s.messages : [],
-      context: { ...createDefaultContext(), ...s.context, status: 'idle' },
-    }));
+    return Array.isArray(parsed) ? (parsed as Session[]) : [];
   } catch {
     return [];
   }
+}
+
+// basename() without pulling in path polyfills — enough for local paths and
+// `owner/repo` refs. Strips trailing slashes so `/foo/bar/` → `bar`.
+function baseNameFromKey(key: string): string {
+  const trimmed = key.replace(/[/\\]+$/, '');
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return (idx >= 0 ? trimmed.slice(idx + 1) : trimmed) || key;
+}
+
+// Synthesize a Project per unique sessionProjectKey so first-run after upgrade
+// gets a coherent Projects → Threads view. Run once — subsequent loads read
+// the persisted `code-agent:projects` blob directly.
+function migrateProjectsFromSessions(sessions: Session[]): Project[] {
+  const byKey = new Map<string, { source: 'local' | 'github'; earliest: number }>();
+  for (const s of sessions) {
+    const key = sessionProjectKey(s);
+    const first = s.messages[0];
+    const t = first ? new Date(first.ts).getTime() : Number.NaN;
+    const prev = byKey.get(key);
+    if (!prev) byKey.set(key, { source: s.repoSource, earliest: Number.isFinite(t) ? t : Number.POSITIVE_INFINITY });
+    else if (Number.isFinite(t) && t < prev.earliest) prev.earliest = t;
+  }
+  const fallbackTs = new Date(0).toISOString();
+  return Array.from(byKey.entries()).map(([key, meta]) => ({
+    id: nextId('project'),
+    name: baseNameFromKey(key),
+    path: key,
+    source: meta.source,
+    createdAt: Number.isFinite(meta.earliest) ? new Date(meta.earliest).toISOString() : fallbackTs,
+  }));
+}
+
+function loadProjects(sessions: Session[]): Project[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PROJECTS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Project[];
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* fall through to migration */ }
+  return migrateProjectsFromSessions(sessions);
+}
+
+function loadSessions(projects?: Project[]): Session[] {
+  const raw = readRawSessions();
+  if (raw.length === 0) return [];
+  // If projects were provided, backfill any missing projectId by matching
+  // sessionProjectKey → project.path. Older persisted sessions lack the field.
+  const pathToId = projects
+    ? new Map(projects.map((p) => [p.path, p.id]))
+    : null;
+  return raw.map((s) => {
+    const projectId = s.projectId || (pathToId?.get(sessionProjectKey(s)) ?? '');
+    return {
+      ...s,
+      projectId,
+      terminals: [],
+      messages: Array.isArray(s.messages) ? s.messages : [],
+      context: { ...createDefaultContext(), ...s.context, status: 'idle' },
+    };
+  });
 }
 
 function loadActiveSessionId(): string | null {
@@ -77,10 +133,12 @@ function loadActiveSessionId(): string | null {
   }
 }
 
-/** Persist only sessions + active id (debounced by the caller). */
+/** Persist projects + sessions + active id (debounced by the caller). Write
+ *  in one tick so a mid-write reload can't produce dangling projectId refs. */
 export function persistSessions(state: AppState): void {
   if (typeof localStorage === 'undefined') return;
   try {
+    localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(state.projects));
     localStorage.setItem(
       SESSIONS_STORAGE_KEY,
       JSON.stringify(state.sessions.map(stripSessionForStorage)),
@@ -162,18 +220,21 @@ export const initialState: AppState = {
   rawCommits: [],
   showCheckpoints: loadBoolPref(SHOW_CHECKPOINTS_STORAGE_KEY, false),
   logDensity: loadLogDensity(),
-  sessions: loadSessions(),
-  activeSessionId: resolveInitialActiveSession(),
+  ...bootstrapProjectsAndSessions(),
   currentModel: loadCurrentModel(),
   providerStatus: {},
   pinnedRules: loadPinnedRules(),
 };
 
-// Drop a persisted active id that no longer points at a loaded session.
-function resolveInitialActiveSession(): string | null {
-  const id = loadActiveSessionId();
-  if (!id) return null;
-  return loadSessions().some((s) => s.id === id) ? id : null;
+// Bootstrap: load raw sessions once, derive projects (or reuse persisted ones),
+// backfill session.projectId from the resolved projects, resolve the active id.
+function bootstrapProjectsAndSessions(): { projects: Project[]; sessions: Session[]; activeSessionId: string | null } {
+  const rawSessions = readRawSessions();
+  const projects = loadProjects(rawSessions);
+  const sessions = loadSessions(projects);
+  const persistedId = loadActiveSessionId();
+  const activeSessionId = persistedId && sessions.some((s) => s.id === persistedId) ? persistedId : null;
+  return { projects, sessions, activeSessionId };
 }
 
 // Immutably update one session's fields by id.
@@ -326,6 +387,41 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case 'SET_GRAPH_DIRECTION':
       return { ...state, graphDirection: action.direction };
 
+    // ── Projects ────────────────────────────────────────────────────────────
+
+    case 'ADD_PROJECT':
+      return { ...state, projects: [...state.projects, action.project] };
+
+    case 'RENAME_PROJECT':
+      return {
+        ...state,
+        projects: state.projects.map((p) =>
+          p.id === action.id ? { ...p, name: action.name } : p,
+        ),
+      };
+
+    case 'ARCHIVE_PROJECT':
+      return {
+        ...state,
+        projects: state.projects.map((p) =>
+          p.id === action.id ? { ...p, archived: action.archived } : p,
+        ),
+      };
+
+    case 'REMOVE_PROJECT': {
+      // Cascade: drop the project and all its sessions; recompute activeSessionId
+      // if it pointed at a removed session (same pattern as CLOSE_SESSION).
+      const projects = state.projects.filter((p) => p.id !== action.id);
+      const sessions = state.sessions.filter((s) => s.projectId !== action.id);
+      const activeStillPresent = state.activeSessionId
+        ? sessions.some((s) => s.id === state.activeSessionId)
+        : false;
+      const activeSessionId = activeStillPresent
+        ? state.activeSessionId
+        : (sessions[sessions.length - 1]?.id ?? null);
+      return { ...state, projects, sessions, activeSessionId };
+    }
+
     // ── Agent sessions ──────────────────────────────────────────────────────
 
     case 'CREATE_SESSION': {
@@ -347,6 +443,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_ACTIVE_SESSION':
       return { ...state, activeSessionId: action.id };
+
+    case 'ARCHIVE_SESSION':
+      return mapSession(state, action.id, (s) => ({ ...s, archived: action.archived }));
 
     case 'CLOSE_SESSION': {
       const sessions = state.sessions.filter((s) => s.id !== action.id);

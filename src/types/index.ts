@@ -1,5 +1,5 @@
 import type {
-  AccessLevel, BuildMode, PinnedRule, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
+  AccessLevel, BuildMode, PinnedRule, Project, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
 } from './session';
 import type { ProbeResult } from '@/lib/agent/transport';
 
@@ -176,6 +176,8 @@ export interface AppState {
   showCheckpoints: boolean;
   /** Agent-log verbosity for the chat transcript. */
   logDensity: LogDensity;
+  /** Registered projects — each groups its own set of sessions/threads. */
+  projects: Project[];
   /** Agent sessions (IDE mode). Additive — does not affect the flat repo view. */
   sessions: Session[];
   activeSessionId: string | null;
@@ -218,10 +220,16 @@ export type AppAction =
   | { type: 'SET_SHOW_CHECKPOINTS'; show: boolean }
   | { type: 'SET_LOG_DENSITY'; density: LogDensity }
   | { type: 'SET_SOURCE'; source: RepoSource; localPath?: string | null }
+  // ── Projects ──
+  | { type: 'ADD_PROJECT'; project: Project }
+  | { type: 'RENAME_PROJECT'; id: string; name: string }
+  | { type: 'ARCHIVE_PROJECT'; id: string; archived: boolean }
+  | { type: 'REMOVE_PROJECT'; id: string }
   // ── Agent sessions ──
   | { type: 'CREATE_SESSION'; session: Session }
   | { type: 'SET_ACTIVE_SESSION'; id: string }
   | { type: 'CLOSE_SESSION'; id: string }
+  | { type: 'ARCHIVE_SESSION'; id: string; archived: boolean }
   | { type: 'SET_ACCESS_LEVEL'; sessionId: string; level: AccessLevel }
   | { type: 'SET_BUILD_MODE'; sessionId: string; mode: BuildMode }
   | { type: 'SET_REASONING_BUDGET'; sessionId: string; budget: ReasoningBudget }

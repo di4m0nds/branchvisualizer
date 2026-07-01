@@ -110,6 +110,7 @@ export async function runAgentTurn(
         maxTokens: 64000,
         effort: ctx.reasoningBudget,
         thinking: ctx.deepThinking || ctx.reasoningBudget !== 'low',
+        cwd: session.cwd,
       };
 
       const final = await transport.createMessage(req, {

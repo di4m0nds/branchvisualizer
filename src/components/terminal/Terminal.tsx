@@ -61,6 +61,7 @@ export default function Terminal({
   // Held so a separate effect can refit when the tab becomes visible.
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const activePtyIdRef = useRef<string>('');
 
   useEffect(() => {
     if (!isTauri() || !containerRef.current) return;
@@ -83,7 +84,8 @@ export default function Terminal({
     term.open(containerRef.current);
     try { fit.fit(); } catch { /* container not laid out yet */ }
 
-    const id = def.id;
+    const id = `${def.id}_${Math.random().toString(36).substring(2, 11)}`;
+    activePtyIdRef.current = id;
     let disposed = false;
     let unlistenData: Unlisten = () => {};
     let unlistenExit: Unlisten = () => {};
@@ -147,10 +149,10 @@ export default function Terminal({
     if (!active) return;
     const raf = requestAnimationFrame(() => {
       const term = termRef.current, fit = fitRef.current;
-      if (!term || !fit) return;
+      if (!term || !fit || !activePtyIdRef.current) return;
       try {
         fit.fit();
-        resizePty(def.id, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
       } catch { /* not laid out yet */ }
     });
     return () => cancelAnimationFrame(raf);

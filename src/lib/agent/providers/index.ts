@@ -1,5 +1,6 @@
 import type { Provider } from '../transport';
 import { anthropicProvider } from './anthropic';
+import { claudeCodeProvider } from './claude_code';
 import { openaiCodexProvider } from './openai_codex';
 import { geminiProvider } from './gemini';
 import { minimaxProvider } from './minimax';
@@ -7,6 +8,7 @@ import { opencodeProvider } from './opencode';
 
 export const PROVIDERS: Provider[] = [
   anthropicProvider,
+  claudeCodeProvider,
   openaiCodexProvider,
   geminiProvider,
   minimaxProvider,

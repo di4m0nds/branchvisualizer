@@ -1,61 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { TerminalSquare, Server, FileCode, Plus, X } from 'lucide-react';
+import { TerminalSquare, FileCode, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import Terminal from './Terminal';
 import { nextId } from '@/types/session';
-import type { TerminalDef, TerminalRole } from '@/types/terminal';
+import type { TerminalDef } from '@/types/terminal';
 import { subscribeOpenInNvim } from '@/hooks/useOpenInNvim';
 
-const ROLE_LABEL: Record<TerminalRole, string> = {
-  agent: 'Agent',
-  shell: 'Shell',
-  server: 'Server',
-  nvim: 'nvim',
-};
+const MAX_SHELLS = 4;
 
-const ROLE_DOT: Record<TerminalRole, string> = {
-  nvim: 'bg-green-400',
-  server: 'bg-blue-400',
-  agent: 'bg-purple-400',
-  shell: 'bg-muted-foreground/50',
-};
+function makeNvim(cwd: string): TerminalDef {
+  return { id: nextId('term'), role: 'nvim', title: 'nvim', cwd, cmd: 'nvim' };
+}
 
-// Terminals that should close when their process exits. Nvim closes on
-// `:q`/`:wq`/`:q!`/`:wq!` — the PTY child exits with a status and we don't want
-// to leave a dead tab. Shells keep the exit trailer visible.
-const AUTO_CLOSE_ON_EXIT: Record<TerminalRole, boolean> = {
-  nvim: true,
-  agent: false,
-  shell: false,
-  server: false,
-};
-
-// Title is derived from how many terminals of this role already exist in THIS
-// dock — not the process-lifetime `nextId` counter (which climbs forever and
-// produced labels like "Shell 14" with a single terminal open). First of a role
-// is unnumbered ("Shell"), the next is "Shell 2", etc.
-function makeTerminal(
-  role: TerminalRole,
-  cwd: string,
-  existing: TerminalDef[],
-  opts?: { args?: string[] },
-): TerminalDef {
-  const id = nextId('term');
-  if (role === 'nvim') {
-    return { id, role, title: 'nvim', cwd, cmd: 'nvim', args: opts?.args };
-  }
-  const n = existing.filter((t) => t.role === role).length;
-  const title = n === 0 ? ROLE_LABEL[role] : `${ROLE_LABEL[role]} ${n + 1}`;
-  return { id, role, title, cwd };
+// Shell titles are numbered off the live shell list ("Shell", "Shell 2", ...).
+// Renames replace the title but don't shift the numbering of future shells.
+function makeShell(cwd: string, existing: TerminalDef[]): TerminalDef {
+  const n = existing.length;
+  const title = n === 0 ? 'Shell' : `Shell ${n + 1}`;
+  return { id: nextId('term'), role: 'shell', title, cwd };
 }
 
 /**
- * Tabbed terminal dock. Terminals stay mounted when hidden so their PTYs (and
- * shell/nvim state) survive tab switches. Killing on close or unmount prevents
- * zombies. Autoclose fires for nvim so `:q` removes the tab cleanly. Subscribes
- * to the useOpenInNvim event bus so file/docs tab clicks either send `:e <path>`
- * to a running nvim or spawn one with the file already loaded.
+ * Tabbed terminal dock. Left side is a permanent nvim tab (auto-respawns on
+ * `:q` by bumping `nvimBootId`, which changes the pane key). Right side is up
+ * to MAX_SHELLS renameable shell tabs plus a "+" button that hides at cap.
+ * Terminals stay mounted when hidden so their PTYs survive tab switches;
+ * killing on close/unmount prevents zombies. The `open-in-nvim` bus routes
+ * `:e <path>` straight to the singleton — no lookup, no fallback spawn.
  */
 export default function TerminalDock({
   cwd,
@@ -64,106 +36,187 @@ export default function TerminalDock({
   cwd: string;
   sessionId: string;
 }) {
-  const [terminals, setTerminals] = useState<TerminalDef[]>(() => [makeTerminal('shell', cwd, [])]);
-  const [activeId, setActiveId] = useState<string>(() => terminals[0]?.id ?? '');
+  const [nvim] = useState<TerminalDef>(() => makeNvim(cwd));
+  const [nvimBootId, setNvimBootId] = useState(0);
+  const [shells, setShells] = useState<TerminalDef[]>([]);
+  const [activeId, setActiveId] = useState<string>(nvim.id);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
-  // Mirror of `terminals` for synchronous reads inside `add` (numbering the new
-  // tab off the live list without threading it through the updater).
-  const terminalsRef = useRef<TerminalDef[]>(terminals);
-  terminalsRef.current = terminals;
+  // Mirror of `shells` for synchronous reads inside `addShell` (numbering the
+  // new tab off the live list without threading it through the updater).
+  const shellsRef = useRef<TerminalDef[]>(shells);
+  shellsRef.current = shells;
 
-  // Registered per-terminal writers so we can send ex-commands (`:e path\r`) to
-  // an already-running nvim without a round-trip through Tauri events.
+  // Registered per-terminal writers so we can send ex-commands (`:e path\r`)
+  // to the running nvim without a round-trip through Tauri events.
   const writersRef = useRef<Record<string, (data: string) => Promise<void>>>({});
 
-  const add = useCallback((role: TerminalRole, opts?: { args?: string[] }): void => {
-    const t = makeTerminal(role, cwd, terminalsRef.current, opts);
-    setTerminals((prev) => [...prev, t]);
+  useEffect(() => {
+    if (renamingId) renameInputRef.current?.select();
+  }, [renamingId]);
+
+  const addShell = useCallback(() => {
+    if (shellsRef.current.length >= MAX_SHELLS) return;
+    const t = makeShell(cwd, shellsRef.current);
+    setShells((prev) => [...prev, t]);
     setActiveId(t.id);
   }, [cwd]);
 
-  const close = useCallback((id: string) => {
+  const closeShell = useCallback((id: string) => {
     delete writersRef.current[id];
-    setTerminals((prev) => {
+    setShells((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
       const next = prev.filter((t) => t.id !== id);
-      if (id === activeId) setActiveId(next[next.length - 1]?.id ?? '');
+      if (id === activeId) {
+        const fallback = next[idx - 1] ?? next[0] ?? null;
+        setActiveId(fallback ? fallback.id : nvim.id);
+      }
       return next;
     });
-  }, [activeId]);
+    if (renamingId === id) setRenamingId(null);
+  }, [activeId, nvim.id, renamingId]);
 
-  // Open-in-nvim bus: send `:e <path>` to the newest nvim, or spawn one.
+  const startRename = useCallback((tab: TerminalDef) => {
+    setRenameValue(tab.title);
+    setRenamingId(tab.id);
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (!renamingId) return;
+    const trimmed = renameValue.trim();
+    setShells((prev) => prev.map((t) => (
+      t.id === renamingId && trimmed ? { ...t, title: trimmed } : t
+    )));
+    setRenamingId(null);
+  }, [renamingId, renameValue]);
+
+  const cancelRename = useCallback(() => {
+    setRenamingId(null);
+  }, []);
+
+  // Nvim's PTY exited (usually `:q`/`:wq`). Bump the boot id to force a
+  // remount of the pane — the stable nvim.id means the new Terminal
+  // re-registers its writer at the same key, so the open-in-nvim bus keeps
+  // working transparently.
+  const handleNvimExit = useCallback(() => {
+    setNvimBootId((x) => x + 1);
+  }, []);
+
+  // Open-in-nvim bus: send `:e <path>` to the singleton nvim.
   useEffect(() => {
     if (!isTauri()) return;
     return subscribeOpenInNvim(sessionId, async ({ path }) => {
-      const existing = [...terminals].reverse().find((t) => t.role === 'nvim');
-      if (existing) {
-        setActiveId(existing.id);
-        const writer = writersRef.current[existing.id];
-        if (writer) {
-          const escaped = path.replace(/ /g, '\\ ');
-          await writer(`\x1b:e ${escaped}\r`).catch(() => {});
-        }
-      } else {
-        add('nvim', { args: [path] });
-      }
+      setActiveId(nvim.id);
+      const writer = writersRef.current[nvim.id];
+      if (!writer) return;
+      const escaped = path.replace(/ /g, '\\ ');
+      await writer(`\x1b:e ${escaped}\r`).catch(() => {});
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, terminals.length]);
+  }, [sessionId, nvim.id]);
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Tab strip */}
       <div className="flex items-center gap-1 px-1.5 h-8 border-b border-border bg-muted/20 flex-shrink-0">
         <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto scrollbar-hide">
-          {terminals.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setActiveId(t.id)}
-              className={cn(
-                'group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-[11px] font-mono transition-colors flex-shrink-0 border',
-                t.id === activeId
-                  ? 'bg-background text-foreground border-border shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground border-transparent hover:bg-accent/30',
-              )}
-            >
-              <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', ROLE_DOT[t.role])} />
-              <span className="truncate max-w-32">{t.title}</span>
-              <span
-                onClick={(e) => { e.stopPropagation(); close(t.id); }}
-                className="flex items-center justify-center opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-destructive rounded-sm"
-                title="Close terminal"
+          {/* Nvim singleton — no X, no rename */}
+          <button
+            key={nvim.id}
+            onClick={() => setActiveId(nvim.id)}
+            className={cn(
+              'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-mono transition-colors flex-shrink-0 border',
+              activeId === nvim.id
+                ? 'bg-background text-foreground border-border shadow-sm'
+                : 'text-muted-foreground hover:text-foreground border-transparent hover:bg-accent/30',
+            )}
+          >
+            <FileCode className="w-3 h-3 flex-shrink-0 text-green-400" />
+            <span className="select-none">nvim</span>
+          </button>
+
+          {/* Divisor between nvim and shells */}
+          <div className="w-px h-4 bg-border/60 mx-1 flex-shrink-0" />
+
+          {/* Shell tabs */}
+          {shells.map((t) => {
+            const renaming = renamingId === t.id;
+            const active = t.id === activeId;
+            return (
+              <div
+                key={t.id}
+                onClick={() => !renaming && setActiveId(t.id)}
+                className={cn(
+                  'group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-[11px] font-mono transition-colors flex-shrink-0 border cursor-pointer',
+                  active
+                    ? 'bg-background text-foreground border-border shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground border-transparent hover:bg-accent/30',
+                )}
               >
-                <X className="w-3 h-3" />
-              </span>
+                <TerminalSquare className="w-3 h-3 flex-shrink-0" />
+                {renaming ? (
+                  <input
+                    ref={renameInputRef}
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                      else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                    }}
+                    className="min-w-0 w-24 bg-background border border-border rounded px-1 py-0 text-[11px] font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                ) : (
+                  <span
+                    onDoubleClick={(e) => { e.stopPropagation(); startRename(t); }}
+                    className="truncate max-w-32 select-none"
+                    title="Double-click to rename"
+                  >
+                    {t.title}
+                  </span>
+                )}
+                <span
+                  onClick={(e) => { e.stopPropagation(); closeShell(t.id); }}
+                  className="flex items-center justify-center opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-destructive rounded-sm"
+                  title="Close terminal"
+                >
+                  <X className="w-3 h-3" />
+                </span>
+              </div>
+            );
+          })}
+
+          {/* Add-shell button — hides when at cap */}
+          {shells.length < MAX_SHELLS && (
+            <button
+              onClick={addShell}
+              className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
+              title="New shell"
+            >
+              <Plus className="w-3 h-3" />
+              <TerminalSquare className="w-3 h-3" />
             </button>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-0.5 flex-shrink-0 pl-1 border-l border-border/60">
-          <DockButton onClick={() => add('shell')} icon={<TerminalSquare className="w-3 h-3" />}>Shell</DockButton>
-          <DockButton onClick={() => add('server')} icon={<Server className="w-3 h-3" />}>Server</DockButton>
-          <DockButton onClick={() => add('nvim')} icon={<FileCode className="w-3 h-3" />}>nvim</DockButton>
+          )}
         </div>
       </div>
 
       {/* Terminal panes — all mounted, visibility toggled */}
       <div className="relative flex-1 min-h-0">
-        {terminals.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground/60">
-            {isTauri() ? (
-              <>
-                <TerminalSquare className="w-5 h-5 opacity-50" />
-                <span>No terminals open.</span>
-                <button
-                  onClick={() => add('shell')}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border hover:bg-accent/40 text-[11px] font-mono"
-                >
-                  <Plus className="w-3 h-3" /> New shell
-                </button>
-              </>
-            ) : 'Terminals require the desktop app.'}
-          </div>
-        )}
-        {terminals.map((t) => (
+        <div
+          key={`${nvim.id}:${nvimBootId}`}
+          className={cn('absolute inset-0 p-1.5', activeId !== nvim.id && 'invisible pointer-events-none')}
+        >
+          <Terminal
+            def={nvim}
+            active={activeId === nvim.id}
+            onExit={handleNvimExit}
+            registerWriter={(w) => { writersRef.current[nvim.id] = w; }}
+          />
+        </div>
+        {shells.map((t) => (
           <div
             key={t.id}
             className={cn('absolute inset-0 p-1.5', t.id !== activeId && 'invisible pointer-events-none')}
@@ -171,24 +224,11 @@ export default function TerminalDock({
             <Terminal
               def={t}
               active={t.id === activeId}
-              onExit={AUTO_CLOSE_ON_EXIT[t.role] ? () => setTimeout(() => close(t.id), 120) : undefined}
               registerWriter={(w) => { writersRef.current[t.id] = w; }}
             />
           </div>
         ))}
       </div>
     </div>
-  );
-}
-
-function DockButton({ onClick, icon, children }: { onClick: () => void; icon?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono"
-    >
-      {icon}
-      {children}
-    </button>
   );
 }

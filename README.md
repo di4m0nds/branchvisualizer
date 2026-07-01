@@ -58,7 +58,8 @@ skills, and pinned rules.
 
 | Provider | Auth | Detection |
 |---|---|---|
-| **Anthropic Claude** — Fable 5, Opus 4.8/4.7, Sonnet 4.6, Haiku 4.5 | `ANTHROPIC_API_KEY` | live `countTokens` probe |
+| **Anthropic Claude** — Fable 5, Opus 4.8/4.7, Sonnet 4.6, Haiku 4.5 | `ANTHROPIC_API_KEY` (direct API) | live `countTokens` probe |
+| **Claude Code** — Opus / Sonnet / Haiku via the `claude` CLI | `claude` CLI login, or `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`) / `ANTHROPIC_API_KEY` | `claude --version` + credential/env sniff |
 | **OpenAI Codex** — GPT-5/5.1 Codex, GPT-4.1, o4-mini | `codex login` (CLI OAuth), `OPENAI_API_KEY` fallback | `~/.codex/auth.json` sniff |
 | **Google Gemini** — 2.5 Pro / Flash / Flash-Lite | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | live `countTokens` probe |
 | **MiniMax** — M2 / Text-01 / abab6.5s | `MINIMAX_API_KEY` | 1-token chat probe |

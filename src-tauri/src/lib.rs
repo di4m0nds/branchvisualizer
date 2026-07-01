@@ -1,3 +1,4 @@
+mod claude_code;
 mod fs;
 mod git;
 mod keys;
@@ -40,6 +41,7 @@ pub fn run() {
       keys::set_secure_key,
       keys::get_secure_key,
       keys::delete_secure_key,
+      claude_code::claude_code_run,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

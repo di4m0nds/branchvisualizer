@@ -13,6 +13,7 @@ import { loadAgentDefaults, saveAgentDefaults, type AgentDefaults } from '@/lib/
 import ModelPicker from '@/components/ide/ModelPicker';
 import SessionsPanel from '@/components/ide/SessionsPanel';
 import PinnedRulesEditor from '@/components/ide/PinnedRulesEditor';
+import ArchiveSection from '@/components/settings/ArchiveSection';
 import type { AccessLevel, BuildMode } from '@/types/session';
 import type { LogDensity } from '@/types';
 
@@ -253,9 +254,13 @@ export default function SettingsPanel({ open, onOpenChange }: {
 
                   {category === 'sessions' && (
                     <Section title="Sessions" desc="Saved sessions across all projects.">
-                      <div className="mt-2 max-h-[60vh] overflow-y-auto rounded-md border border-border p-1">
-                        <SessionsPanel variant="inline" />
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground mb-2">Active sessions</h3>
+                        <div className="max-h-[40vh] overflow-y-auto rounded-md border border-border p-1">
+                          <SessionsPanel variant="inline" />
+                        </div>
                       </div>
+                      <ArchiveSection />
                     </Section>
                   )}
 

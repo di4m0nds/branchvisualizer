@@ -1,8 +1,8 @@
 // ─── Terminal model ──────────────────────────────────────────────────────────
 // Roles map to the document's <terminal_context>: agent output, a free shell,
-// long-running servers, and the Neovim editor PTY.
+// and the Neovim editor PTY.
 
-export type TerminalRole = 'agent' | 'shell' | 'server' | 'nvim';
+export type TerminalRole = 'agent' | 'shell' | 'nvim';
 
 export interface TerminalDef {
   id: string;

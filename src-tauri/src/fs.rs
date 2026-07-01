@@ -139,6 +139,7 @@ pub fn get_api_key() -> Option<String> {
 pub fn get_provider_key(name: String) -> Option<String> {
     let vars: &[&str] = match name.as_str() {
         "anthropic" => &["ANTHROPIC_API_KEY"],
+        "claude_code" => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
         "openai" | "openai_codex" => &["OPENAI_API_KEY", "CODEX_API_KEY"],
         "gemini" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
         "minimax" => &["MINIMAX_API_KEY"],
@@ -172,6 +173,7 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
     let binary = match name.as_str() {
         "codex" => "codex",
         "opencode" => "opencode",
+        "claude" | "claude_code" => "claude",
         other => return Err(format!("unknown CLI provider: {other}")),
     };
 
@@ -208,6 +210,10 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
             &[".local/share/opencode/auth.json", ".opencode/auth.json"],
             Some(&["auth", "list"]),
         ),
+        "claude" | "claude_code" => (
+            &[".claude/.credentials.json", ".config/claude/.credentials.json"],
+            None,
+        ),
         _ => (&[], None),
     };
 
@@ -227,8 +233,8 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
         })
     });
 
-    let connected = matched_auth_path.is_some();
-    let auth_kind = matched_auth_path
+    let mut connected = matched_auth_path.is_some();
+    let mut auth_kind = matched_auth_path
         .as_ref()
         .and_then(|p| fs::read_to_string(p).ok())
         .map(|s| {
@@ -240,6 +246,20 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
                 "unknown".to_string()
             }
         });
+
+    // Claude Code can authenticate purely from the environment (a
+    // `claude setup-token` OAuth token, or a plain API key) with no credential
+    // file present. Count that as connected.
+    if matches!(name.as_str(), "claude" | "claude_code") && !connected {
+        let has = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty()).is_some();
+        if has("CLAUDE_CODE_OAUTH_TOKEN") || has("ANTHROPIC_AUTH_TOKEN") {
+            connected = true;
+            auth_kind = Some("oauth".to_string());
+        } else if has("ANTHROPIC_API_KEY") {
+            connected = true;
+            auth_kind = Some("apikey".to_string());
+        }
+    }
 
     Ok(CliProbe {
         detected,

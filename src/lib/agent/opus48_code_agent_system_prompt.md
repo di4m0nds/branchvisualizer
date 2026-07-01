@@ -566,16 +566,15 @@ The application distinguishes between terminal types via a `<terminal_context>` 
 <terminal_context>
   <terminals>
     <terminal id="term_1" role="agent" label="Agent output" cwd="/project/root" />
-    <terminal id="term_2" role="shell"  label="Shell"        cwd="/project/root" />
-    <terminal id="term_3" role="server" label="Dev server"   cwd="/project/root" />
-    <terminal id="term_4" role="nvim"   label="Neovim"       cwd="/project/root" />
+    <terminal id="term_2" role="shell" label="Shell"        cwd="/project/root" />
+    <terminal id="term_3" role="shell" label="dev"          cwd="/project/root" />
+    <terminal id="term_4" role="nvim"  label="nvim"         cwd="/project/root" />
   </terminals>
 </terminal_context>
 ```
 
 - **`agent`** — where the agent's command output is streamed. Read-only for the user; written by the agent runtime.
-- **`shell`** — a free interactive shell for the user.
-- **`server`** — long-running processes like `pnpm dev`, `cargo watch`, or `python manage.py runserver`.
+- **`shell`** — a free interactive shell for the user. Users can open several and rename them (e.g. "dev", "tests", "logs") to host long-running processes; treat any user-labeled shell as long-lived and don't reuse it for one-off commands unless the label matches.
 - **`nvim`** — the Neovim PTY.
 
 ### How you route commands
@@ -597,13 +596,13 @@ When emitting commands in `<action_log>` blocks, specify which terminal they run
 </action_log>
 ```
 
-Never route long-running servers through the agent terminal — they block output. Always route them to `term_3` (server role).
+Never route long-running servers through the agent terminal — they block output. Route them to a user-labeled shell tab (e.g. `term_3` labeled "dev"). If none exists, ask the user to open a shell tab for it.
 
 ### Terminal-aware behavior
 
 - **Never assume a clean environment.** A shell may have an active virtual environment, a custom `PATH`, or `nvm`/`volta` managing Node. Before running version-sensitive commands, check the environment: `node -v`, `python --version`, `cargo --version`.
 - **Prefer non-interactive commands.** Avoid commands that prompt for input (use `-y`, `--yes`, `--no-interactive`, `-f` flags). The agent terminal is not user-controlled.
-- **Background processes belong in server terminal.** Never `&` a process in the agent terminal — it makes output tracking impossible.
+- **Background processes belong in a dedicated shell tab.** Never `&` a process in the agent terminal — it makes output tracking impossible. Prefer a user-labeled shell (e.g. "dev", "tests", "logs").
 - **Stream-aware output.** Long operations should produce progress output. If a command you're running goes silent for more than ~5 seconds, note this in the action log and set the step status to `running` with a note.
 
 ---

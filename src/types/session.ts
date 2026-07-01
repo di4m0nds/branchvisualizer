@@ -94,6 +94,8 @@ export type TerminalId = string;
 export interface Session {
   id: string;
   title: string;
+  /** Owning project (persisted). Backfilled by migration for pre-existing sessions. */
+  projectId: string;
   repoSource: RepoSource;
   /** owner/repo for GitHub, or an absolute path for local. */
   repoRef: string;
@@ -102,6 +104,29 @@ export interface Session {
   context: SessionContext;
   messages: AgentMessage[];
   terminals: TerminalId[];
+  /** Hidden from the main sidebar list when true; restorable from Settings. */
+  archived?: boolean;
+}
+
+// ─── Project ─────────────────────────────────────────────────────────────────
+// A project groups threads (sessions) that share a repo root. Explicit entity
+// so users can create empty projects, rename them, and archive/delete them
+// independently of any single thread. The canonical join key between Project
+// and Session is `Project.path === sessionProjectKey(session)`.
+
+export interface Project {
+  id: string;
+  /** User-editable label. Defaults to the last segment of `path`. */
+  name: string;
+  /**
+   * Canonical repo identity. Absolute path for local, `owner/repo` for github.
+   * Same value returned by `sessionProjectKey` for any session in this project.
+   */
+  path: string;
+  source: RepoSource;
+  createdAt: string;
+  /** Archived projects are hidden from the main sidebar list. */
+  archived?: boolean;
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────

@@ -64,6 +64,9 @@ export interface AgentRequest {
   effort: 'low' | 'medium' | 'high' | 'max';
   /** Enable adaptive/extended thinking for this turn. Provider-specific mapping. */
   thinking: boolean;
+  /** Working directory for the turn. Used by subprocess providers (Claude Code)
+   *  that run a real agent in the repo; ignored by API providers. */
+  cwd?: string | null;
 }
 
 export interface AgentTransport {

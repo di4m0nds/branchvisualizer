@@ -7,6 +7,9 @@
 const KEY = 'code-agent:ide_layout';
 
 export interface IdeLayout {
+  /** ProjectsSidebar width, % of the whole IDE row. Clamped to 180–420px at
+   *  the DOM level so the slider can't shrink it into illegibility. */
+  sidebarWidth: number;
   /** Middle (agent + terminal) column width, % of the middle|right row. */
   midWidth: number;
   /** Terminal dock height, % of the agent stack. */
@@ -18,6 +21,7 @@ export interface IdeLayout {
 }
 
 export const DEFAULT_IDE_LAYOUT: IdeLayout = {
+  sidebarWidth: 18,
   midWidth: 46,
   dockHeight: 30,
   cfgCollapsed: false,

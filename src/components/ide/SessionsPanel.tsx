@@ -3,29 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Trash2, FolderGit2, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppContext } from '@/store/AppContext';
+import { lastActivity, statusDot } from '@/lib/sessionStatus';
 import type { Session } from '@/types/session';
 
 // Lists persisted sessions so they're reachable from the visualizer views (not
 // just inside the IDE). `inline` renders a flat list section; `popover` renders
 // a dropdown trigger. `filterRepoRef` narrows to one project's sessions.
-
-function statusDot(s: Session): string {
-  return s.context.status === 'error' ? 'bg-red-400'
-    : s.context.status === 'idle' ? 'bg-muted-foreground/40'
-      : 'bg-green-400';
-}
-
-function lastActivity(s: Session): string {
-  const last = s.messages[s.messages.length - 1];
-  if (!last) return 'no messages';
-  const then = new Date(last.ts).getTime();
-  if (Number.isNaN(then)) return '';
-  const secs = Math.floor((Date.now() - then) / 1000);
-  if (secs < 60) return 'just now';
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
-}
 
 function SessionRow({ s, onOpen, onDelete }: { s: Session; onOpen: () => void; onDelete: () => void }) {
   return (
