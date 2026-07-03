@@ -52,21 +52,43 @@ function subscribe(cb: () => void): () => void {
   return () => listeners.delete(cb);
 }
 
+// When false (on the IDE route) the global keydown handler is inert and body
+// zoom is reset to 1 — the IDE uses per-panel scoped zoom instead. Marketing /
+// visualizer routes leave this true and keep whole-app zoom.
+let enabled = true;
+
 let installed = false;
 function installGlobal(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
   apply();
   window.addEventListener('keydown', (e) => {
+    if (!enabled) return;
     if (!(e.ctrlKey || e.metaKey)) return;
+    // Skip when the pointer is over the graph panel — it has its own viewport
+    // scale, and body-level zoom distorts the canvas rendering. The graph's
+    // container is tagged with `data-panel="graph"`; when it's hidden (inactive
+    // tab) `pointer-events-none` keeps `:hover` from matching, so zoom still
+    // works normally in the rest of the UI.
+    if (document.querySelector('[data-panel="graph"]:hover')) return;
     if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomBy(ZOOM_STEP); }
     else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(-ZOOM_STEP); }
     else if (e.key === '0') { e.preventDefault(); resetZoom(); }
   });
 }
 
-export function useAppZoom() {
-  useEffect(() => { installGlobal(); }, []);
+/** @param active whether whole-app zoom is in effect. Pass false on /ide. */
+export function useAppZoom(active = true) {
+  useEffect(() => {
+    installGlobal();
+    enabled = active;
+    if (active) {
+      apply();               // re-apply the persisted zoom
+    } else if (typeof document !== 'undefined') {
+      (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = '1';
+    }
+    return () => { enabled = true; apply(); };
+  }, [active]);
   const zoom = useSyncExternalStore(subscribe, getZoom, getZoom);
   return {
     zoom,

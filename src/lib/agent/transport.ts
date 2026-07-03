@@ -67,12 +67,28 @@ export interface AgentRequest {
   /** Working directory for the turn. Used by subprocess providers (Claude Code)
    *  that run a real agent in the repo; ignored by API providers. */
   cwd?: string | null;
+  /** Abort signal for the Stop button. Providers should honour it best-effort:
+   *  API providers pass it to their SDK; the Claude Code provider kills the
+   *  subprocess via `claude_code_kill`. */
+  signal?: AbortSignal;
+  /** Claude Code CLI permission mode. When the user has approved bypass for
+   *  the session (see `SessionContext.cliBypass`) or is on `full_access`, the
+   *  loop sets this to `bypassPermissions`. Otherwise defaults to
+   *  `acceptEdits`. Ignored by non-CLI providers. */
+  permissionMode?: string;
+  /** Text appended to the CLI's own system prompt via `--append-system-prompt`.
+   *  Used to deliver the IDE's rendering conventions AND the session's active
+   *  skill flags through the CLI's sanctioned channel (in-band prepending
+   *  triggers the CLI's prompt-injection guard). Ignored by non-CLI providers. */
+  appendSystem?: string;
 }
 
 export interface AgentTransport {
   /** Provider + model id the transport serves. */
   readonly id: string;
   readonly modelId: string;
+  /** Context-size variant the transport was built for (defaults to 'standard'). */
+  readonly contextSize?: ContextSizeId;
   createMessage(req: AgentRequest, cbs: StreamCallbacks): Promise<NeutralResponse>;
 }
 
@@ -80,13 +96,28 @@ export interface AgentTransport {
 
 export type ConnectionTier = 'free' | 'paid' | 'unknown';
 
+/** Which context-window variant of a model to run. 'standard' is always the
+ *  default and the one every plan can serve; '1m' opts into the 1M-token
+ *  window (usage-credit gated on Claude Code subscriptions). */
+export type ContextSizeId = 'standard' | '1m';
+
+export interface ContextOption {
+  id: ContextSizeId;
+  label: string;
+  tokens: number;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;
   /** Best-effort default tier hint; probe() may override. */
   defaultTier?: ConnectionTier;
-  /** Hard context limit if known. */
+  /** Standard (default) context limit if known. */
   contextTokens?: number;
+  /** Selectable context-window variants. Ordered — element 0 must be
+   *  'standard' and is the default. Absent (or a single entry) ⇒ the model is
+   *  standard-only and the picker never offers 1M. */
+  contextOptions?: ContextOption[];
 }
 
 export type ProbeState = 'not_detected' | 'detected' | 'connected';
@@ -110,6 +141,7 @@ export interface Provider {
   models(): ModelInfo[];
   /** Fast liveness/tier check. Cached in state.providerStatus. */
   probe(): Promise<ProbeResult>;
-  /** Build a transport for one of this provider's models. */
-  createTransport(modelId: string): Promise<AgentTransport>;
+  /** Build a transport for one of this provider's models, at the given
+   *  context-window variant (defaults to 'standard'). */
+  createTransport(modelId: string, context?: ContextSizeId): Promise<AgentTransport>;
 }

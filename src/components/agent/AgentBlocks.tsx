@@ -1,28 +1,44 @@
-import { useState } from 'react';
-import { Check } from 'lucide-react';
+import { memo, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  ChevronDown, Brain, MessagesSquare, ShieldAlert, Copy,
+  Sparkles, FileEdit, FilePlus, FileMinus, FileText as FileTextIcon,
+  Bug, ShieldCheck, ClipboardList, Wrench, CornerDownRight,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/services/toast';
 import type { AgentBlock } from '@/types/session';
 import type { LogDensity } from '@/types';
-import { parseQuestions, filterBlocksByDensity, type AgentQuestion } from './blocks';
+import { parseQuestions, filterBlocksByDensity, type TaskSummaryFile, type AgentQuestion } from './blocks';
+import Markdown from './Markdown';
+import StreamingText from './StreamingText';
+import CodeFrame from './CodeFrame';
 
-// Renders the structured blocks parsed from an assistant message.
+// ─── Block renderers ─────────────────────────────────────────────────────────
+// One component per structured block the agent emits. They share a visual
+// language: rounded-lg cards, a status dot / tinted accent, a compact header
+// row, and a scroll-capped body. `BlockView` (below) maps a block type → the
+// right renderer; unknown types fall back to a generic LabeledCard.
 
+// A single CLI/tool step (read / grep / edit / run …). The most frequent card,
+// so it stays compact and log-like.
 function ActionLog({ data }: { data: Record<string, unknown> }) {
   const status = String(data.status ?? 'complete');
+  const isErr = status === 'error';
   const output = String(data.output ?? '');
   return (
     <div className={cn(
-      'rounded-md border text-xs overflow-hidden',
-      status === 'error' ? 'border-red-500/30 bg-red-500/5' : 'border-border bg-muted/20',
+      'rounded-lg border text-xs overflow-hidden',
+      isErr ? 'border-red-500/30 bg-red-500/5' : 'border-border/60 bg-muted/15',
     )}>
-      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border/50">
-        <span className={cn('w-1.5 h-1.5 rounded-full', status === 'error' ? 'bg-red-400' : 'bg-green-400')} />
-        <span className="font-mono text-[11px] text-foreground">{String(data.tool)}</span>
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isErr ? 'bg-red-400' : 'bg-emerald-400')} />
+        <span className="font-mono text-[11px] font-medium text-foreground/90 flex-shrink-0">{String(data.tool)}</span>
         <span className="text-muted-foreground truncate">{String(data.description)}</span>
       </div>
       {output && (
-        <pre className="px-2.5 py-1.5 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-auto">
+        <pre className="px-3 py-1.5 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-auto border-t border-border/40 bg-background/30">
           {output}
         </pre>
       )}
@@ -30,114 +46,145 @@ function ActionLog({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// Generic titled card for the assorted status blocks (agent_status, security
+// review, change explanation, …). `tone` colours the header label.
 function LabeledCard({ label, tone, inner }: { label: string; tone?: string; inner: string }) {
   return (
-    <div className={cn('rounded-md border border-border bg-muted/10 overflow-hidden')}>
-      <div className={cn('px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider border-b border-border/50', tone ?? 'text-muted-foreground')}>
+    <div className={cn('rounded-lg border border-border/60 bg-muted/10 overflow-hidden')}>
+      <div className={cn('px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-b border-border/40', tone ?? 'text-muted-foreground')}>
         {label}
       </div>
-      <pre className="px-2.5 py-1.5 text-[11px] font-mono text-foreground/90 whitespace-pre-wrap max-h-64 overflow-auto">
+      <pre className="px-3 py-2 text-[11px] font-mono text-foreground/90 whitespace-pre-wrap max-h-64 overflow-auto">
         {inner}
       </pre>
     </div>
   );
 }
 
-function CodeBlock({ inner }: { inner: string }) {
+// ─── Collapsible "Thinking…" card ────────────────────────────────────────────
+// Surfaces the model's reasoning. Collapsed by default; pulses while the turn is
+// still streaming. Hidden in "clean" density (see filterBlocksByDensity).
+
+function ThinkingCard({ inner, streaming }: { inner: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
   return (
-    <pre className="rounded-md border border-border bg-[#0a0a0a] text-[#e4e4e7] px-2.5 py-2 text-[11px] font-mono whitespace-pre overflow-auto max-h-80">
-      {inner}
-    </pre>
+    <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 w-full px-2.5 py-1.5 text-left hover:bg-muted/20 transition-colors"
+      >
+        <Brain className={cn('w-3 h-3 text-muted-foreground', streaming && 'animate-pulse text-primary')} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {streaming ? 'Thinking…' : 'Thought process'}
+        </span>
+        <ChevronDown className={cn('w-3 h-3 ml-auto text-muted-foreground transition-transform', open && 'rotate-180')} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <pre className="px-2.5 py-1.5 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap max-h-64 overflow-auto border-t border-border/50">
+              {inner}
+            </pre>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
 // ─── Interactive multiple-choice Q&A ────────────────────────────────────────
-// Blocks the turn until every question is answered, then threads the answers
-// back to the agent as a follow-up user message. Supports single- and
-// multi-select and renders all questions in the block simultaneously.
+// The block itself only renders a compact placeholder in the chat — the actual
+// wizard lives in <QuestionsDialog>, a portalled popup that auto-opens as soon
+// as the block arrives so users don't have to scroll for it. Dismissing keeps
+// the placeholder as a re-entry point; submitting threads the answers back as a
+// user message (identical format to the previous inline version).
 
+// Compact placeholder for a `<questions_for_user>` block. The actual wizard is
+// a SINGLE dialog owned by ChatPanel (auto-opened once per turn), so this only
+// renders the in-chat marker and an Answer button that (re)opens that dialog —
+// avoids the stacked-modal bug from every block owning its own dialog.
 function QuestionsBlock({
-  questions, interactive, onSubmit,
+  inner, interactive, onOpenQuestions,
 }: {
-  questions: AgentQuestion[];
+  inner: string;
   interactive: boolean;
-  onSubmit?: (text: string) => void;
+  onOpenQuestions?: (questions: AgentQuestion[]) => void;
 }) {
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [submitted, setSubmitted] = useState(false);
-
-  const toggle = (q: AgentQuestion, choiceId: string) => {
-    setAnswers((prev) => {
-      const cur = prev[q.id] ?? [];
-      if (q.multi) {
-        return { ...prev, [q.id]: cur.includes(choiceId) ? cur.filter((c) => c !== choiceId) : [...cur, choiceId] };
-      }
-      return { ...prev, [q.id]: [choiceId] };
-    });
-  };
-
-  const allAnswered = questions.every((q) => (answers[q.id]?.length ?? 0) > 0);
-
-  const submit = () => {
-    if (!allAnswered || !onSubmit) return;
-    const lines = questions.map((q) => {
-      const picked = (answers[q.id] ?? [])
-        .map((cid) => q.choices.find((c) => c.id === cid)?.label ?? cid)
-        .join(', ');
-      return `- ${q.text} → ${picked}`;
-    });
-    setSubmitted(true);
-    onSubmit(`Answers to your questions:\n${lines.join('\n')}`);
-  };
-
-  const locked = submitted || !interactive;
+  const questions = parseQuestions(inner);
+  if (questions.length === 0) return null;
+  const count = `${questions.length} question${questions.length === 1 ? '' : 's'}`;
 
   return (
-    <div className="rounded-md border border-primary/40 bg-primary/5 overflow-hidden">
-      <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary border-b border-primary/20">
-        {submitted ? 'Answered' : 'The agent needs your input'}
+    <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 flex items-center gap-3">
+      <MessagesSquare className="w-4 h-4 text-primary flex-shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold text-foreground">The agent needs your input</p>
+        <p className="text-[11px] text-muted-foreground truncate">
+          {interactive ? `${count} · click to answer` : count}
+        </p>
       </div>
-      <div className="p-2.5 space-y-3">
-        {questions.map((q) => (
-          <div key={q.id} className="space-y-1.5">
-            <p className="text-xs font-medium text-foreground/90">
-              {q.text}{q.multi && <span className="text-[10px] text-muted-foreground/60 ml-1">(select all that apply)</span>}
-            </p>
-            <div className="flex flex-col gap-1">
-              {q.choices.map((c) => {
-                const chosen = (answers[q.id] ?? []).includes(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    disabled={locked}
-                    onClick={() => toggle(q, c.id)}
-                    className={cn(
-                      'flex items-start gap-2 w-full text-left px-2.5 py-1.5 rounded border text-xs transition-colors disabled:opacity-70 disabled:cursor-default',
-                      chosen
-                        ? 'border-primary/50 bg-primary/10 text-foreground'
-                        : 'border-border bg-background/40 text-muted-foreground hover:text-foreground hover:border-border/80',
-                    )}
-                  >
-                    <span className={cn('mt-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-sm border flex-shrink-0',
-                      chosen ? 'bg-primary border-primary text-primary-foreground' : 'border-border')}>
-                      {chosen && <Check className="w-2.5 h-2.5" />}
-                    </span>
-                    <span className="flex flex-col min-w-0">
-                      <span className="font-medium">{c.label}</span>
-                      {c.description && <span className="text-[10px] text-muted-foreground/70">{c.description}</span>}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {!submitted && interactive && (
+      {interactive && (
+        <Button size="xs" onClick={() => onOpenQuestions?.(questions)}>Answer</Button>
+      )}
+    </div>
+  );
+}
+
+// ─── CLI approval card ──────────────────────────────────────────────────────
+// Surfaced when the Claude Code CLI failed one or more tool calls with
+// "requires approval". Approve grants session-scoped bypass permissions and
+// auto-resubmits the last user prompt so the work resumes.
+
+function CliApprovalCard({
+  data, interactive, onApprove,
+}: {
+  data: Record<string, unknown>;
+  interactive: boolean;
+  onApprove?: () => void;
+}) {
+  const [decided, setDecided] = useState<'approved' | 'denied' | null>(null);
+  const reason = String(data.reason ?? 'The agent needs permission to run commands.');
+  const commands = Array.isArray(data.commands) ? (data.commands as string[]) : [];
+
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-500/20">
+        <ShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0" />
+        <span className="text-xs font-semibold text-foreground">
+          {decided === 'approved' ? 'Approved · resuming' : decided === 'denied' ? 'Denied' : 'Approval needed'}
+        </span>
+      </div>
+      <div className="p-3 space-y-2">
+        <p className="text-xs text-muted-foreground leading-relaxed">{reason}</p>
+        {commands.length > 0 && (
+          <ul className="rounded border border-border/60 bg-background/60 px-2.5 py-1.5 space-y-0.5">
+            {commands.map((c, i) => (
+              <li key={i} className="text-[11px] font-mono text-foreground/90 truncate">
+                <span className="text-muted-foreground/60 mr-1.5">$</span>{c}
+              </li>
+            ))}
+          </ul>
+        )}
+        {decided === null && interactive && (
           <div className="flex items-center justify-between pt-1">
             <span className="text-[10px] text-muted-foreground/60">
-              {allAnswered ? 'Ready to send' : 'Answer every question to continue'}
+              Grants bypass for this session only. You can revoke by resetting the thread.
             </span>
-            <Button size="xs" onClick={submit} disabled={!allAnswered}>Submit answers</Button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button size="xs" variant="outline" onClick={() => setDecided('denied')}>Deny</Button>
+              <Button
+                size="xs"
+                onClick={() => { setDecided('approved'); onApprove?.(); }}
+              >
+                Approve for session
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -145,22 +192,269 @@ function QuestionsBlock({
   );
 }
 
-function BlockView({ block, interactive, onSubmitAnswers }: {
+// ─── Pending-action approval card ────────────────────────────────────────────
+// A supervised-mode API model proposes an action as a <pending_action> block and
+// pauses. This renders it as an interactive card; approving/rejecting continues
+// the turn via a follow-up prompt (wired in ChatPanel). Only the latest, settled
+// assistant message gets live buttons (`interactive`).
+function PendingActionBlockCard({
+  data, interactive, onDecision,
+}: {
+  data: Record<string, unknown>;
+  interactive: boolean;
+  onDecision?: (decision: 'approve' | 'reject') => void;
+}) {
+  const [decided, setDecided] = useState<'approve' | 'reject' | null>(null);
+  const actionType = String(data.actionType ?? 'action').replace(/_/g, ' ');
+  const description = String(data.description ?? '');
+  const command = String(data.command ?? '');
+  const files = String(data.filesAffected ?? '');
+  const risk = String(data.risk ?? 'low');
+  const reason = String(data.reason ?? '');
+  const riskTone = risk === 'high' ? 'text-red-400 border-red-400/40 bg-red-400/10'
+    : risk === 'medium' ? 'text-amber-400 border-amber-400/40 bg-amber-400/10'
+    : 'text-green-400 border-green-400/40 bg-green-400/10';
+
+  return (
+    <div className="rounded-lg border border-primary/40 bg-primary/5 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-primary/20">
+        <ShieldAlert className="w-4 h-4 text-primary flex-shrink-0" />
+        <span className="text-xs font-semibold text-foreground">
+          {decided === 'approve' ? 'Approved · continuing' : decided === 'reject' ? 'Rejected' : 'Approval needed'}
+        </span>
+        <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/60">{actionType}</span>
+        <span className={cn('ml-auto px-1.5 py-0.5 rounded border text-[9px] font-mono uppercase tracking-wider', riskTone)}>
+          {risk} risk
+        </span>
+      </div>
+      <div className="p-3 space-y-2">
+        {description && <p className="text-xs text-foreground/90 leading-relaxed">{description}</p>}
+        {command && (
+          <pre className="text-[11px] font-mono bg-background/60 rounded border border-border px-2.5 py-1.5 overflow-auto">
+            <span className="text-muted-foreground/50 mr-1.5">$</span>{command}
+          </pre>
+        )}
+        {files && (
+          <p className="text-[10px] text-muted-foreground/70">
+            <span className="uppercase tracking-wider mr-1.5 text-muted-foreground/50">files</span>
+            <span className="font-mono text-foreground/80">{files}</span>
+          </p>
+        )}
+        {reason && <p className="text-[11px] text-muted-foreground/70 italic leading-relaxed">{reason}</p>}
+        {decided === null && interactive && (
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="xs" variant="outline" onClick={() => { setDecided('reject'); onDecision?.('reject'); }}>
+              Reject
+            </Button>
+            <Button size="xs" onClick={() => { setDecided('approve'); onDecision?.('approve'); }}>
+              Approve &amp; continue
+            </Button>
+          </div>
+        )}
+        {decided === null && !interactive && (
+          <p className="text-[10px] text-muted-foreground/40 pt-0.5">Approve on the latest turn to continue.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Task summary card ──────────────────────────────────────────────────────
+// Structured wrap-up the model emits at the end of non-trivial turns. Renders
+// as a distinct footer card with sectioned headings so a reviewer can scan
+// what was done without re-reading the whole transcript.
+
+const FILE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  added: FilePlus,
+  modified: FileEdit,
+  deleted: FileMinus,
+};
+const FILE_CHIP: Record<string, string> = {
+  added: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25',
+  modified: 'text-amber-400 bg-amber-500/10 border-amber-500/25',
+  deleted: 'text-red-400 bg-red-500/10 border-red-500/25',
+};
+
+function TaskSummaryCard({ data }: { data: Record<string, unknown> }) {
+  const whatWasDone = String(data.whatWasDone ?? '');
+  const rootCause = String(data.rootCause ?? '');
+  const features = String(data.features ?? '');
+  const notes = String(data.notes ?? '');
+  const files = (Array.isArray(data.files) ? data.files : []) as TaskSummaryFile[];
+  const commands = (Array.isArray(data.commands) ? data.commands : []) as string[];
+
+  const [showAllFiles, setShowAllFiles] = useState(false);
+  const shownFiles = showAllFiles ? files : files.slice(0, 10);
+
+  const copyAll = async () => {
+    if (!commands.length) return;
+    try {
+      await navigator.clipboard.writeText(commands.join('\n'));
+      toast.success('Copied verification commands');
+    } catch {
+      toast.error('Copy failed');
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-primary/20">
+        <Sparkles className="w-4 h-4 text-primary flex-shrink-0" />
+        <span className="text-xs font-semibold text-foreground">Task summary</span>
+      </div>
+      <div className="p-3 space-y-3">
+        {whatWasDone && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">What was done</p>
+            <Markdown text={whatWasDone} />
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Files</p>
+            <ul className="rounded border border-border/60 bg-background/40 divide-y divide-border/40">
+              {shownFiles.map((f, i) => {
+                const Icon = FILE_ICON[f.change] || FileTextIcon;
+                const chip = FILE_CHIP[f.change] || 'text-muted-foreground bg-muted/30 border-border';
+                return (
+                  <li key={i} className="flex items-start gap-2 px-2.5 py-1.5 text-xs">
+                    <Icon className="w-3 h-3 mt-0.5 text-muted-foreground flex-shrink-0" />
+                    <span className="font-mono text-foreground/90 truncate flex-shrink min-w-0">{f.path}</span>
+                    <span className={cn(
+                      'px-1.5 py-[1px] rounded text-[10px] font-medium leading-none border flex-shrink-0',
+                      chip,
+                    )}>
+                      {f.change}
+                    </span>
+                    {f.description && (
+                      <span className="text-muted-foreground truncate flex-1 min-w-0">— {f.description}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {files.length > 10 && !showAllFiles && (
+              <button
+                onClick={() => setShowAllFiles(true)}
+                className="text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                +{files.length - 10} more…
+              </button>
+            )}
+          </div>
+        )}
+
+        {rootCause && (
+          <div className="space-y-1">
+            <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-red-400">
+              <Bug className="w-3 h-3" /> Root cause
+            </p>
+            <Markdown text={rootCause} />
+          </div>
+        )}
+
+        {features && (
+          <div className="space-y-1">
+            <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+              <Sparkles className="w-3 h-3" /> Features
+            </p>
+            <Markdown text={features} />
+          </div>
+        )}
+
+        {commands.length > 0 && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+                <ShieldCheck className="w-3 h-3" /> Verification
+              </p>
+              <button
+                onClick={copyAll}
+                title="Copy all commands"
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Copy className="w-3 h-3" /> Copy all
+              </button>
+            </div>
+            <ul className="rounded border border-border/60 bg-background/40 divide-y divide-border/40">
+              {commands.map((c, i) => (
+                <li key={i} className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] font-mono">
+                  <span className="text-muted-foreground/60">$</span>
+                  <span className="text-foreground/90 truncate flex-1">{c}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {notes && (
+          <div className="space-y-1">
+            <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              <ClipboardList className="w-3 h-3" /> Notes
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{notes}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const BlockView = memo(function BlockView({ block, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction }: {
   block: AgentBlock;
   interactive: boolean;
-  onSubmitAnswers?: (text: string) => void;
+  streaming?: boolean;
+  onOpenQuestions?: (questions: AgentQuestion[]) => void;
+  onApproveCliBypass?: () => void;
+  onPendingAction?: (decision: 'approve' | 'reject') => void;
 }) {
   const inner = String(block.data?.inner ?? '');
 
   switch (block.type) {
     case 'text':
-      return <p className="text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed">{block.raw}</p>;
+      // Animate word-by-word while streaming; render lightweight markdown once
+      // the message settles (so partial fences/formatting never flicker).
+      return streaming
+        ? <StreamingText text={block.raw} streaming />
+        : <Markdown text={block.raw} />;
+    case 'thinking':
+      return <ThinkingCard inner={inner || block.raw} streaming={streaming} />;
     case 'action_log':
       return <ActionLog data={block.data ?? {}} />;
     case 'questions_for_user':
-      return <QuestionsBlock questions={parseQuestions(inner)} interactive={interactive} onSubmit={onSubmitAnswers} />;
+      return <QuestionsBlock inner={inner} interactive={interactive} onOpenQuestions={onOpenQuestions} />;
+    case 'cli_approval_needed':
+      return (
+        <CliApprovalCard
+          data={block.data ?? {}}
+          interactive={interactive}
+          onApprove={onApproveCliBypass}
+        />
+      );
+    case 'pending_action':
+      return (
+        <PendingActionBlockCard
+          data={block.data ?? {}}
+          interactive={interactive}
+          onDecision={onPendingAction}
+        />
+      );
+    case 'task_summary':
+      return <TaskSummaryCard data={block.data ?? {}} />;
     case 'plan':
-      return <LabeledCard label="Plan" tone="text-primary" inner={inner} />;
+      // Render the plan as markdown so it's fully readable (lists, bold, code)
+      // rather than a monospace dump.
+      return (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
+          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary border-b border-primary/20">
+            Plan
+          </div>
+          <div className="px-3 py-2">
+            <Markdown text={inner || block.raw} />
+          </div>
+        </div>
+      );
     case 'agent_status':
       return <LabeledCard label="Status" inner={inner} />;
     case 'session_state_change':
@@ -178,28 +472,167 @@ function BlockView({ block, interactive, onSubmitAnswers }: {
       return <LabeledCard label={block.type.replace(/_/g, ' ')} inner={inner} />;
     case 'code_file':
     case 'code_diff':
-      return <CodeBlock inner={inner} />;
+      return <CodeFrame code={inner} />;
     default:
       return <LabeledCard label={block.type} inner={inner || block.raw} />;
   }
+});
+
+// ─── Semantic grouping ───────────────────────────────────────────────────────
+// The agent emits a flat stream of blocks. To make a turn scannable we group
+// consecutive blocks into semantic sections — reasoning, the actions the agent
+// took (tool steps, edits), and its response prose — preserving chronological
+// order. Only the "actions" run gets a labeled, collapsible wrapper (the noisy
+// part); prose and reasoning render inline with a light "Response" divider so
+// the reader can tell "what it did" from "what it's telling me".
+
+type BlockCat = 'thinking' | 'action' | 'answer' | 'interactive';
+
+const ACTION_TYPES = new Set([
+  'action_log', 'file_changes', 'editor_sync', 'branch_visualizer_refresh',
+  'nvim_command', 'code_file', 'code_diff',
+]);
+const INTERACTIVE_TYPES = new Set(['questions_for_user', 'cli_approval_needed', 'pending_action']);
+
+function categoryOf(type: string): BlockCat {
+  if (type === 'thinking') return 'thinking';
+  if (ACTION_TYPES.has(type)) return 'action';
+  if (INTERACTIVE_TYPES.has(type)) return 'interactive';
+  return 'answer';
+}
+
+interface BlockRun { cat: BlockCat; items: { block: AgentBlock; idx: number }[] }
+
+function groupRuns(blocks: AgentBlock[]): BlockRun[] {
+  const runs: BlockRun[] = [];
+  blocks.forEach((block, idx) => {
+    const cat = categoryOf(block.type);
+    const last = runs[runs.length - 1];
+    if (last && last.cat === cat) last.items.push({ block, idx });
+    else runs.push({ cat, items: [{ block, idx }] });
+  });
+  return runs;
+}
+
+// Collapsible cluster of tool steps / edits. Defaults open while streaming so
+// the user watches work happen; can be folded to focus on the response.
+function ActionsSection({
+  run, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction,
+}: {
+  run: BlockRun;
+  interactive: boolean;
+  streaming?: boolean;
+  onOpenQuestions?: (questions: AgentQuestion[]) => void;
+  onApproveCliBypass?: () => void;
+  onPendingAction?: (decision: 'approve' | 'reject') => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const count = run.items.length;
+  return (
+    <div className="rounded-lg border border-border/50 bg-muted/10 overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 w-full px-2.5 py-1.5 text-left hover:bg-muted/25 transition-colors"
+      >
+        <Wrench className={cn('w-3 h-3 text-muted-foreground', streaming && 'text-primary')} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Actions
+        </span>
+        <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+          {count} step{count === 1 ? '' : 's'}
+        </span>
+        <ChevronDown className={cn('w-3 h-3 ml-auto text-muted-foreground transition-transform', open && 'rotate-180')} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="flex flex-col gap-1.5 px-2 pb-2 pt-0.5 border-t border-border/40">
+              {run.items.map(({ block, idx }) => (
+                <BlockView
+                  key={`${block.type}-${idx}`}
+                  block={block}
+                  interactive={interactive}
+                  streaming={streaming}
+                  onOpenQuestions={onOpenQuestions}
+                  onApproveCliBypass={onApproveCliBypass}
+                  onPendingAction={onPendingAction}
+                />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 export default function AgentBlocks({
-  blocks, density = 'verbose', interactive = false, onSubmitAnswers,
+  blocks, density = 'verbose', interactive = false, streaming = false, onOpenQuestions, onApproveCliBypass, onPendingAction,
 }: {
   blocks: AgentBlock[];
   density?: LogDensity;
   /** When true, an unanswered Q&A block is actionable (latest turn only). */
   interactive?: boolean;
-  onSubmitAnswers?: (text: string) => void;
+  /** True while the parent message is still streaming (animates text). */
+  streaming?: boolean;
+  onOpenQuestions?: (questions: AgentQuestion[]) => void;
+  onApproveCliBypass?: () => void;
+  onPendingAction?: (decision: 'approve' | 'reject') => void;
 }) {
   const shown = filterBlocksByDensity(blocks, density);
   if (shown.length === 0) return null;
+
+  const runs = groupRuns(shown);
+  // Show a "Response" divider before the first prose/answer run that follows
+  // reasoning or actions — the reader's cue that the agent is now explaining.
+  const firstAnswer = runs.findIndex((r) => r.cat === 'answer');
+  const showResponseDivider = firstAnswer > 0;
+
   return (
-    <div className="flex flex-col gap-2">
-      {shown.map((b, i) => (
-        <BlockView key={i} block={b} interactive={interactive} onSubmitAnswers={onSubmitAnswers} />
-      ))}
+    <div className="flex flex-col gap-2.5">
+      {runs.map((run, ri) => {
+        if (run.cat === 'action') {
+          return (
+            <ActionsSection
+              key={`run-${ri}`}
+              run={run}
+              interactive={interactive}
+              streaming={streaming}
+              onOpenQuestions={onOpenQuestions}
+              onApproveCliBypass={onApproveCliBypass}
+              onPendingAction={onPendingAction}
+            />
+          );
+        }
+        return (
+          <div key={`run-${ri}`} className="flex flex-col gap-2.5">
+            {showResponseDivider && ri === firstAnswer && (
+              <div className="flex items-center gap-2 pt-0.5 text-muted-foreground/50">
+                <CornerDownRight className="w-3 h-3" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider">Response</span>
+                <span className="flex-1 h-px bg-border/50" />
+              </div>
+            )}
+            {run.items.map(({ block, idx }) => (
+              <BlockView
+                key={`${block.type}-${idx}`}
+                block={block}
+                interactive={interactive}
+                streaming={streaming}
+                onOpenQuestions={onOpenQuestions}
+                onApproveCliBypass={onApproveCliBypass}
+                onPendingAction={onPendingAction}
+              />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

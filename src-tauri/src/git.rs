@@ -145,6 +145,12 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Whether `sha` is a plain hex git object name (1–40 hex digits). Used to keep
+/// caller-supplied revisions out of git's option-parsing path.
+fn is_hex_sha(sha: &str) -> bool {
+    !sha.is_empty() && sha.len() <= 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 fn basename(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -359,6 +365,11 @@ fn parse_refs(toplevel: &str, default_branch: &str) -> Result<(Vec<Branch>, Vec<
 /// Per-commit file stats. Mirrors `fetchCommitDetails`.
 #[tauri::command]
 pub fn git_commit_details(repo_path: String, sha: String) -> Result<CommitDetails, String> {
+    // `sha` lands in git's revision position, so reject anything that isn't a
+    // plain hex object name (prevents a leading-`-` value being parsed as a flag).
+    if !is_hex_sha(&sha) {
+        return Err(format!("invalid commit sha: {sha}"));
+    }
     let raw = run_git(
         &repo_path,
         &[
@@ -496,9 +507,35 @@ pub fn git_checkout_branch(repo_path: String, name: String) -> Result<String, St
     // Strip a `remotes/` prefix if present; `git checkout origin/x` DWIMs a
     // local tracking branch, which is what users expect from the switcher.
     let target = branch.strip_prefix("remotes/").unwrap_or(branch);
+    // `target` is a revision arg — reject a leading `-` so it can't be parsed as
+    // a git option (argument injection).
+    if target.starts_with('-') {
+        return Err(format!("invalid branch name: {target}"));
+    }
     run_git(&repo_path, &["checkout", target])?;
 
     // Report the branch git actually landed on (handles detached-HEAD edge cases).
     let head = run_git(&repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     Ok(head.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_hex_sha;
+
+    #[test]
+    fn accepts_valid_shas() {
+        assert!(is_hex_sha("a1b2c3d"));
+        assert!(is_hex_sha("0123456789abcdef0123456789abcdef01234567")); // 40 chars
+        assert!(is_hex_sha("DEADBEEF"));
+    }
+
+    #[test]
+    fn rejects_option_injection_and_junk() {
+        assert!(!is_hex_sha(""));
+        assert!(!is_hex_sha("--output=/tmp/x")); // leading dash → git flag
+        assert!(!is_hex_sha("HEAD~1")); // non-hex
+        assert!(!is_hex_sha("main")); // branch name, not a sha
+        assert!(!is_hex_sha("0123456789abcdef0123456789abcdef012345678")); // 41 chars
+    }
 }

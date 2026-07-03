@@ -3,7 +3,6 @@ import { cn } from '@/lib/utils';
 import SessionContextBar from './SessionContextBar';
 import ModelPicker from './ModelPicker';
 import BranchIndicator from './BranchIndicator';
-import LogDensityToggle from './LogDensityToggle';
 import type { Session } from '@/types/session';
 
 // The IDE's agent configuration, docked at the top of the middle (agent) column
@@ -36,7 +35,6 @@ export default function ChatConfigStrip({
         )}
         <div className="ml-auto flex items-center gap-1.5">
           <BranchIndicator session={session} />
-          <LogDensityToggle />
           <ModelPicker />
         </div>
       </div>

@@ -2,10 +2,14 @@ import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
+import { WebglAddon } from 'xterm-addon-webgl';
+import { CanvasAddon } from 'xterm-addon-canvas';
 import 'xterm/css/xterm.css';
 import { isTauri, type Unlisten } from '@/lib/platform';
 import { spawnPty, writePty, resizePty, killPty, onPtyData, onPtyExit } from '@/lib/pty';
 import { useAppContext } from '@/store/AppContext';
+import { useSystemFonts } from '@/hooks/useSystemFonts';
+import { buildTerminalFontFamily } from '@/lib/terminalFont';
 import type { TerminalDef } from '@/types/terminal';
 
 const DARK_THEME = {
@@ -38,22 +42,33 @@ export interface TerminalHandle {
  * the browser. The optional `onExit` fires when the PTY child exits (used by
  * TerminalDock to close nvim tabs when the user runs `:q`/`:wq`).
  */
+const BASE_FONT_SIZE = 13;
+
 export default function Terminal({
   def,
   active = true,
+  fontScale = 1,
   onExit,
   registerWriter,
 }: {
   def: TerminalDef;
   /** Whether this terminal's tab is currently visible. Drives refit-on-show. */
   active?: boolean;
+  /** Per-panel zoom factor applied to the xterm font size. */
+  fontScale?: number;
   onExit?: (code: number | null) => void;
   registerWriter?: (write: (data: string) => Promise<void>) => void;
 }) {
   const { state } = useAppContext();
+  const { nerdFonts } = useSystemFonts();
+  const fontFamily = buildTerminalFontFamily(state.terminalFont, nerdFonts);
   const containerRef = useRef<HTMLDivElement>(null);
   const themeRef = useRef(state.theme);
   themeRef.current = state.theme;
+  const fontFamilyRef = useRef(fontFamily);
+  fontFamilyRef.current = fontFamily;
+  const fontScaleRef = useRef(fontScale);
+  fontScaleRef.current = fontScale;
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
   const registerWriterRef = useRef(registerWriter);
@@ -67,14 +82,20 @@ export default function Terminal({
     if (!isTauri() || !containerRef.current) return;
 
     const term = new XTerm({
-      fontFamily: 'ui-monospace, "Geist Mono", "SFMono-Regular", Menlo, monospace',
-      fontSize: 13,
+      fontFamily: fontFamilyRef.current,
+      fontSize: Math.round(BASE_FONT_SIZE * fontScaleRef.current),
       lineHeight: 1.2,
       letterSpacing: 0,
-      cursorBlink: true,
+      // Cursor is nvim's to drive: guicursor sends DECSCUSR to change shape and
+      // blink per mode. Fighting it at the xterm level makes the cursor flicker
+      // and occasionally vanish during full-screen redraws.
+      cursorBlink: false,
+      cursorStyle: 'block',
+      cursorInactiveStyle: 'outline', // keep cursor visible when tab loses focus
       scrollback: 5000,
       theme: themeRef.current === 'dark' ? DARK_THEME : LIGHT_THEME,
       allowProposedApi: true,
+      macOptionIsMeta: true, // Alt-based nvim mappings on macOS
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -83,6 +104,24 @@ export default function Terminal({
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
     try { fit.fit(); } catch { /* container not laid out yet */ }
+
+    // Renderer ladder: WebGL is the sharpest and keeps the cursor synced with
+    // nvim's 30-60 Hz redraws; Canvas is a close second; both must load AFTER
+    // term.open(). The default DOM renderer stays if both fail (headless CI,
+    // GPU blocked, tiny embedded webview).
+    let rendererAddon: WebglAddon | CanvasAddon | null = null;
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+      rendererAddon = webgl;
+    } catch {
+      try {
+        const canvas = new CanvasAddon();
+        term.loadAddon(canvas);
+        rendererAddon = canvas;
+      } catch { /* fall back to default DOM renderer */ }
+    }
 
     const id = `${def.id}_${Math.random().toString(36).substring(2, 11)}`;
     activePtyIdRef.current = id;
@@ -136,12 +175,41 @@ export default function Terminal({
       unlistenData();
       unlistenExit();
       killPty(id).catch(() => {});
+      rendererAddon?.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [def.id]);
+
+  // Live font swap when the user picks a new family in Settings. Cell metrics
+  // change with the font, so refit + resize the PTY to match the new grid.
+  useEffect(() => {
+    const term = termRef.current, fit = fitRef.current;
+    if (!term || !fit) return;
+    term.options.fontFamily = fontFamily;
+    try {
+      fit.fit();
+      if (activePtyIdRef.current) {
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+      }
+    } catch { /* container not laid out yet */ }
+  }, [fontFamily]);
+
+  // Live font-size swap when the panel zoom changes. Cell metrics change, so
+  // refit + resize the PTY to match the new grid (mirrors the fontFamily swap).
+  useEffect(() => {
+    const term = termRef.current, fit = fitRef.current;
+    if (!term || !fit) return;
+    term.options.fontSize = Math.round(BASE_FONT_SIZE * fontScale);
+    try {
+      fit.fit();
+      if (activePtyIdRef.current) {
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+      }
+    } catch { /* container not laid out yet */ }
+  }, [fontScale]);
 
   // Refit when this tab becomes visible: hidden panes fit to a stale/zero size,
   // so a terminal opened while the dock was small renders cramped until shown.

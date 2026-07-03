@@ -8,8 +8,9 @@ export function statusDot(s: Session): string {
     : s.context.status === 'idle' ? 'bg-muted-foreground/40'
       : s.context.status === 'complete' ? 'bg-emerald-400'
         : s.context.status === 'planning' || s.context.status === 'pending_plan_approval' ? 'bg-violet-400'
-          : s.context.status === 'awaiting_approval' ? 'bg-amber-400'
-            : 'bg-cyan-400';
+          : s.context.status === 'awaiting_input' ? 'bg-violet-400'
+            : s.context.status === 'awaiting_approval' ? 'bg-amber-400'
+              : 'bg-cyan-400';
 }
 
 export function lastActivity(s: Session): string {
@@ -79,6 +80,13 @@ export function statusMeta(status: SessionStatus): StatusMeta {
         label: 'Approval',
         pillClass: 'bg-amber-500/10 text-amber-400 border border-amber-500/25',
         dotClass: 'bg-amber-400',
+        hasPill: true,
+      };
+    case 'awaiting_input':
+      return {
+        label: 'Needs input',
+        pillClass: 'bg-violet-500/10 text-violet-400 border border-violet-500/25',
+        dotClass: 'bg-violet-400',
         hasPill: true,
       };
     case 'complete':

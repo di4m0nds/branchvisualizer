@@ -2,20 +2,23 @@ import Anthropic from '@anthropic-ai/sdk';
 import { invoke, isTauri } from '../../platform';
 import { getProviderKey } from '../../providerKeys';
 import type {
-  AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralResponse,
+  AgentRequest, AgentTransport, ContextSizeId, ModelInfo, NeutralContent, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
 } from '../transport';
+import { STD_ONLY, STD_OR_1M } from './claudeModels';
 
 // Anthropic model IDs are date-suffixed on the API. Using the bare alias (e.g.
 // `claude-haiku-4-5`) 404s → the probe silently degrades to "detected · request
-// failed" and the picker shows UNKNOWN. Pin the suffixed ids the API resolves.
+// failed" and the picker shows UNKNOWN. Pin the suffixed id the API resolves for
+// the PROBE only; the selectable Haiku id is the bare alias (see below).
 const PROBE_MODEL = 'claude-haiku-4-5-20251001';
+// contextTokens is the STANDARD size; the 1M variant lives in contextOptions.
 const MODELS: ModelInfo[] = [
-  { id: 'claude-fable-5',            label: 'Fable 5',    defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-opus-4-8',          label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-opus-4-7',          label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-sonnet-4-6',        label: 'Sonnet 4.6', defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000 },
+  { id: 'claude-fable-5',    label: 'Fable 5',    defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
 ];
 
 async function resolveKey(): Promise<string | null> {
@@ -85,7 +88,7 @@ type StreamParams = Parameters<Anthropic['messages']['stream']>[0];
 
 class AnthropicTransport implements AgentTransport {
   readonly id = 'anthropic';
-  constructor(readonly modelId: string, private client: Anthropic) {}
+  constructor(readonly modelId: string, private client: Anthropic, readonly contextSize: ContextSizeId = 'standard') {}
 
   async createMessage(req: AgentRequest, cbs: StreamCallbacks): Promise<NeutralResponse> {
     const body = {
@@ -98,7 +101,10 @@ class AnthropicTransport implements AgentTransport {
       ...(req.thinking ? { thinking: { type: 'adaptive' } } : {}),
     };
 
-    const stream = this.client.messages.stream(body as unknown as StreamParams);
+    const stream = this.client.messages.stream(
+      body as unknown as StreamParams,
+      req.signal ? { signal: req.signal } : undefined,
+    );
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {
@@ -139,9 +145,18 @@ export const anthropicProvider: Provider = {
     }
   },
 
-  async createTransport(modelId: string): Promise<AgentTransport> {
+  async createTransport(modelId: string, context: ContextSizeId = 'standard'): Promise<AgentTransport> {
     const key = await resolveKey();
     if (!key) throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY.');
-    return new AnthropicTransport(modelId, new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true }));
+    // The 1M-context header is defensive/legacy: current models (Opus 4.8/4.7,
+    // Sonnet 4.6, Fable 5) serve 1M at standard pricing on the direct API, so
+    // this is effectively a no-op there. The context toggle here is mostly
+    // informational — the header just makes the intent explicit.
+    const client = new Anthropic({
+      apiKey: key,
+      dangerouslyAllowBrowser: true,
+      ...(context === '1m' ? { defaultHeaders: { 'anthropic-beta': 'context-1m-2025-08-07' } } : {}),
+    });
+    return new AnthropicTransport(modelId, client, context);
   },
 };

@@ -1,11 +1,13 @@
 import type {
-  AccessLevel, BuildMode, PinnedRule, Project, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
+  AccessLevel, BuildMode, PinnedRule, PlanComment, Project, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
 } from './session';
-import type { ProbeResult } from '@/lib/agent/transport';
+import type { ContextSizeId, ProbeResult } from '@/lib/agent/transport';
 
 export interface ModelRef {
   providerId: string;
   modelId: string;
+  /** Selected context-window variant. Undefined ⇒ 'standard'. */
+  context?: ContextSizeId;
 }
 
 // ─── Repository & API types ────────────────────────────────────────────────
@@ -176,6 +178,8 @@ export interface AppState {
   showCheckpoints: boolean;
   /** Agent-log verbosity for the chat transcript. */
   logDensity: LogDensity;
+  /** User-picked terminal/nvim font family (null = system default stack). */
+  terminalFont: string | null;
   /** Registered projects — each groups its own set of sessions/threads. */
   projects: Project[];
   /** Agent sessions (IDE mode). Additive — does not affect the flat repo view. */
@@ -185,6 +189,10 @@ export interface AppState {
   currentModel: ModelRef;
   /** Cached probe result per provider id. */
   providerStatus: Record<string, ProbeResult>;
+  /** Model the provider actually served, keyed by `${providerId}:${modelId}`.
+   *  Runtime-only (not persisted) — lets the chip show what really ran vs what
+   *  was requested (e.g. a `sonnet` alias resolving to a concrete version). */
+  servedModels: Record<string, string>;
   /** App-global pinned rules. Seeds new sessions; edited via the rules editor. */
   pinnedRules: PinnedRule[];
 }
@@ -219,6 +227,7 @@ export type AppAction =
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
   | { type: 'SET_SHOW_CHECKPOINTS'; show: boolean }
   | { type: 'SET_LOG_DENSITY'; density: LogDensity }
+  | { type: 'SET_TERMINAL_FONT'; family: string | null }
   | { type: 'SET_SOURCE'; source: RepoSource; localPath?: string | null }
   // ── Projects ──
   | { type: 'ADD_PROJECT'; project: Project }
@@ -230,6 +239,7 @@ export type AppAction =
   | { type: 'SET_ACTIVE_SESSION'; id: string }
   | { type: 'CLOSE_SESSION'; id: string }
   | { type: 'ARCHIVE_SESSION'; id: string; archived: boolean }
+  | { type: 'RENAME_SESSION'; id: string; title: string }
   | { type: 'SET_ACCESS_LEVEL'; sessionId: string; level: AccessLevel }
   | { type: 'SET_BUILD_MODE'; sessionId: string; mode: BuildMode }
   | { type: 'SET_REASONING_BUDGET'; sessionId: string; budget: ReasoningBudget }
@@ -240,9 +250,23 @@ export type AppAction =
   | { type: 'SET_SESSION_GIT'; sessionId: string; branch: string | null; statusSummary: string | null }
   | { type: 'ADD_AGENT_MESSAGE'; sessionId: string; message: AgentMessage }
   | { type: 'UPDATE_AGENT_MESSAGE'; sessionId: string; messageId: string; patch: Partial<AgentMessage> }
+  /** Drop the message identified by `beforeMessageId` AND every message after
+   *  it. Used by the "revert conversation to this point" affordance so a user
+   *  can edit and re-send an earlier turn without accumulating dead history. */
+  | { type: 'TRUNCATE_MESSAGES_BEFORE'; sessionId: string; beforeMessageId: string }
+  /** Flip the session's Claude Code CLI bypass flag. Set true when the user
+   *  approves the `cli_approval_needed` card so subsequent turns pass
+   *  `--permission-mode bypassPermissions`. */
+  | { type: 'SET_SESSION_CLI_BYPASS'; sessionId: string; bypass: boolean }
+  // ── Plan view (annotations + in-place edits) ──
+  | { type: 'ADD_PLAN_COMMENT'; sessionId: string; comment: PlanComment }
+  | { type: 'UPDATE_PLAN_COMMENT'; sessionId: string; commentId: string; patch: Partial<PlanComment> }
+  | { type: 'REMOVE_PLAN_COMMENT'; sessionId: string; commentId: string }
+  | { type: 'SET_PLAN_DRAFT'; sessionId: string; draft: Session['planDraft'] }
   // ── Model + provider status ──
   | { type: 'SET_MODEL'; model: ModelRef }
   | { type: 'SET_PROVIDER_STATUS'; providerId: string; status: ProbeResult }
+  | { type: 'SET_SERVED_MODEL'; key: string; model: string }
   // ── Pinned rules (app-global CRUD) ──
   | { type: 'ADD_PINNED_RULE'; rule: PinnedRule }
   | { type: 'UPDATE_PINNED_RULE'; ruleId: string; patch: Partial<PinnedRule> }

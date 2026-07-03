@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
@@ -12,9 +12,12 @@ import LoadingOverlay from '@/components/LoadingOverlay';
 import ErrorBanner from '@/components/ErrorBanner';
 import PolicyModal, { hasAcceptedPolicy } from '@/components/PolicyModal';
 import LegalPage, { type LegalTab } from '@/components/LegalPage';
-import IdeWorkspace from '@/components/ide/IdeWorkspace';
 import SessionsPanel from '@/components/ide/SessionsPanel';
 import { useAppZoom } from '@/hooks/useAppZoom';
+
+// The IDE pulls in xterm + all LLM provider SDKs; lazy-load it so the marketing
+// home (/) and the visualizer routes don't ship that code in the initial chunk.
+const IdeWorkspace = lazy(() => import('@/components/ide/IdeWorkspace'));
 
 // ─── Home page (/) ─────────────────────────────────────────────────────────────
 
@@ -126,7 +129,9 @@ function RepoPage() {
 
 function AppShell() {
   const { state } = useAppContext();
-  useAppZoom(); // installs Ctrl+/-/0 hotkeys and applies persisted zoom on load
+  const { pathname } = useLocation();
+  // Whole-app zoom everywhere except the IDE, which uses per-panel scoped zoom.
+  useAppZoom(pathname !== '/ide');
 
   useEffect(() => {
     const root = document.documentElement;
@@ -140,7 +145,6 @@ function AppShell() {
 
   // Legal footer belongs on the marketing/visualizer surfaces, not the IDE
   // workspace where vertical space is precious. Keep it everywhere except /ide.
-  const { pathname } = useLocation();
   const showFooter = pathname !== '/ide';
 
   return (
@@ -148,12 +152,14 @@ function AppShell() {
       <Navbar />
 
       <div className="flex flex-col flex-1 min-h-0">
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/ide" element={<IdeWorkspace />} />
-          <Route path="/local" element={<RepoPage />} />
-          <Route path="/:owner/:repo" element={<RepoPage />} />
-        </Routes>
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading…</div>}>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/ide" element={<IdeWorkspace />} />
+            <Route path="/local" element={<RepoPage />} />
+            <Route path="/:owner/:repo" element={<RepoPage />} />
+          </Routes>
+        </Suspense>
       </div>
 
       <Toaster
@@ -182,7 +188,7 @@ function AppShell() {
           <span className="opacity-30">·</span>
           <button className="hover:text-foreground transition-colors" onClick={() => setLegalTab('cookies')}>Cookies</button>
           <span className="opacity-30">·</span>
-          <span>© {new Date().getFullYear()} BranchVisualizer</span>
+          <span>© {new Date().getFullYear()} di4m0nds Code Agent</span>
         </footer>
       )}
     </div>

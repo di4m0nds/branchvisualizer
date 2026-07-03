@@ -11,7 +11,10 @@ export function createSession(project: Project, defaults: AgentDefaults): Sessio
   const context = createDefaultContext();
   return {
     id: nextId('session'),
-    title: project.name || 'Session',
+    // Placeholder until the first user message auto-derives a real title (see
+    // ADD_AGENT_MESSAGE in the reducer). Kept distinct from the project name so
+    // sessions don't visually repeat their project's label in the sidebar.
+    title: 'New session',
     projectId: project.id,
     repoSource: project.source,
     repoRef: project.path,

@@ -18,6 +18,13 @@ export interface IdeLayout {
   cfgCollapsed: boolean;
   /** BranchVisualizer config strip collapsed. */
   bvCollapsed: boolean;
+  /** Sidebar collapsed to an icon-only rail (fixed width, no resize handle). */
+  sidebarCollapsed: boolean;
+  /** Terminal dock collapsed to a thin bottom bar (chat gets the space). */
+  dockCollapsed: boolean;
+  /** Right column view: repo workspace (canvas/tabs), plan review, or the
+   *  container runtime panel. */
+  rightView: 'workspace' | 'plan' | 'runtime';
 }
 
 export const DEFAULT_IDE_LAYOUT: IdeLayout = {
@@ -26,6 +33,9 @@ export const DEFAULT_IDE_LAYOUT: IdeLayout = {
   dockHeight: 30,
   cfgCollapsed: false,
   bvCollapsed: false,
+  sidebarCollapsed: false,
+  dockCollapsed: false,
+  rightView: 'workspace',
 };
 
 export function loadIdeLayout(): IdeLayout {

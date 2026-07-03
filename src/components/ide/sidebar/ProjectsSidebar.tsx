@@ -6,7 +6,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Archive, ArrowDown10, ArrowDownAZ, Check, Eye, EyeOff, FolderPlus, Search,
+  Archive, ArrowDown10, ArrowDownAZ, Check, Eye, EyeOff, FolderPlus,
+  PanelLeftClose, Search,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
@@ -20,6 +21,7 @@ import { createSession } from '@/lib/sessions';
 import { nextId } from '@/types/session';
 import type { Project, Session } from '@/types/session';
 import ProjectGroup from './ProjectGroup';
+import SidebarRail from './SidebarRail';
 import { useSidebarPrefs, type SortMode } from './useSidebarPrefs';
 import { useSidebarSearch } from './useSidebarSearch';
 
@@ -38,7 +40,14 @@ const SORT_OPTIONS: { id: SortMode; label: string; Icon: typeof ArrowDown10 }[] 
   { id: 'name',   label: 'Alphabetical (A → Z)', Icon: ArrowDownAZ },
 ];
 
-export default function ProjectsSidebar() {
+export default function ProjectsSidebar({
+  railCollapsed = false,
+  onToggleRail,
+}: {
+  /** When true the sidebar renders as an icon-only rail. */
+  railCollapsed?: boolean;
+  onToggleRail?: () => void;
+} = {}) {
   const { state, dispatch } = useAppContext();
   const { loadLocalRepo } = useRepoData();
   const { collapsed, showArchived, sort, toggleCollapsed, setShowArchived, setSort } = useSidebarPrefs();
@@ -173,6 +182,16 @@ export default function ProjectsSidebar() {
   const sortActive = SORT_OPTIONS.find((o) => o.id === sort) ?? SORT_OPTIONS[0];
   const SortIcon = sortActive.Icon;
 
+  if (railCollapsed) {
+    return (
+      <SidebarRail
+        onExpand={() => onToggleRail?.()}
+        onAddProject={handleAddProject}
+        isAdding={isAdding}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0 border-r border-border bg-muted/10">
       {/* Header */}
@@ -241,6 +260,15 @@ export default function ProjectsSidebar() {
             >
               <FolderPlus className="w-3.5 h-3.5" />
             </button>
+            {onToggleRail && (
+              <button
+                onClick={onToggleRail}
+                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+                title="Collapse sidebar"
+              >
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -276,6 +304,7 @@ export default function ProjectsSidebar() {
                   onSelectThread={(id) => dispatch({ type: 'SET_ACTIVE_SESSION', id })}
                   onArchiveThread={(id, archived) => dispatch({ type: 'ARCHIVE_SESSION', id, archived })}
                   onDeleteThread={(id) => dispatch({ type: 'CLOSE_SESSION', id })}
+                  onRenameThread={(id, title) => dispatch({ type: 'RENAME_SESSION', id, title })}
                   onShowArchived={() => setShowArchived(true)}
                 />
               </div>

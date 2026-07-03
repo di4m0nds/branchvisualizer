@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppContext } from '@/store/AppContext';
 import { ResizeHandle } from '@/components/workspace/ResizeHandle';
@@ -8,11 +8,16 @@ import ChatPanel from '@/components/agent/ChatPanel';
 import ChatConfigStrip from './ChatConfigStrip';
 import BvConfigStrip from './BvConfigStrip';
 import ProjectsSidebar from './sidebar/ProjectsSidebar';
+import FocusablePanel from './FocusablePanel';
+import PlanView from './plan/PlanView';
+import RuntimePanel from './runtime/RuntimePanel';
 import { sessionProjectKey, type Session } from '@/types/session';
+import { sessionHasPlan } from '@/lib/agent/plan';
 import { useActiveSession } from '@/hooks/useActiveSession';
 import { useRepoData } from '@/hooks/useRepoData';
 import { getCachedRepo } from '@/lib/repoCache';
 import { loadIdeLayout, saveIdeLayout, type IdeLayout } from '@/lib/ideLayout';
+import { useFocusedPanelZoom } from '@/hooks/useFocusedPanelZoom';
 
 // ─── IDE workspace (fixed 3-zone chrome) ─────────────────────────────────────
 
@@ -31,7 +36,10 @@ export default function IdeWorkspace() {
 
   // Panel sizes + collapse state (persisted; see src/lib/ideLayout.ts).
   const [layout, setLayout] = useState<IdeLayout>(loadIdeLayout);
-  const { sidebarWidth, midWidth, dockHeight, cfgCollapsed, bvCollapsed } = layout;
+  const {
+    sidebarWidth, midWidth, dockHeight, cfgCollapsed, bvCollapsed,
+    sidebarCollapsed, dockCollapsed, rightView,
+  } = layout;
   const setLayoutKey = <K extends keyof IdeLayout>(key: K, val: IdeLayout[K]) =>
     setLayout((l) => ({ ...l, [key]: val }));
 
@@ -44,6 +52,16 @@ export default function IdeWorkspace() {
     const t = setTimeout(() => saveIdeLayout(layout), 250);
     return () => clearTimeout(t);
   }, [layout]);
+
+  // Ctrl +/-/0 on the focused panel. When the workspace is focused, delegate to
+  // the graph's viewport zoom (CSS zoom would distort the canvas).
+  const onWorkspaceZoom = useCallback((cmd: 'in' | 'out' | 'reset') => {
+    const { scale, offsetX, offsetY } = state.viewport;
+    if (cmd === 'in') dispatch({ type: 'SET_VIEWPORT', viewport: { scale: Math.min(3, scale * 1.2), offsetX, offsetY } });
+    else if (cmd === 'out') dispatch({ type: 'SET_VIEWPORT', viewport: { scale: Math.max(0.15, scale * 0.8), offsetX, offsetY } });
+    else dispatch({ type: 'SET_VIEWPORT', viewport: { scale: 1, offsetX: 16, offsetY: 16 } });
+  }, [state.viewport, dispatch]);
+  useFocusedPanelZoom(onWorkspaceZoom);
 
   // Per-session repo view: swap the graph to the active session's repo. Reuses
   // the cache for an instant swap, else loads a local repo via the existing
@@ -78,22 +96,34 @@ export default function IdeWorkspace() {
 
   return (
     <div ref={outerRowRef} className="flex flex-1 min-h-0 overflow-hidden">
-      {/* Sidebar (resizable). Hard px clamps keep it usable at any drag width. */}
-      <div
-        className="flex min-w-[180px] max-w-[420px] min-h-0"
-        style={{ flex: `0 0 ${sidebarWidth}%` }}
-      >
-        <ProjectsSidebar />
-      </div>
+      {/* Sidebar. Collapses to a fixed icon rail; otherwise resizable with hard
+          px clamps so it stays usable at any drag width. */}
+      {sidebarCollapsed ? (
+        <div className="flex flex-none min-h-0">
+          <ProjectsSidebar
+            railCollapsed
+            onToggleRail={() => setLayoutKey('sidebarCollapsed', false)}
+          />
+        </div>
+      ) : (
+        <>
+          <div
+            className="flex min-w-[180px] max-w-[420px] min-h-0"
+            style={{ flex: `0 0 ${sidebarWidth}%` }}
+          >
+            <ProjectsSidebar onToggleRail={() => setLayoutKey('sidebarCollapsed', true)} />
+          </div>
 
-      <ResizeHandle
-        direction="h"
-        containerRef={outerRowRef}
-        size={sidebarWidth}
-        onSizeChange={(s) => setLayoutKey('sidebarWidth', s)}
-        min={12}
-        max={35}
-      />
+          <ResizeHandle
+            direction="h"
+            containerRef={outerRowRef}
+            size={sidebarWidth}
+            onSizeChange={(s) => setLayoutKey('sidebarWidth', s)}
+            min={12}
+            max={35}
+          />
+        </>
+      )}
 
       {!active ? (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -113,28 +143,39 @@ export default function IdeWorkspace() {
             />
             <div ref={agentStackRef} className="flex flex-col flex-1 min-h-0">
               {/* Chat pane (remainder) */}
-              <div className="flex-1 min-h-0 overflow-hidden">
+              <FocusablePanel id="chat" className="flex-1 min-h-0 overflow-hidden">
                 <ChatPanel key={active.id} session={active} />
-              </div>
+              </FocusablePanel>
 
-              <ResizeHandle
-                direction="v"
-                containerRef={agentStackRef}
-                size={100 - dockHeight}
-                onSizeChange={(s) => setLayoutKey('dockHeight', 100 - s)}
-                min={12}
-                max={75}
-              />
+              {!dockCollapsed && (
+                <ResizeHandle
+                  direction="v"
+                  containerRef={agentStackRef}
+                  size={100 - dockHeight}
+                  onSizeChange={(s) => setLayoutKey('dockHeight', 100 - s)}
+                  min={12}
+                  max={75}
+                />
+              )}
 
-              {/* Terminal dock (sized). Keyed by PROJECT, not session, so
-                  switching sessions within the same repo keeps the shells,
-                  server, and nvim alive — only the agent view (ChatPanel, keyed
-                  by session id) hot-swaps. A different project remounts it. */}
+              {/* Terminal dock. Keyed by PROJECT, not session, so switching
+                  sessions within the same repo keeps the shells, server, and
+                  nvim alive — only the agent view (ChatPanel, keyed by session
+                  id) hot-swaps. A different project remounts it. When collapsed
+                  the dock shrinks to just its tab strip (panes stay mounted). */}
               <div
-                className="min-h-0 overflow-hidden border-t border-border bg-background"
-                style={{ flex: `0 0 ${dockHeight}%` }}
+                className="flex flex-col min-h-0 overflow-hidden border-t border-border bg-background flex-none"
+                style={dockCollapsed ? undefined : { flex: `0 0 ${dockHeight}%` }}
               >
-                <TerminalDock key={sessionProjectKey(active)} sessionId={active.id} cwd={active.cwd ?? '.'} />
+                <FocusablePanel id="terminal" className="flex-1 min-h-0">
+                  <TerminalDock
+                    key={sessionProjectKey(active)}
+                    sessionId={active.id}
+                    cwd={active.cwd ?? '.'}
+                    collapsed={dockCollapsed}
+                    onToggleCollapsed={() => setLayoutKey('dockCollapsed', !dockCollapsed)}
+                  />
+                </FocusablePanel>
               </div>
             </div>
           </div>
@@ -148,24 +189,54 @@ export default function IdeWorkspace() {
             max={70}
           />
 
-          {/* ── RIGHT column: BranchVisualizer ── */}
+          {/* ── RIGHT column: BranchVisualizer canvas ↔ Implementation Plan.
+              The switch strip is rendered INSIDE the focusable panel so it
+              stays visible when the panel is maximized (its maximize button
+              remains reachable to restore). ── */}
           <div className="flex flex-col flex-1 min-w-0 min-h-0 border-l border-border">
-            <BvConfigStrip
-              collapsed={bvCollapsed}
-              onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
-            />
-            <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-              {graphData ? (
-                <TabWorkspace />
-              ) : (
-                <div className="h-full flex items-center justify-center text-sm text-muted-foreground text-center px-6">
-                  <div>
-                    <p className="mb-2">No repository loaded in this session.</p>
-                    <Link to="/" className="text-primary hover:underline">Open one from the visualizer →</Link>
+            {rightView === 'plan' ? (
+              <FocusablePanel id="plan" className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <PlanView session={active} />
+              </FocusablePanel>
+            ) : rightView === 'runtime' ? (
+              <FocusablePanel id="runtime" className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <RuntimePanel />
+              </FocusablePanel>
+            ) : (
+              <FocusablePanel id="workspace" className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                {graphData ? (
+                  <TabWorkspace />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground text-center px-6">
+                    <div>
+                      <p className="mb-2">No repository loaded in this session.</p>
+                      <Link to="/" className="text-primary hover:underline">Open one from the visualizer →</Link>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </FocusablePanel>
+            )}
           </div>
         </div>
       )}

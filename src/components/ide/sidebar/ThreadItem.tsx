@@ -1,11 +1,12 @@
-// One thread (session) row in the sidebar. Left accent bar marks the active
-// thread; hover-revealed overflow menu (Archive / Delete-with-confirm) mirrors
-// ProjectGroup's pattern. Truncation is standard CSS ellipsis that reacts to
-// container width, so the resizable sidebar just works.
+// One thread (session) row in the sidebar. Active thread is marked with a
+// primary-tinted fill + inset ring; hover-revealed overflow menu (Archive /
+// Delete-with-confirm) mirrors ProjectGroup's pattern. Truncation is standard
+// CSS ellipsis that reacts to container width, so the resizable sidebar just
+// works.
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  Archive, ArchiveRestore, GitBranch, MoreHorizontal, Trash2,
+  Archive, ArchiveRestore, GitBranch, MoreHorizontal, Pencil, Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { lastActivity, statusMeta } from '@/lib/sessionStatus';
@@ -18,12 +19,16 @@ interface Props {
   onSelect: () => void;
   onArchiveToggle: () => void;
   onDelete: () => void;
+  onRename: (title: string) => void;
 }
 
-export default function ThreadItem({ session, active, onSelect, onArchiveToggle, onDelete }: Props) {
+export default function ThreadItem({ session, active, onSelect, onArchiveToggle, onDelete, onRename }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(session.title);
   const menuRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -33,6 +38,25 @@ export default function ThreadItem({ session, active, onSelect, onArchiveToggle,
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (renaming) inputRef.current?.select();
+  }, [renaming]);
+
+  function startRename() {
+    setRenameValue(session.title);
+    setRenaming(true);
+    setMenuOpen(false);
+  }
+  function commitRename() {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== session.title) onRename(trimmed);
+    setRenaming(false);
+  }
+  function cancelRename() {
+    setRenameValue(session.title);
+    setRenaming(false);
+  }
 
   const isArchived = Boolean(session.archived);
   const meta = statusMeta(session.context.status);
@@ -47,10 +71,10 @@ export default function ThreadItem({ session, active, onSelect, onArchiveToggle,
         onClick={onSelect}
         title={session.context.gitBranch ? `${session.title}\n${session.context.gitBranch}` : session.title}
         className={cn(
-          'group relative flex items-center gap-2 pl-4 pr-1.5 py-1 rounded-md cursor-pointer transition-colors border-l-2',
+          'group relative flex items-center gap-2 px-2.5 py-1 rounded-md cursor-pointer transition-colors',
           active
-            ? 'bg-accent/40 text-foreground border-l-primary'
-            : 'text-muted-foreground hover:bg-accent/20 hover:text-foreground border-l-transparent',
+            ? 'bg-primary/12 text-foreground font-semibold ring-1 ring-inset ring-primary/25'
+            : 'text-muted-foreground hover:bg-accent/25 hover:text-foreground',
           isArchived && 'opacity-70',
         )}
       >
@@ -73,7 +97,28 @@ export default function ThreadItem({ session, active, onSelect, onArchiveToggle,
           </span>
         )}
 
-        <span className="min-w-0 flex-1 text-xs font-medium truncate">{session.title}</span>
+        {renaming ? (
+          <input
+            ref={inputRef}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+            }}
+            className="min-w-0 flex-1 bg-background border border-border rounded px-1.5 py-0 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+          />
+        ) : (
+          <span
+            onDoubleClick={(e) => { e.stopPropagation(); startRename(); }}
+            className="min-w-0 flex-1 text-xs font-medium truncate"
+          >
+            {session.title}
+          </span>
+        )}
         <span className="text-[10px] text-muted-foreground/50 whitespace-nowrap flex-shrink-0">
           {lastActivity(session)}
         </span>
@@ -90,6 +135,12 @@ export default function ThreadItem({ session, active, onSelect, onArchiveToggle,
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-full z-50 mt-1 w-36 rounded-md border border-border bg-popover shadow-lg text-xs overflow-hidden">
+              <button
+                onClick={(e) => { e.stopPropagation(); startRename(); }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-accent/40 text-foreground"
+              >
+                <Pencil className="w-3 h-3" /> Rename
+              </button>
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchiveToggle(); }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-accent/40 text-foreground"

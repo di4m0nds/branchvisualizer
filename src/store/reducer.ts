@@ -1,4 +1,5 @@
-import type { AppAction, AppState, FilterState, LoadState, LogDensity, TabId } from '../types';
+import type { AppAction, AppState, FilterState, LoadState, LogDensity, ModelRef, TabId } from '../types';
+import type { ContextSizeId } from '../lib/agent/transport';
 import type { PinnedRule, Project, Session, SessionContext } from '../types/session';
 import { DEFAULT_PINNED_RULES, createDefaultContext, nextId, sessionProjectKey } from '../types/session';
 import { buildGraphData } from '../graph/layout';
@@ -11,6 +12,7 @@ const PROJECTS_STORAGE_KEY = 'code-agent:projects';
 const ACTIVE_SESSION_STORAGE_KEY = 'code-agent:active_session';
 const SHOW_CHECKPOINTS_STORAGE_KEY = 'code-agent:show_checkpoints';
 const LOG_DENSITY_STORAGE_KEY = 'code-agent:log_density';
+const TERMINAL_FONT_STORAGE_KEY = 'code-agent:terminal_font';
 
 function loadBoolPref(key: string, fallback: boolean): boolean {
   if (typeof localStorage === 'undefined') return fallback;
@@ -28,6 +30,16 @@ function loadLogDensity(): LogDensity {
     return localStorage.getItem(LOG_DENSITY_STORAGE_KEY) === 'clean' ? 'clean' : 'verbose';
   } catch {
     return 'verbose';
+  }
+}
+
+function loadTerminalFont(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(TERMINAL_FONT_STORAGE_KEY);
+    return raw && raw.length > 0 ? raw : null;
+  } catch {
+    return null;
   }
 }
 
@@ -160,13 +172,30 @@ function loadPinnedRules(): PinnedRule[] {
   }
 }
 
-function loadCurrentModel(): { providerId: string; modelId: string } {
-  if (typeof localStorage === 'undefined') return { providerId: 'anthropic', modelId: 'claude-opus-4-8' };
+// Default selection: Claude Code (subscription/CLI) on the `sonnet` family alias
+// at standard context — works out of the box on any plan, no 1M usage-credit
+// requirement (the old default pinned a 1M-context model on the direct API).
+const DEFAULT_MODEL: ModelRef = { providerId: 'claude_code', modelId: 'sonnet', context: 'standard' };
+
+/** Normalize a persisted (or default) model ref: default context to 'standard'
+ *  and heal the Haiku id drift (`claude-haiku-4-5-20251001` → `claude-haiku-4-5`)
+ *  so old blobs keep working with the deduped model lists. */
+function normalizeModelRef(raw: unknown): ModelRef {
+  const r = (raw ?? {}) as Partial<ModelRef>;
+  const providerId = r.providerId ?? DEFAULT_MODEL.providerId;
+  let modelId = r.modelId ?? DEFAULT_MODEL.modelId;
+  if (modelId === 'claude-haiku-4-5-20251001') modelId = 'claude-haiku-4-5';
+  const context: ContextSizeId = r.context === '1m' ? '1m' : 'standard';
+  return { providerId, modelId, context };
+}
+
+function loadCurrentModel(): ModelRef {
+  if (typeof localStorage === 'undefined') return { ...DEFAULT_MODEL };
   try {
     const raw = localStorage.getItem(CURRENT_MODEL_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return normalizeModelRef(JSON.parse(raw));
   } catch { /* noop */ }
-  return { providerId: 'anthropic', modelId: 'claude-opus-4-8' };
+  return { ...DEFAULT_MODEL };
 }
 
 /** Persist model + pinned rules through a reducer post-tap. */
@@ -177,6 +206,11 @@ export function persistState(state: AppState): void {
     localStorage.setItem(CURRENT_MODEL_STORAGE_KEY, JSON.stringify(state.currentModel));
     localStorage.setItem(SHOW_CHECKPOINTS_STORAGE_KEY, String(state.showCheckpoints));
     localStorage.setItem(LOG_DENSITY_STORAGE_KEY, state.logDensity);
+    if (state.terminalFont) {
+      localStorage.setItem(TERMINAL_FONT_STORAGE_KEY, state.terminalFont);
+    } else {
+      localStorage.removeItem(TERMINAL_FONT_STORAGE_KEY);
+    }
   } catch { /* quota / private mode */ }
 }
 
@@ -220,9 +254,11 @@ export const initialState: AppState = {
   rawCommits: [],
   showCheckpoints: loadBoolPref(SHOW_CHECKPOINTS_STORAGE_KEY, false),
   logDensity: loadLogDensity(),
+  terminalFont: loadTerminalFont(),
   ...bootstrapProjectsAndSessions(),
   currentModel: loadCurrentModel(),
   providerStatus: {},
+  servedModels: {},
   pinnedRules: loadPinnedRules(),
 };
 
@@ -240,6 +276,16 @@ function bootstrapProjectsAndSessions(): { projects: Project[]; sessions: Sessio
 // Immutably update one session's fields by id.
 function mapSession(state: AppState, id: string, fn: (s: Session) => Session): AppState {
   return { ...state, sessions: state.sessions.map((s) => (s.id === id ? fn(s) : s)) };
+}
+
+// Derive a concise conversation title from the first user prompt: first
+// non-empty line, whitespace-collapsed, smart-truncated.
+const TITLE_MAX = 48;
+function deriveSessionTitle(text: string): string {
+  const firstLine = text.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  const clean = firstLine.replace(/\s+/g, ' ').trim();
+  if (!clean) return 'New session';
+  return clean.length > TITLE_MAX ? `${clean.slice(0, TITLE_MAX - 1).trimEnd()}…` : clean;
 }
 
 // Immutably patch one session's context by id.
@@ -306,6 +352,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_LOG_DENSITY':
       return { ...state, logDensity: action.density };
+
+    case 'SET_TERMINAL_FONT':
+      return { ...state, terminalFont: action.family };
 
     case 'LOAD_ERROR':
       return {
@@ -501,10 +550,45 @@ export function reducer(state: AppState, action: AppAction): AppState {
       });
 
     case 'ADD_AGENT_MESSAGE':
+      return mapSession(state, action.sessionId, (s) => {
+        // Auto-title from the first user message while the title is still a
+        // placeholder (or a legacy copy of the project name).
+        let title = s.title;
+        const isFirstUser = action.message.role === 'user' && !s.messages.some((m) => m.role === 'user');
+        if (isFirstUser) {
+          const proj = state.projects.find((p) => p.id === s.projectId);
+          const isPlaceholder = s.title === 'New session' || (!!proj && s.title === proj.name);
+          if (isPlaceholder) title = deriveSessionTitle(action.message.text);
+        }
+        return { ...s, title, messages: [...s.messages, action.message] };
+      });
+
+    case 'RENAME_SESSION':
+      return mapSession(state, action.id, (s) => ({ ...s, title: action.title }));
+
+    // ── Plan view ──
+    case 'ADD_PLAN_COMMENT':
       return mapSession(state, action.sessionId, (s) => ({
         ...s,
-        messages: [...s.messages, action.message],
+        planComments: [...(s.planComments ?? []), action.comment],
       }));
+
+    case 'UPDATE_PLAN_COMMENT':
+      return mapSession(state, action.sessionId, (s) => ({
+        ...s,
+        planComments: (s.planComments ?? []).map((c) =>
+          c.id === action.commentId ? { ...c, ...action.patch } : c,
+        ),
+      }));
+
+    case 'REMOVE_PLAN_COMMENT':
+      return mapSession(state, action.sessionId, (s) => ({
+        ...s,
+        planComments: (s.planComments ?? []).filter((c) => c.id !== action.commentId),
+      }));
+
+    case 'SET_PLAN_DRAFT':
+      return mapSession(state, action.sessionId, (s) => ({ ...s, planDraft: action.draft }));
 
     case 'UPDATE_AGENT_MESSAGE':
       return mapSession(state, action.sessionId, (s) => ({
@@ -513,6 +597,16 @@ export function reducer(state: AppState, action: AppAction): AppState {
           m.id === action.messageId ? { ...m, ...action.patch } : m,
         ),
       }));
+
+    case 'TRUNCATE_MESSAGES_BEFORE':
+      return mapSession(state, action.sessionId, (s) => {
+        const idx = s.messages.findIndex((m) => m.id === action.beforeMessageId);
+        if (idx < 0) return s;
+        return { ...s, messages: s.messages.slice(0, idx) };
+      });
+
+    case 'SET_SESSION_CLI_BYPASS':
+      return patchContext(state, action.sessionId, { cliBypass: action.bypass });
 
     // ── Model + provider status ─────────────────────────────────────────────
 
@@ -523,6 +617,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         providerStatus: { ...state.providerStatus, [action.providerId]: action.status },
+      };
+
+    case 'SET_SERVED_MODEL':
+      return {
+        ...state,
+        servedModels: { ...state.servedModels, [action.key]: action.model },
       };
 
     // ── App-global pinned rules CRUD ────────────────────────────────────────

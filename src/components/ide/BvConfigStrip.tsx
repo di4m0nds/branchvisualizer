@@ -1,16 +1,26 @@
-import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useAppContext } from '@/store/AppContext';
+import { PanelMaximizeButton } from './FocusablePanel';
+import type { PanelId } from '@/hooks/usePanelFocus';
 
 // The BranchVisualizer's own configuration header, docked at the top of the
 // right column — separate from the agent config so each pane keeps its own
 // controls. Collapses to a single line. TabWorkspace keeps its internal
-// graph/split/direction toolbar; this strip owns repo identity + collapse.
+// graph/split/direction toolbar; this strip owns repo identity + collapse, and
+// the Canvas ↔ Plan view switch for the right column.
+
+export type RightView = 'workspace' | 'plan' | 'runtime';
 
 export default function BvConfigStrip({
-  collapsed, onToggle,
+  collapsed, onToggle, view, onViewChange, hasPlan,
 }: {
   collapsed: boolean;
   onToggle: () => void;
+  view: RightView;
+  onViewChange: (v: RightView) => void;
+  /** Show a dot on the Plan tab when the session has a plan to review. */
+  hasPlan?: boolean;
 }) {
   const { state } = useAppContext();
   const { repoInfo, branches, tags, allCommits } = state;
@@ -24,23 +34,69 @@ export default function BvConfigStrip({
           title={collapsed ? 'Expand repository panel' : 'Collapse repository panel'}
         >
           {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          <span className="text-[11px] font-semibold uppercase tracking-wider">Repository</span>
         </button>
-        {/* Collapsing hides the repo identity + counts, leaving just the header
-            toggle. The graph toolbar lives inside TabWorkspace and stays
-            available below regardless of this strip's state. */}
-        {repoInfo && !collapsed && (
+
+        {/* Canvas ↔ Plan switch */}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-background/60 border border-border/60">
+          <SwitchButton active={view === 'workspace'} onClick={() => onViewChange('workspace')} title="Repository canvas">
+            <GitGraph className="w-3 h-3" />
+            <span className="hidden md:inline">Canvas</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'plan'} onClick={() => onViewChange('plan')} title="Implementation plan">
+            <span className="relative">
+              <ClipboardList className="w-3 h-3" />
+              {hasPlan && view !== 'plan' && (
+                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-primary" />
+              )}
+            </span>
+            <span className="hidden md:inline">Plan</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'runtime'} onClick={() => onViewChange('runtime')} title="Container runtime">
+            <Boxes className="w-3 h-3" />
+            <span className="hidden md:inline">Runtime</span>
+          </SwitchButton>
+        </div>
+
+        {/* Collapsing hides the repo identity + counts. Only shown in Canvas. */}
+        {view === 'workspace' && repoInfo && !collapsed && (
           <span className="flex items-center gap-1.5 text-[11px] font-mono text-foreground/80 truncate">
             <GitBranch className="w-3 h-3 text-muted-foreground" />
             <span className="truncate">{repoInfo.fullName}</span>
           </span>
         )}
-        {repoInfo && !collapsed && (
+        {view === 'workspace' && repoInfo && !collapsed && (
           <span className="ml-auto text-[10px] font-mono text-muted-foreground/70 tabular-nums whitespace-nowrap">
             {allCommits.length.toLocaleString()} commits · {branches.length} br · {tags.length} tags
           </span>
         )}
+        {/* Maximize whichever view is active — static, at the far right. */}
+        <PanelMaximizeButton
+          id={view as PanelId}
+          className={cn(view === 'workspace' && repoInfo && !collapsed ? '' : 'ml-auto')}
+        />
       </div>
     </div>
+  );
+}
+
+function SwitchButton({
+  active, onClick, title, children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium transition-colors',
+        active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   );
 }

@@ -7,9 +7,13 @@ import type {
 } from '../transport';
 
 const MODELS: ModelInfo[] = [
-  { id: 'gemini-2.5-pro',        label: 'Gemini 2.5 Pro',        defaultTier: 'paid', contextTokens: 1_000_000 },
-  { id: 'gemini-2.5-flash',      label: 'Gemini 2.5 Flash',      defaultTier: 'free', contextTokens: 1_000_000 },
-  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', defaultTier: 'free', contextTokens: 1_000_000 },
+  { id: 'gemini-3.5-flash',       label: 'Gemini 3.5 Flash',      defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro',        defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'gemini-3.1-flash-lite',  label: 'Gemini 3.1 Flash-Lite', defaultTier: 'free', contextTokens: 1_000_000 },
+  { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash',        defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'gemini-2.5-pro',         label: 'Gemini 2.5 Pro',        defaultTier: 'paid', contextTokens: 1_000_000 },
+  { id: 'gemini-2.5-flash',       label: 'Gemini 2.5 Flash',      defaultTier: 'free', contextTokens: 1_000_000 },
+  { id: 'gemini-2.5-flash-lite',  label: 'Gemini 2.5 Flash-Lite', defaultTier: 'free', contextTokens: 1_000_000 },
 ];
 
 async function resolveKey(): Promise<string | null> {
@@ -72,6 +76,7 @@ class GeminiTransport implements AgentTransport {
         tools: functionDecls.length ? [{ functionDeclarations: functionDecls }] : undefined,
         maxOutputTokens: req.maxTokens,
         thinkingConfig: req.thinking ? { thinkingBudget: budget, includeThoughts: true } : undefined,
+        abortSignal: req.signal,
       },
     });
 

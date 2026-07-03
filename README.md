@@ -7,7 +7,7 @@ MiniMax / OpenCode against your working tree — with the commit DAG, files,
 docs, Neovim, PTY terminals, and permission gating all in one window.
 
 The system prompt that steers the agent lives at
-`docs/opus48_code_agent_system_prompt.md` and is embedded verbatim into the
+`src/lib/agent/opus48_code_agent_system_prompt.md` and is embedded verbatim into the
 runtime prompt (cache-friendly), then decorated per-turn with a live
 `<session_context>` block reflecting the current access level, build mode,
 skills, and pinned rules.
@@ -163,7 +163,7 @@ src/
 │   ├── localGit.ts               # Local git bridge over Tauri commands
 │   ├── pty.ts                    # PTY bridge (spawn/write/resize/kill + events)
 │   └── agent/
-│       ├── systemPrompt.ts       # Embeds docs/opus48_… + renderSessionContext
+│       ├── systemPrompt.ts       # Embeds opus48_…md (in this dir) + renderSessionContext
 │       ├── transport.ts          # Neutral message/response/tool shapes
 │       ├── providers/            # anthropic / openai_codex / gemini / minimax / opencode
 │       ├── tools.ts              # NeutralToolSchema[] + jailed executor

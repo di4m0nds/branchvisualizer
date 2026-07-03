@@ -27,6 +27,7 @@ interface Props {
   onSelectThread: (id: string) => void;
   onArchiveThread: (id: string, archived: boolean) => void;
   onDeleteThread: (id: string) => void;
+  onRenameThread: (id: string, title: string) => void;
   onShowArchived: () => void;
 }
 
@@ -36,7 +37,7 @@ export default function ProjectGroup({
   project, threads, activeSessionId, collapsed, showArchived,
   onToggleCollapsed, onRename, onArchiveToggle, onDelete,
   onNewThread, onSelectThread, onArchiveThread, onDeleteThread,
-  onShowArchived,
+  onRenameThread, onShowArchived,
 }: Props) {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(project.name);
@@ -193,6 +194,7 @@ export default function ProjectGroup({
                   onSelect={() => onSelectThread(s.id)}
                   onArchiveToggle={() => onArchiveThread(s.id, !s.archived)}
                   onDelete={() => onDeleteThread(s.id)}
+                  onRename={(title) => onRenameThread(s.id, title)}
                 />
               ))}
               {visibleThreads.length > MAX_INLINE_THREADS && (

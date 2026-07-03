@@ -7,6 +7,7 @@ import { nodeCanvasX, nodeCanvasY } from '../graph/renderer';
 import type { RenderOptions, DragState } from '../graph/renderer';
 import CommitTimeline from './CommitTimeline';
 import { ROW_HEIGHT, COL_WIDTH, GRAPH_PADDING_TOP, GRAPH_PADDING_LEFT } from '../graph/colors';
+import { getFocusedPanel } from '../hooks/usePanelFocus';
 
 // ─── Branch reachability (BFS) ────────────────────────────────────────────
 
@@ -259,6 +260,17 @@ export default function GraphCanvas() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // Coalesce redraws to at most one per animation frame — a fast mousemove can
+    // fire dozens of events per frame, and each was previously a full renderGraph.
+    let moveRaf = 0;
+    const scheduleRender = () => {
+      if (moveRaf) return;
+      moveRaf = requestAnimationFrame(() => {
+        moveRaf = 0;
+        if (!dragStateRef.current) renderNow();
+      });
+    };
+
     const onMouseMove = (e: MouseEvent) => {
       if (!graphData) return;
       const rect = canvas.getBoundingClientRect();
@@ -270,13 +282,13 @@ export default function GraphCanvas() {
         gy: (cy - offsetY) / scale,
       };
       // Trigger a render so attraction updates in real-time (only when no other loop owns the canvas)
-      if (!dragStateRef.current) renderNow();
+      scheduleRender();
     };
 
     const onMouseLeave = () => {
       if (mousePosRef.current) {
         mousePosRef.current = null;
-        if (!dragStateRef.current) renderNow();
+        scheduleRender();
       }
     };
 
@@ -285,6 +297,7 @@ export default function GraphCanvas() {
     return () => {
       canvas.removeEventListener('mousemove', onMouseMove);
       canvas.removeEventListener('mouseleave', onMouseLeave);
+      cancelAnimationFrame(moveRaf);
     };
   // renderNow is stable; graphData dep ensures re-attach when graph loads
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -336,25 +349,44 @@ export default function GraphCanvas() {
     if ((!selectedNode && selectedNodes.length === 0) || !graphData) return;
 
     let startTs = 0;
+    let lastDraw = 0;
+    const FRAME_MS = 33; // cap the decorative loop to ~30fps
 
     function animLoop(ts: number) {
-      if (!startTs) startTs = ts;
-      const elapsed = ts - startTs;
-      const ctx = ctxRef.current;
-      const opts = renderOptsRef.current;
-      // Yield to drag loop when active — it will draw its own frame
-      if (ctx && opts && graphData && !dragStateRef.current) {
-        renderGraph(ctx, graphData, {
-          ...opts,
-          animTime: elapsed,
-          dragState: null,
-        });
+      // Pause drawing while the window/tab is hidden — no point animating a
+      // decorative orbit nobody can see (lets the CPU idle when backgrounded).
+      if (!document.hidden) {
+        if (!startTs) startTs = ts;
+        const elapsed = ts - startTs;
+        const ctx = ctxRef.current;
+        const opts = renderOptsRef.current;
+        // Yield to drag loop when active — it will draw its own frame
+        if (ts - lastDraw >= FRAME_MS && ctx && opts && graphData && !dragStateRef.current) {
+          lastDraw = ts;
+          renderGraph(ctx, graphData, {
+            ...opts,
+            animTime: elapsed,
+            dragState: null,
+          });
+        }
       }
       animRafRef.current = requestAnimationFrame(animLoop);
     }
 
+    // Kick a fresh frame promptly when the tab becomes visible again.
+    const onVisibility = () => {
+      if (!document.hidden) {
+        cancelAnimationFrame(animRafRef.current);
+        animRafRef.current = requestAnimationFrame(animLoop);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     animRafRef.current = requestAnimationFrame(animLoop);
-    return () => cancelAnimationFrame(animRafRef.current);
+    return () => {
+      cancelAnimationFrame(animRafRef.current);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.commit.sha, selectedNodes.length, graphData]);
 
@@ -483,6 +515,15 @@ export default function GraphCanvas() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // In the IDE, honor graph shortcuts only when the workspace panel is
+      // focused, so other panels' zoom/keys aren't hijacked. Outside the IDE
+      // (no focused panel registered) behave as before.
+      const fp = getFocusedPanel();
+      if (fp !== null && fp !== 'workspace') return;
+      // Ctrl/⌘ + zoom keys are handled by the IDE's focused-panel zoom (which
+      // delegates to SET_VIEWPORT here); ignore them so the graph doesn't also
+      // fire and double-apply. Plain +/-/0 still drive the graph directly.
+      if ((e.ctrlKey || e.metaKey) && ['+', '=', '-', '_', '0'].includes(e.key)) return;
       const { scale, offsetX, offsetY } = viewport;
       switch (e.key) {
         case 'Escape':
@@ -508,7 +549,7 @@ export default function GraphCanvas() {
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
-    <div ref={containerRef} className="relative w-full h-full overflow-hidden">
+    <div ref={containerRef} data-panel="graph" className="relative w-full h-full overflow-hidden">
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
       {/* Minimap — only in vertical mode, only for large graphs */}

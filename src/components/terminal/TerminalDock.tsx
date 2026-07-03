@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { TerminalSquare, FileCode, Plus, X } from 'lucide-react';
+import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import Terminal from './Terminal';
 import { nextId } from '@/types/session';
 import type { TerminalDef } from '@/types/terminal';
 import { subscribeOpenInNvim } from '@/hooks/useOpenInNvim';
+import { usePanelZoom } from '@/hooks/usePanelFocus';
+import { PanelMaximizeButton } from '@/components/ide/FocusablePanel';
 
 const MAX_SHELLS = 4;
 
@@ -32,10 +34,16 @@ function makeShell(cwd: string, existing: TerminalDef[]): TerminalDef {
 export default function TerminalDock({
   cwd,
   sessionId,
+  collapsed = false,
+  onToggleCollapsed,
 }: {
   cwd: string;
   sessionId: string;
+  /** When true the dock shows only its tab strip (panes clipped to 0 height). */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
+  const fontScale = usePanelZoom('terminal');
   const [nvim] = useState<TerminalDef>(() => makeNvim(cwd));
   const [nvimBootId, setNvimBootId] = useState(0);
   const [shells, setShells] = useState<TerminalDef[]>([]);
@@ -57,12 +65,20 @@ export default function TerminalDock({
     if (renamingId) renameInputRef.current?.select();
   }, [renamingId]);
 
+  // Selecting a tab while the dock is collapsed also expands it — otherwise the
+  // click would silently switch a pane the user can't see.
+  const selectTab = useCallback((id: string) => {
+    setActiveId(id);
+    if (collapsed) onToggleCollapsed?.();
+  }, [collapsed, onToggleCollapsed]);
+
   const addShell = useCallback(() => {
     if (shellsRef.current.length >= MAX_SHELLS) return;
     const t = makeShell(cwd, shellsRef.current);
     setShells((prev) => [...prev, t]);
     setActiveId(t.id);
-  }, [cwd]);
+    if (collapsed) onToggleCollapsed?.();
+  }, [cwd, collapsed, onToggleCollapsed]);
 
   const closeShell = useCallback((id: string) => {
     delete writersRef.current[id];
@@ -124,7 +140,7 @@ export default function TerminalDock({
           {/* Nvim singleton — no X, no rename */}
           <button
             key={nvim.id}
-            onClick={() => setActiveId(nvim.id)}
+            onClick={() => selectTab(nvim.id)}
             className={cn(
               'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-mono transition-colors flex-shrink-0 border',
               activeId === nvim.id
@@ -146,7 +162,7 @@ export default function TerminalDock({
             return (
               <div
                 key={t.id}
-                onClick={() => !renaming && setActiveId(t.id)}
+                onClick={() => !renaming && selectTab(t.id)}
                 className={cn(
                   'group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-[11px] font-mono transition-colors flex-shrink-0 border cursor-pointer',
                   active
@@ -201,10 +217,25 @@ export default function TerminalDock({
             </button>
           )}
         </div>
+
+        {/* Right-side panel controls: maximize + collapse. Static so they never
+            overlap the tab strip on the left. */}
+        <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
+          <PanelMaximizeButton id="terminal" />
+          {onToggleCollapsed && (
+            <button
+              onClick={onToggleCollapsed}
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+              title={collapsed ? 'Expand terminal' : 'Collapse terminal'}
+            >
+              {collapsed ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Terminal panes — all mounted, visibility toggled */}
-      <div className="relative flex-1 min-h-0">
+      {/* Terminal panes — all mounted (PTYs survive), clipped to 0 when collapsed. */}
+      <div className={cn('relative flex-1 min-h-0', collapsed && 'hidden')}>
         <div
           key={`${nvim.id}:${nvimBootId}`}
           className={cn('absolute inset-0 p-1.5', activeId !== nvim.id && 'invisible pointer-events-none')}
@@ -212,6 +243,7 @@ export default function TerminalDock({
           <Terminal
             def={nvim}
             active={activeId === nvim.id}
+            fontScale={fontScale}
             onExit={handleNvimExit}
             registerWriter={(w) => { writersRef.current[nvim.id] = w; }}
           />
@@ -224,6 +256,7 @@ export default function TerminalDock({
             <Terminal
               def={t}
               active={t.id === activeId}
+              fontScale={fontScale}
               registerWriter={(w) => { writersRef.current[t.id] = w; }}
             />
           </div>

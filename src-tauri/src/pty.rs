@@ -25,6 +25,18 @@ struct PtySession {
 #[derive(Default)]
 pub struct PtyState(Mutex<HashMap<String, PtySession>>);
 
+impl PtyState {
+    /// Kill every live PTY child. Called on app exit so no shells are orphaned
+    /// (there is otherwise no `Drop` that reaps the spawned processes).
+    pub fn kill_all(&self) {
+        if let Ok(mut map) = self.0.lock() {
+            for (_, mut session) in map.drain() {
+                let _ = session.child.kill();
+            }
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct ExitPayload {
     id: String,
@@ -78,6 +90,13 @@ pub fn spawn_pty(
         builder.env(k, v);
     }
     builder.env("TERM", "xterm-256color");
+    // Tell TUIs (nvim's `termguicolors`, bat, tmux) that 24-bit color is safe.
+    builder.env("COLORTERM", "truecolor");
+    // Guarantee a UTF-8 locale so wide chars and box-drawing render correctly
+    // even when the parent env is bare (fresh service accounts, minimal shells).
+    if std::env::var("LANG").ok().filter(|v| !v.is_empty()).is_none() {
+        builder.env("LANG", "C.UTF-8");
+    }
 
     // Validate cwd: fall back to HOME (then /) when empty or missing, so an
     // invalid working dir doesn't silently kill the child.

@@ -125,13 +125,6 @@ pub fn agent_run_command(root: String, command: String) -> Result<CommandResult,
     })
 }
 
-/// Return the Anthropic API key from the environment (never bundled, never
-/// logged). Kept for backward compatibility; prefer `get_provider_key`.
-#[tauri::command]
-pub fn get_api_key() -> Option<String> {
-    std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty())
-}
-
 /// Return the API key for a given provider from the environment. Keyed lookup
 /// so the frontend transports don't hardcode env-var names. Returns None when
 /// the var is missing/empty.
@@ -141,7 +134,7 @@ pub fn get_provider_key(name: String) -> Option<String> {
         "anthropic" => &["ANTHROPIC_API_KEY"],
         "claude_code" => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
         "openai" | "openai_codex" => &["OPENAI_API_KEY", "CODEX_API_KEY"],
-        "gemini" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "gemini" | "antigravity" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
         "minimax" => &["MINIMAX_API_KEY"],
         "opencode" => &["OPENCODE_API_KEY"],
         _ => &[],
@@ -274,6 +267,54 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateResult {
+    ok: bool,
+    /// Combined stdout+stderr, trimmed — surfaced in the UI so the user sees
+    /// exactly what the updater did.
+    output: String,
+    /// The command that ran (for display).
+    command: String,
+}
+
+/// Self-update a provider's local toolchain. Strict allow-list so the model /
+/// UI can't drive this into an arbitrary shell:
+///   claude / claude_code → `claude update`
+///   antigravity          → `python3 -m pip install --upgrade google-antigravity`
+#[tauri::command]
+pub fn provider_update(name: String) -> Result<UpdateResult, String> {
+    let (bin, args): (&str, Vec<&str>) = match name.as_str() {
+        "claude" | "claude_code" => ("claude", vec!["update"]),
+        "antigravity" => (
+            "python3",
+            vec!["-m", "pip", "install", "--upgrade", "google-antigravity"],
+        ),
+        other => return Err(format!("provider `{other}` has no update command")),
+    };
+
+    let command = format!("{bin} {}", args.join(" "));
+    let out = Command::new(bin)
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to run `{command}`: {e}"))?;
+
+    let mut output = String::from_utf8_lossy(&out.stdout).into_owned();
+    let err = String::from_utf8_lossy(&out.stderr);
+    if !err.trim().is_empty() {
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&err);
+    }
+
+    Ok(UpdateResult {
+        ok: out.status.success(),
+        output: output.trim().to_string(),
+        command,
+    })
+}
+
 // ─── Filesystem walk (for the local Files / Docs tabs) ──────────────────────
 
 #[derive(Serialize)]
@@ -378,4 +419,38 @@ pub fn agent_read_file_bytes(root: String, path: String) -> Result<String, Strin
 fn base64_of(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jail;
+    use std::fs;
+
+    // Unique temp dir per test process; created fresh so canonicalize() resolves.
+    fn tmp_root() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("codeagent_jail_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn allows_paths_inside_root() {
+        let root = tmp_root();
+        let root_str = root.to_str().unwrap();
+        // A new file directly in root resolves (parent — root — exists).
+        let p = jail(root_str, "file.txt").expect("in-jail path should resolve");
+        assert!(p.starts_with(&root));
+        // A file in an existing subdir also resolves.
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let q = jail(root_str, "sub/file.txt").expect("in-jail nested path should resolve");
+        assert!(q.starts_with(&root));
+    }
+
+    #[test]
+    fn rejects_parent_escape() {
+        let root = tmp_root();
+        let root_str = root.to_str().unwrap();
+        assert!(jail(root_str, "../../etc/passwd").is_err());
+        assert!(jail(root_str, "/etc/passwd").is_err());
+    }
 }

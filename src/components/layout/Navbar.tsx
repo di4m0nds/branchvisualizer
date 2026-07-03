@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { Link, useParams, useMatch } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Settings } from 'lucide-react';
@@ -7,7 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip } from '@/components/ui/tooltip';
 import { formatCount } from '@/lib/utils';
-import SettingsPanel from '@/components/settings/SettingsPanel';
+
+// SettingsPanel → ProvidersPanel → the provider registry (all LLM SDKs). Lazy-
+// load it (it's a modal opened on demand) so those SDKs stay out of the initial
+// chunk that the always-mounted Navbar would otherwise pull in eagerly.
+const SettingsPanel = lazy(() => import('@/components/settings/SettingsPanel'));
 
 // ─── Theme toggle ─────────────────────────────────────────────────────────
 
@@ -185,7 +189,11 @@ export default function Navbar() {
         <ThemeToggle />
       </div>
 
-      <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
+        </Suspense>
+      )}
     </motion.header>
   );
 }

@@ -10,10 +10,17 @@
 // Events (mirrors the pty bridge shape):
 //   `claude-code://data/<id>`  — one NDJSON line per emit
 //   `claude-code://exit`       — { id, code, error } once the process ends
+//
+// The IDE's chat conventions (`<questions_for_user>`, `<thinking>`, lightweight
+// Markdown) reach the model through the CLI's own `--append-system-prompt`
+// channel — NOT through the stdin prompt. Trying to prepend instructions to the
+// user turn triggered Claude's prompt-injection guard and the model rejected the
+// framing outright. The append-system channel is the sanctioned route.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use serde::Serialize;
@@ -24,6 +31,21 @@ struct ExitPayload {
     id: String,
     code: Option<i32>,
     error: Option<String>,
+}
+
+// ─── In-flight process registry ──────────────────────────────────────────────
+// Keyed by the caller-supplied run id. The reader thread reads stdout to EOF,
+// then removes the child from the map and calls `wait()` for the exit code.
+// `claude_code_kill` removes the child eagerly and calls `.kill()`; that closes
+// stdout, so the reader thread's next line returns EOF and it cleans up
+// normally — with `wait()` returning immediately because the process is gone.
+
+type ChildMap = Arc<Mutex<HashMap<String, Child>>>;
+static CHILDREN: OnceLock<ChildMap> = OnceLock::new();
+fn children() -> ChildMap {
+    CHILDREN
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
 }
 
 /// Permission modes we allow through to the CLI. Anything else falls back to a
@@ -38,8 +60,11 @@ fn sanitize_mode(mode: Option<String>) -> String {
 }
 
 /// Spawn `claude -p` for one turn. `prompt` is written to stdin (avoids arg
-/// length limits). Streams stdout lines as events; emits an exit event with the
-/// status code and any stderr when the process finishes.
+/// length limits). `append_system` is passed through the CLI's own
+/// `--append-system-prompt` flag (sanctioned channel; won't trigger prompt-
+/// injection refusals the way in-band prepending does). Streams stdout lines as
+/// events; emits an exit event with the status code and any stderr when the
+/// process finishes.
 #[tauri::command]
 pub fn claude_code_run(
     app: AppHandle,
@@ -49,6 +74,7 @@ pub fn claude_code_run(
     model: String,
     permission_mode: Option<String>,
     oauth_token: Option<String>,
+    append_system: Option<String>,
 ) -> Result<(), String> {
     // Validate cwd: fall back to HOME (then /) so an invalid dir doesn't kill
     // the child immediately.
@@ -67,6 +93,11 @@ pub fn claude_code_run(
         .arg(sanitize_mode(permission_mode));
     if !model.is_empty() {
         cmd.arg("--model").arg(&model);
+    }
+    if let Some(text) = append_system.as_deref() {
+        if !text.trim().is_empty() {
+            cmd.arg("--append-system-prompt").arg(text);
+        }
     }
     cmd.current_dir(&dir);
 
@@ -111,6 +142,9 @@ pub fn claude_code_run(
         });
     }
 
+    // Register the child so `claude_code_kill` can look it up by id.
+    children().lock().unwrap().insert(id.clone(), child);
+
     let data_event = format!("claude-code://data/{id}");
     let exit_id = id;
     let stderr_for_exit = stderr_buf;
@@ -126,7 +160,12 @@ pub fn claude_code_run(
                 Err(_) => break,
             }
         }
-        let code = child.wait().ok().and_then(|s| s.code());
+        // stdout closed — process is either done or was killed. Remove from
+        // the registry and wait() to reap it.
+        let code = {
+            let mut opt = children().lock().unwrap().remove(&exit_id);
+            opt.as_mut().and_then(|c| c.wait().ok().and_then(|s| s.code()))
+        };
         let error = stderr_for_exit
             .lock()
             .ok()
@@ -143,4 +182,27 @@ pub fn claude_code_run(
     });
 
     Ok(())
+}
+
+/// Kill an in-flight `claude` subprocess by run id. Best-effort — silently
+/// no-op when the id is unknown (already exited or never started). The reader
+/// thread will still emit an exit event once stdout closes.
+#[tauri::command]
+pub fn claude_code_kill(id: String) -> Result<(), String> {
+    if let Some(mut child) = children().lock().unwrap().remove(&id) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    Ok(())
+}
+
+/// Kill every in-flight `claude` subprocess. Called on app exit so long-running
+/// agent CLIs aren't orphaned when the window closes.
+pub fn kill_all_children() {
+    if let Ok(mut map) = children().lock() {
+        for (_, mut child) in map.drain() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }

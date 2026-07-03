@@ -22,6 +22,8 @@ export type SessionStatus =
   | 'planning'
   | 'pending_plan_approval'
   | 'awaiting_approval'
+  /** Blocked on structured user input (questions_for_user popup open). */
+  | 'awaiting_input'
   | 'complete'
   | 'error';
 
@@ -63,6 +65,11 @@ export interface SessionContext {
   skills: SkillFlag[];
   pinnedRules: PinnedRule[];
   status: SessionStatus;
+  /** Once the user has explicitly approved bypass permissions for the Claude
+   *  Code CLI in this session (via the cli_approval_needed card), we pass
+   *  `--permission-mode bypassPermissions` to the CLI for every subsequent
+   *  turn until the session is reset. Undefined ↔ false. */
+  cliBypass?: boolean;
 }
 
 // ─── Conversation ────────────────────────────────────────────────────────────
@@ -82,14 +89,39 @@ export interface AgentMessage {
   role: AgentRole;
   /** Rendered text (for user messages and streamed assistant text). */
   text: string;
-  /** Structured blocks parsed from assistant output. */
+  /** Structured blocks parsed from assistant output. Populated once the turn
+   *  settles; kept empty during streaming (blocks are derived at render time
+   *  from `text`/`thinking` so the hot streaming path never re-parses). */
   blocks: AgentBlock[];
+  /** Extended-thinking text accumulated during streaming (a separate delta
+   *  stream, not part of `text`). Surfaced as a synthetic `thinking` block. */
+  thinking?: string;
   /** True while the assistant message is still streaming. */
   streaming?: boolean;
-  ts: string; // ISO timestamp
+  ts: string; // ISO timestamp (turn start — shared across a turn's messages)
+  /** Wall-clock ISO time this message finished streaming (assistant only). */
+  endTs?: string;
+  /** How long this message took to produce, in ms (assistant only). Rendered as
+   *  a per-message footer alongside the finish time. */
+  durationMs?: number;
 }
 
 export type TerminalId = string;
+
+/** A user comment anchored to a section of the conversation's plan. */
+export interface PlanComment {
+  id: string;
+  /** The plan message this comment was made against (staleness detection). */
+  messageId: string;
+  /** PlanSection.id it targets. */
+  sectionId: string;
+  /** Snapshot of the section heading for display + feedback composition. */
+  sectionHeading: string;
+  text: string;
+  createdAt: string;
+  /** Set once the comment has been sent to the agent as feedback. */
+  resolved?: boolean;
+}
 
 export interface Session {
   id: string;
@@ -106,6 +138,10 @@ export interface Session {
   terminals: TerminalId[];
   /** Hidden from the main sidebar list when true; restorable from Settings. */
   archived?: boolean;
+  /** User annotations on the implementation plan (Plan view). */
+  planComments?: PlanComment[];
+  /** Edited-in-place plan text, keyed to the plan message it revises. */
+  planDraft?: { messageId: string; text: string } | null;
 }
 
 // ─── Project ─────────────────────────────────────────────────────────────────

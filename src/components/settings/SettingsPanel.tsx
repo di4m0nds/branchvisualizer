@@ -10,10 +10,12 @@ import { useAppContext } from '@/store/AppContext';
 import { useAppZoom, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from '@/hooks/useAppZoom';
 import { resetIdeLayout } from '@/lib/ideLayout';
 import { loadAgentDefaults, saveAgentDefaults, type AgentDefaults } from '@/lib/agentDefaults';
-import ModelPicker from '@/components/ide/ModelPicker';
+import ProvidersPanel from '@/components/settings/ProvidersPanel';
 import SessionsPanel from '@/components/ide/SessionsPanel';
 import PinnedRulesEditor from '@/components/ide/PinnedRulesEditor';
 import ArchiveSection from '@/components/settings/ArchiveSection';
+import { useSystemFonts } from '@/hooks/useSystemFonts';
+import { buildTerminalFontFamily } from '@/lib/terminalFont';
 import type { AccessLevel, BuildMode } from '@/types/session';
 import type { LogDensity } from '@/types';
 
@@ -174,7 +176,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                   )}
 
                   {category === 'appearance' && (
-                    <Section title="Appearance" desc="Theme and interface scale.">
+                    <Section title="Appearance" desc="Theme, scale, and terminal font.">
                       <Field title="Theme">
                         <Seg<'dark' | 'light'>
                           value={state.theme}
@@ -210,12 +212,13 @@ export default function SettingsPanel({ open, onOpenChange }: {
                           Shortcuts scale the whole window and persist.
                         </p>
                       </div>
+                      <TerminalFontField />
                     </Section>
                   )}
 
                   {category === 'providers' && (
-                    <Section title="Providers & Keys" desc="Paste an API key to connect a provider; status refreshes automatically.">
-                      <div className="pt-2"><ModelPicker /></div>
+                    <Section title="Providers & Keys" desc="Connect providers, check status, and keep local toolchains up to date.">
+                      <ProvidersPanel />
                     </Section>
                   )}
 
@@ -300,5 +303,75 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
       </div>
       {children}
     </div>
+  );
+}
+
+// ─── Terminal font picker ────────────────────────────────────────────────────
+// Splits off from SettingsPanel because it owns its own hook state (font
+// enumeration is async) and would otherwise clutter the outer render.
+function TerminalFontField() {
+  const { state, dispatch } = useAppContext();
+  const { fonts, nerdFonts, loading, error } = useSystemFonts();
+  const selected = state.terminalFont ?? '';
+  const previewFamily = buildTerminalFontFamily(state.terminalFont, nerdFonts);
+
+  const setFont = (family: string | null) =>
+    dispatch({ type: 'SET_TERMINAL_FONT', family });
+
+  return (
+    <>
+      <Field
+        title="Terminal font"
+        desc="Applies to the in-IDE terminal and nvim. Uses the built-in monospace stack when unset."
+      >
+        {error === 'unsupported' ? (
+          <input
+            type="text"
+            placeholder="Family name (e.g. JetBrains Mono)"
+            value={selected}
+            onChange={(e) => setFont(e.target.value.trim() || null)}
+            className="w-56 px-2 py-1 rounded border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+          />
+        ) : (
+          <select
+            value={selected}
+            disabled={loading}
+            onChange={(e) => setFont(e.target.value || null)}
+            className="w-56 px-2 py-1 rounded border border-border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+          >
+            <option value="">System default</option>
+            {fonts.map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        )}
+      </Field>
+      <div className="pt-3 space-y-2">
+        {nerdFonts.length > 0 && (
+          <p className="text-[10px] text-muted-foreground/70">
+            Nerd Font detected: <span className="font-mono">{nerdFonts[0]}</span> — icons will render as glyphs.
+          </p>
+        )}
+        {error === 'denied' && (
+          <p className="text-[10px] text-muted-foreground/70">
+            Font enumeration was denied. Reload the app and allow the local-fonts prompt to see installed families.
+          </p>
+        )}
+        {error === 'unsupported' && (
+          <p className="text-[10px] text-muted-foreground/70">
+            This webview can't enumerate system fonts — type an installed family name above.
+          </p>
+        )}
+        <div
+          className="rounded border border-border bg-muted/20 px-3 py-2 text-[13px]"
+          style={{ fontFamily: previewFamily }}
+        >
+          ABCabc123 →⚙ 󰈚
+        </div>
+        <p className="text-[10px] text-muted-foreground/60">
+          If arrows or icons appear as boxes, no Nerd Font is available on this system.
+        </p>
+      </div>
+    </>
   );
 }
