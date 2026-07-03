@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshCw, Play, Square, RotateCw, Trash2, Download, Hammer,
   Boxes, ScrollText, Network, AlertTriangle, ArrowUpCircle, ArrowDownCircle,
@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import { useActiveSession } from '@/hooks/useActiveSession';
+import { usePageVisible } from '@/hooks/usePageVisible';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ServiceGraph from './ServiceGraph';
 import {
@@ -25,9 +26,13 @@ const DESTRUCTIVE: ReadonlySet<DockerAction> = new Set(['prune', 'rm', 'down']);
 const MAX_LOG_LINES = 2000;
 const ERROR_RE = /\b(err(or)?|fatal|panic|exception|fail(ed|ure)?)\b/i;
 
-export default function RuntimePanel() {
+// Memoized: no props, so parent-driven re-renders (IdeWorkspace re-renders per
+// streamed token) are free; internal state/polling drives its own updates.
+export default memo(function RuntimePanel() {
   const active = useActiveSession();
   const cwd = active?.repoSource === 'local' ? active.cwd : null;
+  // Pause polling while the window is hidden/minimized.
+  const pageVisible = usePageVisible();
 
   const [info, setInfo] = useState<RuntimeInfo | null>(null);
   const [detecting, setDetecting] = useState(false);
@@ -66,15 +71,16 @@ export default function RuntimePanel() {
 
   useEffect(() => {
     if (!engine) { setContainers([]); setServices([]); return; }
+    if (!pageVisible) return; // paused while hidden; re-arms (with refresh) on show
     void refresh();
     const iv = setInterval(() => void refresh(), 3000);
     return () => clearInterval(iv);
-  }, [engine, refresh]);
+  }, [engine, refresh, pageVisible]);
 
   // ── Live stats stream (while on Containers tab) ───────────────────────
   const statsRef = useRef<Record<string, ContainerStats>>({});
   useEffect(() => {
-    if (!engine || tab !== 'containers' || !isTauri()) return;
+    if (!engine || tab !== 'containers' || !isTauri() || !pageVisible) return;
     const id = 'runtime-stats';
     let unlistenData: Unlisten | undefined;
     let unlistenExit: Unlisten | undefined;
@@ -89,7 +95,7 @@ export default function RuntimePanel() {
       unlistenExit = await onRuntimeExit(id, () => { /* stream ended; will restart on re-enter */ });
       if (disposed) return;
       await dockerStatsStream(id, engine).catch(() => {});
-      flush = setInterval(() => setStats({ ...statsRef.current }), 700);
+      flush = setInterval(() => setStats({ ...statsRef.current }), 1500);
     })();
 
     return () => {
@@ -99,7 +105,7 @@ export default function RuntimePanel() {
       unlistenExit?.();
       void dockerKill(id);
     };
-  }, [engine, tab]);
+  }, [engine, tab, pageVisible]);
 
   // ── Diagnostics (derived) ─────────────────────────────────────────────
   const diagnostics = useMemo(
@@ -183,7 +189,7 @@ export default function RuntimePanel() {
       />
     </div>
   );
-}
+});
 
 // ─── Containers tab ──────────────────────────────────────────────────────────
 

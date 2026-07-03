@@ -108,6 +108,7 @@ export type GraphDirection = 'vertical' | 'horizontal';
 export type ViewMode = 'canvas' | 'list';
 export type Theme = 'dark' | 'light';
 export type LogDensity = 'verbose' | 'clean';
+export type ChatBackground = 'none' | 'dots' | 'grid' | 'scanlines';
 
 // ─── App state ─────────────────────────────────────────────────────────────
 
@@ -182,6 +183,8 @@ export interface AppState {
   terminalFont: string | null;
   /** User-picked chat prose font family (null = system sans stack). */
   chatFont: string | null;
+  /** Subtle background texture behind chat messages ('none' = clean). */
+  chatBackground: ChatBackground;
   /** Registered projects — each groups its own set of sessions/threads. */
   projects: Project[];
   /** Agent sessions (IDE mode). Additive — does not affect the flat repo view. */
@@ -231,6 +234,7 @@ export type AppAction =
   | { type: 'SET_LOG_DENSITY'; density: LogDensity }
   | { type: 'SET_TERMINAL_FONT'; family: string | null }
   | { type: 'SET_CHAT_FONT'; family: string | null }
+  | { type: 'SET_CHAT_BACKGROUND'; texture: ChatBackground }
   | { type: 'SET_SOURCE'; source: RepoSource; localPath?: string | null }
   // ── Projects ──
   | { type: 'ADD_PROJECT'; project: Project }

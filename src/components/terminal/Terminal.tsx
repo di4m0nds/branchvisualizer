@@ -7,7 +7,7 @@ import { CanvasAddon } from 'xterm-addon-canvas';
 import 'xterm/css/xterm.css';
 import { isTauri, type Unlisten } from '@/lib/platform';
 import { spawnPty, writePty, resizePty, killPty, onPtyData, onPtyExit } from '@/lib/pty';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 import { buildTerminalFontFamily } from '@/lib/terminalFont';
 import type { TerminalDef } from '@/types/terminal';
@@ -59,12 +59,14 @@ export default function Terminal({
   onExit?: (code: number | null) => void;
   registerWriter?: (write: (data: string) => Promise<void>) => void;
 }) {
-  const { state } = useAppContext();
+  // Slice subscriptions — xterm must not re-render on chat/session churn.
+  const terminalFont = useAppSelector((s) => s.terminalFont);
+  const theme = useAppSelector((s) => s.theme);
   const { nerdFonts } = useSystemFonts();
-  const fontFamily = buildTerminalFontFamily(state.terminalFont, nerdFonts);
+  const fontFamily = buildTerminalFontFamily(terminalFont, nerdFonts);
   const containerRef = useRef<HTMLDivElement>(null);
-  const themeRef = useRef(state.theme);
-  themeRef.current = state.theme;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const fontFamilyRef = useRef(fontFamily);
   fontFamilyRef.current = fontFamily;
   const fontScaleRef = useRef(fontScale);

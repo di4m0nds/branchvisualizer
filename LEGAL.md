@@ -1,4 +1,4 @@
-# BranchVisualizer — Legal & Compliance
+# BranchVisualizer — Legal & Compliance - EDITED
 
 This document is the canonical source of truth for BranchVisualizer's legal policies.  
 The same content is rendered in-app via `src/components/LegalPage.tsx`.

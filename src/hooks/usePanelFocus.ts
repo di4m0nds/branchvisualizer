@@ -6,9 +6,9 @@
 
 import { useSyncExternalStore } from 'react';
 
-export type PanelId = 'sidebar' | 'chat' | 'terminal' | 'workspace' | 'plan' | 'runtime';
+export type PanelId = 'sidebar' | 'chat' | 'terminal' | 'workspace' | 'plan' | 'runtime' | 'docs';
 
-const PANELS: PanelId[] = ['sidebar', 'chat', 'terminal', 'workspace', 'plan', 'runtime'];
+const PANELS: PanelId[] = ['sidebar', 'chat', 'terminal', 'workspace', 'plan', 'runtime', 'docs'];
 const ZOOM_KEY = 'code-agent:panel_zoom';
 export const PANEL_ZOOM_MIN = 0.5;
 export const PANEL_ZOOM_MAX = 2.0;

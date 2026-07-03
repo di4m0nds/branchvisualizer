@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseAgentBlocks, type PlanStep, type StatusFile } from './blocks';
+import { filterBlocksByDensity, parseAgentBlocks, type PlanStep, type StatusFile } from './blocks';
+import type { AgentBlock } from '@/types/session';
 
 describe('parseAgentBlocks — self-closing + hydration', () => {
   it('parses a self-closing session_state_change (no raw-text leak)', () => {
@@ -34,6 +35,20 @@ describe('parseAgentBlocks — self-closing + hydration', () => {
     expect(parseAgentBlocks(text).some((b) => b.type === 'text' && b.raw.includes('<step'))).toBe(false);
   });
 
+  it('keeps markdown-relevant characters intact through plan hydration', () => {
+    const text =
+      '<plan><title>Refactor auth</title><objective>Replace `sessions` with **JWT**</objective>' +
+      '<steps>' +
+      '<step index="1" status="pending" estimated_complexity="low"><title>Read code</title>' +
+      '<description>Look at `src/**/auth.ts` — inspect **all** middleware</description>' +
+      '<files_affected>src/auth.ts</files_affected></step>' +
+      '</steps></plan>';
+    const plan = parseAgentBlocks(text).find((b) => b.type === 'plan');
+    expect(plan?.data?.objective).toBe('Replace `sessions` with **JWT**');
+    const steps = plan?.data?.steps as PlanStep[];
+    expect(steps[0].description).toBe('Look at `src/**/auth.ts` — inspect **all** middleware');
+  });
+
   it('hydrates agent_status files/commands (no raw XML leak)', () => {
     const text =
       '<agent_status><state>working</state>' +
@@ -52,5 +67,37 @@ describe('parseAgentBlocks — self-closing + hydration', () => {
     const blocks = parseAgentBlocks('Here is some **markdown** with `code`.');
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe('text');
+  });
+
+  it('parses agent_error blocks with a kind attribute', () => {
+    const blocks = parseAgentBlocks('<agent_error kind="provider">rate limited</agent_error>');
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].type).toBe('agent_error');
+    expect(blocks[0].data?.inner).toBe('rate limited');
+    expect(blocks[0].data?.attrs).toContain('kind="provider"');
+  });
+});
+
+describe('filterBlocksByDensity — density is presentation, not filtering', () => {
+  const b = (type: string, data?: Record<string, unknown>): AgentBlock => ({ type, raw: '', data });
+  const blocks: AgentBlock[] = [
+    b('thinking'),
+    b('action_log', { tool: 'grep' }),
+    b('action_log', { tool: 'run_command' }),
+    b('code_diff'),
+    b('agent_error'),
+    b('text'),
+    b('session_state_change'),
+    b('agent_status'),
+    b('editor_sync'),
+  ];
+
+  it('verbose keeps everything', () => {
+    expect(filterBlocksByDensity(blocks, 'verbose')).toHaveLength(blocks.length);
+  });
+
+  it('clean keeps tool logs, thinking, diffs, and errors — drops only noise chips', () => {
+    const kept = filterBlocksByDensity(blocks, 'clean').map((x) => x.type);
+    expect(kept).toEqual(['thinking', 'action_log', 'action_log', 'code_diff', 'agent_error', 'text']);
   });
 });

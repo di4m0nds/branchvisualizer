@@ -34,7 +34,9 @@ export function removeFromHistory(label: string): void {
   const history = getHistory().filter(e => e.label !== label);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  } catch {}
+  } catch {
+    // quota exceeded or unavailable — ignore
+  }
 }
 
 /** Human-readable relative time, e.g. "3h ago", "2d ago" */

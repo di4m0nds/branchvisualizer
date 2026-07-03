@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo, type RefObject } from 'react';
 import type { GraphData, GraphNode, ViewportState } from '../types';
-import { useAppContext } from '../store/AppContext';
+import { useAppDispatch, useAppSelector } from '../store/store';
 import { useCanvas } from '../hooks/useCanvas';
 import { renderGraph, renderMinimap, graphHeight } from '../graph/renderer';
 import { nodeCanvasX, nodeCanvasY } from '../graph/renderer';
@@ -29,8 +29,22 @@ function reachableFromTip(tipSha: string, commitMap: GraphData['commitMap']): Se
 // ─── GraphCanvas component ────────────────────────────────────────────────
 
 export default function GraphCanvas() {
-  const { state, dispatch } = useAppContext();
-  const { graphData, viewport, selectedNode, selectedNodes, hoveredNode, filter, branches, allCommits, graphDirection } = state;
+  // Slice subscriptions — the canvas must NOT re-render on chat/session churn
+  // (streamed tokens used to repaint it ~30×/s through the old context).
+  const dispatch = useAppDispatch();
+  const graphData = useAppSelector((s) => s.graphData);
+  const viewport = useAppSelector((s) => s.viewport);
+  const selectedNode = useAppSelector((s) => s.selectedNode);
+  const selectedNodes = useAppSelector((s) => s.selectedNodes);
+  const hoveredNode = useAppSelector((s) => s.hoveredNode);
+  const filter = useAppSelector((s) => s.filter);
+  const branches = useAppSelector((s) => s.branches);
+  const allCommits = useAppSelector((s) => s.allCommits);
+  const graphDirection = useAppSelector((s) => s.graphDirection);
+  const appTheme = useAppSelector((s) => s.theme);
+  const loadState = useAppSelector((s) => s.loadState);
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const panToSha = useAppSelector((s) => s.panToSha);
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const minimapRef   = useRef<HTMLCanvasElement>(null);
@@ -300,7 +314,6 @@ export default function GraphCanvas() {
       cancelAnimationFrame(moveRaf);
     };
   // renderNow is stable; graphData dep ensures re-attach when graph loads
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphData, renderNow]);
 
   // ── Main render loop ───────────────────────────────────────────────────
@@ -308,7 +321,7 @@ export default function GraphCanvas() {
     const ctx = ctxRef.current;
     if (!ctx) return;
 
-    const theme = state.theme ?? 'dark';
+    const theme = appTheme ?? 'dark';
     const opts: RenderOptions = {
       width:          canvasSize.w,
       height:         canvasSize.h,
@@ -341,7 +354,7 @@ export default function GraphCanvas() {
     });
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, state.theme, graphDirection]);
+  }, [graphData, viewport, selectedNode, hoveredNode, highlightedShas, canvasSize, appTheme, graphDirection]);
 
   // ── Animation loop (orbiting arc + dashed edges when a node is selected) ─
   useEffect(() => {
@@ -403,15 +416,15 @@ export default function GraphCanvas() {
   // ── Fit on initial load (once per repo) ───────────────────────────────
   const fittedRepoRef = useRef<string | null>(null);
   useEffect(() => {
-    if (state.loadState.phase === 'done' && graphData && state.repoInfo) {
-      const key = `${state.repoInfo.owner}/${state.repoInfo.repo}`;
+    if (loadState.phase === 'done' && graphData && repoInfo) {
+      const key = `${repoInfo.owner}/${repoInfo.repo}`;
       if (fittedRepoRef.current !== key) {
         fittedRepoRef.current = key;
         fitToView(canvasSize.w, canvasSize.h);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.loadState.phase, state.repoInfo]);
+  }, [loadState.phase, repoInfo]);
 
   // ── Re-fit when direction changes ─────────────────────────────────────
   const prevDirectionRef = useRef(graphDirection);
@@ -429,8 +442,8 @@ export default function GraphCanvas() {
 
   const panAnimRef = useRef<number>(0);
   useEffect(() => {
-    if (!state.panToSha || !graphData) return;
-    const node = graphData.commitMap.get(state.panToSha);
+    if (!panToSha || !graphData) return;
+    const node = graphData.commitMap.get(panToSha);
 
     dispatch({ type: 'SCROLL_TO_SHA', sha: null });
 
@@ -469,7 +482,7 @@ export default function GraphCanvas() {
 
     return () => cancelAnimationFrame(panAnimRef.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.panToSha]);
+  }, [panToSha]);
 
   // ── Timeline jump — smooth-pan to a row's position ───────────────────────
   const timelineJumpAnimRef = useRef<number>(0);
@@ -623,7 +636,7 @@ export default function GraphCanvas() {
       )}
 
       {/* Empty state */}
-      {!graphData && state.loadState.phase === 'idle' && (
+      {!graphData && loadState.phase === 'idle' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-8">
           <svg width="52" height="52" viewBox="0 0 56 56" fill="none" className="opacity-20">
             <circle cx="28" cy="12" r="6" stroke="currentColor" strokeWidth="2"/>

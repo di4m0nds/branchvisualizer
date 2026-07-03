@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppContext } from '@/store/AppContext';
 import { invoke, DesktopOnlyError } from '@/lib/platform';
 import { FileRow } from './FilesTabPrimitives';
 import { openInNvim } from '@/hooks/useOpenInNvim';
+import { ResizeHandle } from './ResizeHandle';
+import DocsMarkdown from './DocsMarkdown';
+import { loadIdeLayout, saveIdeLayout } from '@/lib/ideLayout';
 
 interface TreeEntry {
   path: string;
@@ -16,6 +17,9 @@ interface TreeEntry {
 
 const DOC_EXTS = ['md', 'markdown', 'rst', 'txt', 'org', 'adoc', 'pdf', 'docx', 'doc'];
 
+const DOCS_SIDEBAR_MIN = 12;
+const DOCS_SIDEBAR_MAX = 40;
+
 function extOf(name: string): string {
   return name.split('.').pop()?.toLowerCase() ?? '';
 }
@@ -23,11 +27,7 @@ function extOf(name: string): string {
 // ─── Viewers ─────────────────────────────────────────────────────────────────
 
 function MarkdownViewer({ text }: { text: string }) {
-  return (
-    <article className="prose prose-invert max-w-none prose-sm">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </article>
-  );
+  return <DocsMarkdown text={text} />;
 }
 function TextViewer({ text }: { text: string }) {
   return <pre className="text-xs font-mono whitespace-pre-wrap">{text}</pre>;
@@ -52,7 +52,14 @@ function DocxViewer({ base64 }: { base64: string }) {
     return () => { alive = false; };
   }, [base64]);
   if (err) return <p className="text-xs text-red-400">Failed to render docx: {err}</p>;
-  return <div className="prose prose-invert max-w-none prose-sm" dangerouslySetInnerHTML={{ __html: html }} />;
+  // Mammoth already produces semantic HTML; the container gives it doc-appropriate
+  // typography without relying on the @tailwindcss/typography plugin (not installed).
+  return (
+    <div
+      className="text-[13.5px] text-foreground/90 max-w-3xl [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-2 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2 [&_a]:text-primary [&_a]:underline"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 function PdfViewer({ base64 }: { base64: string }) {
@@ -125,6 +132,10 @@ export default function LocalDocsTab() {
   const [text, setText] = useState<string | null>(null);
   const [base64, setBase64] = useState<string | null>(null);
   const [viewerErr, setViewerErr] = useState<string | null>(null);
+  // Sidebar width persists across mount points (canvas sub-tab AND top-level
+  // Docs view) via the shared IdeLayout so the drag position feels consistent.
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => loadIdeLayout().docsSidebarWidth);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -159,14 +170,29 @@ export default function LocalDocsTab() {
     return () => { alive = false; };
   }, [active, root]);
 
+  // Debounced persist: read the latest layout from disk on each save so drags
+  // in IdeWorkspace's own state (rightView / dockHeight / …) don't stomp on
+  // our width and vice-versa. Small write coupling, keeps concerns clean.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const current = loadIdeLayout();
+      if (current.docsSidebarWidth === sidebarWidth) return;
+      saveIdeLayout({ ...current, docsSidebarWidth: sidebarWidth });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [sidebarWidth]);
+
   if (loading) return <Placeholder text="Scanning for docs…" />;
   if (error) return <Placeholder text={error} />;
   if (entries.length === 0) return <Placeholder text="No markdown / pdf / docx / txt files found." />;
 
   return (
-    <div className="h-full flex overflow-hidden">
-      {/* Document list */}
-      <div className="w-72 flex-shrink-0 border-r border-border overflow-y-auto py-1">
+    <div ref={rowRef} className="h-full flex overflow-hidden">
+      {/* Document list — resizable rail */}
+      <div
+        className="flex-shrink-0 border-r border-border overflow-y-auto py-1 min-w-0"
+        style={{ flex: `0 0 ${sidebarWidth}%` }}
+      >
         {entries.map((e) => (
           <FileRow
             key={e.path}
@@ -180,6 +206,15 @@ export default function LocalDocsTab() {
           />
         ))}
       </div>
+
+      <ResizeHandle
+        direction="h"
+        containerRef={rowRef}
+        size={sidebarWidth}
+        onSizeChange={setSidebarWidth}
+        min={DOCS_SIDEBAR_MIN}
+        max={DOCS_SIDEBAR_MAX}
+      />
 
       {/* Viewer */}
       <div className="flex-1 min-w-0 overflow-auto p-6">

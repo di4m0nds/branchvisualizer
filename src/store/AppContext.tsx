@@ -1,38 +1,39 @@
-import { createContext, useContext, useEffect, useReducer, type ReactNode, type Dispatch } from 'react';
-import type { AppAction, AppState } from '../types';
-import { initialState, persistSessions, persistState, reducer } from './reducer';
+import { useEffect, type ReactNode } from 'react';
+import { getAppState, useAppSelector } from './store';
+import { persistSessions, persistState } from './reducer';
 
-interface AppContextValue {
-  state: AppState;
-  dispatch: Dispatch<AppAction>;
-}
+// Re-export so the store swap is invisible to the ~40 existing call sites.
+// New/hot components should import `useAppSelector` from '@/store/store'.
+// eslint-disable-next-line react-refresh/only-export-components -- intentional back-compat re-export; hooks live in store.ts
+export { useAppContext, useAppDispatch, useAppSelector, getAppState } from './store';
 
-const AppContext = createContext<AppContextValue | null>(null);
-
+/**
+ * No longer a context provider — state lives in the external store (see
+ * ./store.ts). This component only hosts the persistence effects, driven by
+ * selectors of exactly the keys each write watches.
+ */
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
   // Persist model choice + pinned rules + UI prefs on change (cheap; localStorage).
+  const currentModel = useAppSelector((s) => s.currentModel);
+  const pinnedRules = useAppSelector((s) => s.pinnedRules);
+  const showCheckpoints = useAppSelector((s) => s.showCheckpoints);
+  const logDensity = useAppSelector((s) => s.logDensity);
+  const terminalFont = useAppSelector((s) => s.terminalFont);
+  const chatFont = useAppSelector((s) => s.chatFont);
+  const chatBackground = useAppSelector((s) => s.chatBackground);
   useEffect(() => {
-    persistState(state);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.currentModel, state.pinnedRules, state.showCheckpoints, state.logDensity]);
+    persistState(getAppState());
+  }, [currentModel, pinnedRules, showCheckpoints, logDensity, terminalFont, chatFont, chatBackground]);
+
   // Persist sessions separately and debounced: the sessions array gets a new
   // identity on every streamed token, so writing synchronously would thrash
   // localStorage during agent turns.
+  const sessions = useAppSelector((s) => s.sessions);
+  const activeSessionId = useAppSelector((s) => s.activeSessionId);
   useEffect(() => {
-    const t = setTimeout(() => persistSessions(state), 400);
+    const t = setTimeout(() => persistSessions(getAppState()), 400);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.sessions, state.activeSessionId]);
-  return (
-    <AppContext.Provider value={{ state, dispatch }}>
-      {children}
-    </AppContext.Provider>
-  );
-}
+  }, [sessions, activeSessionId]);
 
-export function useAppContext(): AppContextValue {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useAppContext must be used inside AppProvider');
-  return ctx;
+  return <>{children}</>;
 }

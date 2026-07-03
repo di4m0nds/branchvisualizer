@@ -84,11 +84,28 @@ export interface AgentBlock {
   data?: Record<string, unknown>;
 }
 
+/** An `@path` workspace reference attached to a user message. */
+export interface MessageRef {
+  /** The token as typed, e.g. `@src/lib/fuzzy.ts`. */
+  token: string;
+  /** Workspace-relative path the token resolved to. */
+  path: string;
+  kind: 'file' | 'folder';
+  status: 'ok' | 'truncated' | 'error';
+  /** Human-readable detail for truncated/error refs ("first 1200 lines", "not found"). */
+  note?: string;
+}
+
 export interface AgentMessage {
   id: string;
   role: AgentRole;
   /** Rendered text (for user messages and streamed assistant text). */
   text: string;
+  /** Prompt-only sidecar (e.g. resolved `@file` contents). Sent to the model
+   *  ahead of `text` on every conversation rebuild, never rendered in the UI. */
+  hiddenText?: string;
+  /** Resolved `@path` references, rendered as chips on the user bubble. */
+  refs?: MessageRef[];
   /** Structured blocks parsed from assistant output. Populated once the turn
    *  settles; kept empty during streaming (blocks are derived at render time
    *  from `text`/`thinking` so the hot streaming path never re-parses). */
@@ -138,6 +155,10 @@ export interface Session {
   terminals: TerminalId[];
   /** Hidden from the main sidebar list when true; restorable from Settings. */
   archived?: boolean;
+  /** Set when persistence dropped messages beyond the storage cap, so the UI
+   *  can tell the user the transcript is incomplete rather than trimming
+   *  silently. */
+  historyTrimmed?: boolean;
   /** User annotations on the implementation plan (Plan view). */
   planComments?: PlanComment[];
   /** Edited-in-place plan text, keyed to the plan message it revises. */
@@ -202,10 +223,16 @@ export function createDefaultContext(): SessionContext {
 }
 
 let _seq = 0;
-/** Monotonic id — avoids Math.random/Date in hot paths while staying unique. */
+// Boot-scoped id namespace: sessions (and their message ids) persist to
+// localStorage, so a bare counter restarting at 0 after reload would mint ids
+// that collide with restored ones — streamed updates then patch the wrong
+// message and React keys clash ("disappearing messages"). Salting with the
+// boot time keeps ids monotonic within a run and unique across runs.
+const _boot = Date.now().toString(36);
+/** Monotonic id, unique across app restarts. */
 export function nextId(prefix: string): string {
   _seq += 1;
-  return `${prefix}_${_seq}`;
+  return `${prefix}_${_boot}_${_seq.toString(36)}`;
 }
 
 /**

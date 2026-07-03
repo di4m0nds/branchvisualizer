@@ -1,5 +1,5 @@
-import { useAppContext } from '@/store/AppContext';
-import { useState, useRef } from 'react';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { memo, useState, useRef } from 'react';
 import GraphCanvas from '@/components/GraphCanvas';
 import CommitListView from '@/components/CommitListView';
 import DetailPanel from '@/components/DetailPanel';
@@ -176,8 +176,8 @@ function PaneTabBar({
   onTabChange: (tab: TabId) => void;
   compact?: boolean;
 }) {
-  const { state } = useAppContext();
-  const tabs = state.source === 'local' ? TABS.filter(t => LOCAL_TAB_IDS.includes(t.id)) : TABS;
+  const source = useAppSelector((s) => s.source);
+  const tabs = source === 'local' ? TABS.filter(t => LOCAL_TAB_IDS.includes(t.id)) : TABS;
   return (
     <div className="flex items-center gap-0 border-b border-border flex-shrink-0 overflow-x-auto scrollbar-hide">
       {tabs.map(tab => (
@@ -203,8 +203,11 @@ function PaneTabBar({
 // ─── Direction / split toolbar ─────────────────────────────────────────────
 
 function WorkspaceToolbar() {
-  const { state, dispatch } = useAppContext();
-  const { splitLayout, graphDirection, graphData, showCheckpoints } = state;
+  const dispatch = useAppDispatch();
+  const splitLayout = useAppSelector((s) => s.splitLayout);
+  const graphDirection = useAppSelector((s) => s.graphDirection);
+  const graphData = useAppSelector((s) => s.graphData);
+  const showCheckpoints = useAppSelector((s) => s.showCheckpoints);
 
   if (!graphData) return null;
 
@@ -304,8 +307,8 @@ function WorkspaceToolbar() {
 // ─── Tab content renderer ──────────────────────────────────────────────────
 
 function TabContent({ activeTab }: { activeTab: TabId }) {
-  const { state } = useAppContext();
-  const isLocal = state.source === 'local';
+  const source = useAppSelector((s) => s.source);
+  const isLocal = source === 'local';
   // PRs/Releases/CI are GitHub-only; hide with a note if opened in local mode.
   const githubOnlyIssue = isLocal && (['prs', 'releases', 'ci', 'docs'].indexOf(activeTab) === -1)
     ? false
@@ -357,8 +360,8 @@ function SplitPane({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const { state, dispatch } = useAppContext();
-  const activeTab = state.paneTab[paneIndex];
+  const dispatch = useAppDispatch();
+  const activeTab = useAppSelector((s) => s.paneTab[paneIndex]);
 
   return (
     <div className={cn('flex flex-col min-h-0 overflow-hidden', className)} style={style}>
@@ -374,9 +377,16 @@ function SplitPane({
 
 // ─── Main TabWorkspace ─────────────────────────────────────────────────────
 
-export default function TabWorkspace() {
-  const { state, dispatch } = useAppContext();
-  const { activeTab, splitLayout, selectedNode, graphData } = state;
+// Memoized: mounted alongside the chat, and its parent (IdeWorkspace)
+// re-renders on every streamed token — with no props, memo makes those
+// parent-driven re-renders free. Store changes still flow via selectors.
+export default memo(function TabWorkspace() {
+  const dispatch = useAppDispatch();
+  const activeTab = useAppSelector((s) => s.activeTab);
+  const splitLayout = useAppSelector((s) => s.splitLayout);
+  const selectedNode = useAppSelector((s) => s.selectedNode);
+  const graphData = useAppSelector((s) => s.graphData);
+  const paneTab = useAppSelector((s) => s.paneTab);
 
   // Resize state for split layouts (percentages of the first pane)
   const [splitH, setSplitH] = useState(50);   // 2h: left pane %
@@ -395,7 +405,7 @@ export default function TabWorkspace() {
     if (!selectedNode) return false;
     if (splitLayout === 'single') return activeTab === 'list';
     const visibleCount = splitLayout === '4g' ? 4 : 2;
-    return state.paneTab.slice(0, visibleCount).some(t => t === 'list');
+    return paneTab.slice(0, visibleCount).some(t => t === 'list');
   })();
 
   const showFloatingPanel = selectedNode && graphData && !hasListTabVisible;
@@ -489,4 +499,4 @@ export default function TabWorkspace() {
       </div>
     </div>
   );
-}
+});

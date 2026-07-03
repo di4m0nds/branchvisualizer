@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppContext } from '@/store/AppContext';
 import { PanelMaximizeButton } from './FocusablePanel';
@@ -10,7 +10,7 @@ import type { PanelId } from '@/hooks/usePanelFocus';
 // graph/split/direction toolbar; this strip owns repo identity + collapse, and
 // the Canvas ↔ Plan view switch for the right column.
 
-export type RightView = 'workspace' | 'plan' | 'runtime';
+export type RightView = 'workspace' | 'plan' | 'runtime' | 'docs';
 
 export default function BvConfigStrip({
   collapsed, onToggle, view, onViewChange, hasPlan,
@@ -42,7 +42,12 @@ export default function BvConfigStrip({
             <GitGraph className="w-3 h-3" />
             <span className="hidden md:inline">Canvas</span>
           </SwitchButton>
-          <SwitchButton active={view === 'plan'} onClick={() => onViewChange('plan')} title="Implementation plan">
+          <SwitchButton
+            active={view === 'plan'}
+            emphasize={!!hasPlan && view !== 'plan'}
+            onClick={() => onViewChange('plan')}
+            title={hasPlan && view !== 'plan' ? 'A plan is ready to review' : 'Implementation plan'}
+          >
             <span className="relative">
               <ClipboardList className="w-3 h-3" />
               {hasPlan && view !== 'plan' && (
@@ -54,6 +59,10 @@ export default function BvConfigStrip({
           <SwitchButton active={view === 'runtime'} onClick={() => onViewChange('runtime')} title="Container runtime">
             <Boxes className="w-3 h-3" />
             <span className="hidden md:inline">Runtime</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'docs'} onClick={() => onViewChange('docs')} title="Repository documentation">
+            <BookOpen className="w-3 h-3" />
+            <span className="hidden md:inline">Docs</span>
           </SwitchButton>
         </div>
 
@@ -80,9 +89,11 @@ export default function BvConfigStrip({
 }
 
 function SwitchButton({
-  active, onClick, title, children,
+  active, emphasize, onClick, title, children,
 }: {
   active: boolean;
+  /** Draw the eye — used when a plan is ready but the Plan tab isn't active. */
+  emphasize?: boolean;
   onClick: () => void;
   title: string;
   children: React.ReactNode;
@@ -93,7 +104,11 @@ function SwitchButton({
       title={title}
       className={cn(
         'flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium transition-colors',
-        active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
+        active
+          ? 'bg-primary/15 text-primary'
+          : emphasize
+            ? 'text-primary/80 hover:text-primary'
+            : 'text-muted-foreground hover:text-foreground',
       )}
     >
       {children}

@@ -26,6 +26,7 @@ export const KNOWN_BLOCK_TAGS = [
   'security_review',
   'change_explanation',
   'context_warning',
+  'agent_error',
 ] as const;
 
 // Attribute run that is quote-aware: it consumes any char that is not `>` or
@@ -43,24 +44,17 @@ const BLOCK_RE = new RegExp(
   'g',
 );
 
-// In "clean" mode we keep only the signal a reviewer cares about: the agent's
-// prose, what files it touched, executed CLI commands, its plans/questions, and
-// the change explanation. Raw action logs, code dumps, diffs, and intermediate
-// review chatter are hidden. "verbose" shows everything.
-const CLEAN_KEEP = new Set([
-  'text', 'file_changes', 'plan', 'questions_for_user', 'change_explanation', 'context_warning',
-  'cli_approval_needed', 'pending_action', 'task_summary',
+// Density is PRESENTATION, not information. "clean" keeps every tool step —
+// rendered as minimized one-line rows the reader can expand — and drops only
+// pure-noise heartbeat/sync chips. "verbose" shows everything, expanded.
+const CLEAN_DROP = new Set([
+  'session_state_change', 'agent_status', 'editor_sync', 'branch_visualizer_refresh', 'nvim_command',
 ]);
 
 /** Filter parsed blocks for the given transcript density. */
 export function filterBlocksByDensity(blocks: AgentBlock[], density: LogDensity): AgentBlock[] {
   if (density === 'verbose') return blocks;
-  return blocks.filter((b) => {
-    if (CLEAN_KEEP.has(b.type)) return true;
-    // Keep executed shell commands (they're high-signal); drop other tool logs.
-    if (b.type === 'action_log') return String(b.data?.tool ?? '') === 'run_command';
-    return false;
-  });
+  return blocks.filter((b) => !CLEAN_DROP.has(b.type));
 }
 
 /** Hydrate the flat fields the `<ActionLog>` renderer reads directly off
@@ -99,12 +93,19 @@ function hydratePendingAction(data: Record<string, unknown>): Record<string, unk
 function hydrateApprovalCard(data: Record<string, unknown>): Record<string, unknown> {
   const inner = String(data.inner ?? '');
   const reason = extractTag(inner, 'reason') || 'The agent needs your permission to run commands.';
-  const cmds: string[] = [];
-  const re = /<cmd>([\s\S]*?)<\/cmd>/g;
+  // Each row is `{ label: string; full: string }` — `label` is what's shown
+  // in the row (a sub-command when the CLI's error listed parts, otherwise
+  // the full compound), `full` is the original compound tied to the tool_use
+  // so the card can show it in tooltips / a "Copy full command" affordance.
+  const cmds: Array<{ label: string; full: string }> = [];
+  const re = /<cmd(\s[^>]*)?>([\s\S]*?)<\/cmd>/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(inner)) !== null) {
-    const t = m[1].trim();
-    if (t) cmds.push(t);
+    const attrs = m[1] ?? '';
+    const label = m[2].trim();
+    if (!label) continue;
+    const full = extractAttr(attrs, 'full') ?? label;
+    cmds.push({ label, full });
   }
   return { ...data, reason, commands: cmds };
 }
@@ -410,7 +411,24 @@ const TOOL_KIND: Record<string, StepKind> = {
   run_command: 'run_command',
 };
 
+// Per-message step cache. `deriveSteps` runs over the WHOLE message array on
+// every streamed flush (~30×/s), but a flush replaces exactly one message
+// object — every settled message keeps its identity, so a WeakMap keyed on the
+// message makes re-derivation O(changed) instead of O(all). Streaming messages
+// are skipped (their content mutates under a stable id via UPDATE patches).
+const stepsCache = new WeakMap<AgentMessage, TimelineStep[]>();
+
 function stepsForMessage(m: AgentMessage): TimelineStep[] {
+  if (!m.streaming) {
+    const hit = stepsCache.get(m);
+    if (hit) return hit;
+  }
+  const out = computeSteps(m);
+  if (!m.streaming) stepsCache.set(m, out);
+  return out;
+}
+
+function computeSteps(m: AgentMessage): TimelineStep[] {
   const out: TimelineStep[] = [];
   let hasProse = false;
   for (const b of m.blocks) {

@@ -17,7 +17,7 @@ import ArchiveSection from '@/components/settings/ArchiveSection';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 import { buildTerminalFontFamily, buildChatFontFamily } from '@/lib/terminalFont';
 import type { AccessLevel, BuildMode } from '@/types/session';
-import type { LogDensity } from '@/types';
+import type { ChatBackground, LogDensity } from '@/types';
 
 // ─── Category registry ───────────────────────────────────────────────────────
 
@@ -214,6 +214,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                       </div>
                       <TerminalFontField />
                       <ChatFontField />
+                      <ChatBackgroundField />
                     </Section>
                   )}
 
@@ -271,11 +272,14 @@ export default function SettingsPanel({ open, onOpenChange }: {
                   {category === 'keybindings' && (
                     <Section title="Keybindings" desc="Built-in shortcuts.">
                       {[
+                        ['Focus panel (sidebar / chat / terminal / workspace / plan / runtime)', 'Alt + 1..6'],
+                        ['Maximize / restore focused panel', 'Alt + F'],
                         ['Zoom in', 'Ctrl / ⌘ +'],
                         ['Zoom out', 'Ctrl / ⌘ -'],
                         ['Reset zoom', 'Ctrl / ⌘ 0'],
                         ['Send message', 'Enter'],
                         ['Newline in composer', 'Shift + Enter'],
+                        ['Restore maximized panel', 'Esc'],
                         ['Close this panel', 'Esc'],
                       ].map(([label, keys]) => (
                         <Field key={label} title={label}>
@@ -416,6 +420,33 @@ function ChatFontField() {
           The quick brown fox jumps over the lazy dog. <code className="font-mono text-[0.85em] bg-muted px-1 rounded">code stays mono</code>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Chat background texture ─────────────────────────────────────────────────
+// A subtle, theme-aware pattern behind the chat message viewport. 'none' keeps
+// it clean; the others read off the --border token so they adapt to light/dark.
+const CHAT_BG_OPTIONS: { id: ChatBackground; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'dots', label: 'Dots' },
+  { id: 'grid', label: 'Grid' },
+  { id: 'scanlines', label: 'Scanlines' },
+];
+function ChatBackgroundField() {
+  const { state, dispatch } = useAppContext();
+  return (
+    <div className="pt-4 mt-4 border-t border-border/40">
+      <Field
+        title="Chat background"
+        desc="Subtle texture behind chat messages. Adapts to light/dark."
+      >
+        <Seg<ChatBackground>
+          value={state.chatBackground}
+          options={CHAT_BG_OPTIONS}
+          onChange={(texture) => dispatch({ type: 'SET_CHAT_BACKGROUND', texture })}
+        />
+      </Field>
     </div>
   );
 }

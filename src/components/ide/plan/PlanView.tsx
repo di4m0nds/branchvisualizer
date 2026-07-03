@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from 'react';
 import { ClipboardList, Pencil, Send, X, Check } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/store/AppContext';
 import { nextId, type Session, type PlanComment } from '@/types/session';
 import { latestPlanText, parsePlanSections } from '@/lib/agent/plan';
@@ -121,6 +121,14 @@ export default function PlanView({ session }: { session: Session }) {
         onSendRevised={sendRevisedPlan}
       />
 
+      {/* One-line explainer so the actions above (Edit / Send revised / Send N)
+          and per-section comment buttons below are actually discovered. */}
+      {!editing && (
+        <div className="flex-shrink-0 px-3 py-1.5 border-b border-border/50 bg-muted/5 text-[11px] text-muted-foreground">
+          Edit the plan inline, comment on individual sections, or send feedback back to the agent.
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
         {editing ? (
           <textarea
@@ -176,47 +184,45 @@ function PlanHeader({
         </span>
       )}
       {!disabled && (
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1.5">
           {editing ? (
             <>
-              <button onClick={onSaveEdit} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground text-[11px] font-medium">
-                <Check className="w-3 h-3" /> Save
-              </button>
-              <button onClick={onCancelEdit} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground">
-                <X className="w-3 h-3" /> Cancel
-              </button>
+              <Button size="xs" onClick={onSaveEdit}>
+                <Check className="w-3 h-3 mr-1" /> Save
+              </Button>
+              <Button size="xs" variant="ghost" onClick={onCancelEdit}>
+                <X className="w-3 h-3 mr-1" /> Cancel
+              </Button>
             </>
           ) : (
             <>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={onEdit}
+                title="Edit the plan inline"
+              >
+                <Pencil className="w-3 h-3 mr-1" /> Edit
+              </Button>
               {hasDraft && (
-                <button
+                <Button
+                  size="xs"
+                  variant="secondary"
                   onClick={onSendRevised}
                   title="Send the edited plan to the agent"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/40"
                 >
-                  <Send className="w-3 h-3" /> Send revised
-                </button>
+                  <Send className="w-3 h-3 mr-1" /> Send revised
+                </Button>
               )}
-              <button
-                onClick={onEdit}
-                title="Edit the plan"
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/40"
-              >
-                <Pencil className="w-3 h-3" /> Edit
-              </button>
-              <button
+              <Button
+                size="xs"
                 onClick={onSendFeedback}
                 disabled={unresolvedCount === 0}
-                title="Send comments to the agent as feedback"
-                className={cn(
-                  'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium',
-                  unresolvedCount > 0
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground/50 cursor-not-allowed',
-                )}
+                title={unresolvedCount === 0 ? 'Add a comment to a section to send feedback' : 'Send comments to the agent as feedback'}
               >
-                <Send className="w-3 h-3" /> Send{unresolvedCount > 0 ? ` (${unresolvedCount})` : ''}
-              </button>
+                <Send className="w-3 h-3 mr-1" />
+                Send{unresolvedCount > 0 ? ` (${unresolvedCount})` : ' feedback'}
+              </Button>
             </>
           )}
         </div>

@@ -1,6 +1,6 @@
-import type { AppAction, AppState, FilterState, LoadState, LogDensity, ModelRef, TabId } from '../types';
+import type { AppAction, AppState, ChatBackground, FilterState, LoadState, LogDensity, ModelRef, TabId } from '../types';
 import type { ContextSizeId } from '../lib/agent/transport';
-import type { PinnedRule, Project, Session, SessionContext } from '../types/session';
+import type { AgentMessage, PinnedRule, Project, Session, SessionContext } from '../types/session';
 import { DEFAULT_PINNED_RULES, createDefaultContext, nextId, sessionProjectKey } from '../types/session';
 import { buildGraphData } from '../graph/layout';
 import { filterCheckpoints } from '../lib/refs';
@@ -14,6 +14,7 @@ const SHOW_CHECKPOINTS_STORAGE_KEY = 'code-agent:show_checkpoints';
 const LOG_DENSITY_STORAGE_KEY = 'code-agent:log_density';
 const TERMINAL_FONT_STORAGE_KEY = 'code-agent:terminal_font';
 const CHAT_FONT_STORAGE_KEY = 'code-agent:chat_font';
+const CHAT_BACKGROUND_STORAGE_KEY = 'code-agent:chat_background';
 
 function loadBoolPref(key: string, fallback: boolean): boolean {
   if (typeof localStorage === 'undefined') return fallback;
@@ -54,6 +55,17 @@ function loadChatFont(): string | null {
   }
 }
 
+const CHAT_BACKGROUNDS: ChatBackground[] = ['none', 'dots', 'grid', 'scanlines'];
+function loadChatBackground(): ChatBackground {
+  if (typeof localStorage === 'undefined') return 'none';
+  try {
+    const raw = localStorage.getItem(CHAT_BACKGROUND_STORAGE_KEY);
+    return (CHAT_BACKGROUNDS as string[]).includes(raw ?? '') ? (raw as ChatBackground) : 'none';
+  } catch {
+    return 'none';
+  }
+}
+
 /** Cap persisted history so the localStorage blob stays bounded. */
 const MAX_PERSISTED_MESSAGES = 100;
 
@@ -61,13 +73,19 @@ const MAX_PERSISTED_MESSAGES = 100;
 // visualizer views. We strip runtime-only fields (live terminals, mid-stream
 // flags, transient status) and cap history length before writing.
 function stripSessionForStorage(s: Session): Session {
+  const trimmed = s.messages.length > MAX_PERSISTED_MESSAGES;
   return {
     ...s,
     terminals: [],
     context: { ...s.context, status: 'idle' },
+    historyTrimmed: s.historyTrimmed || trimmed || undefined,
     messages: s.messages
       .slice(-MAX_PERSISTED_MESSAGES)
-      .map((m) => ({ ...m, streaming: false })),
+      // Drop `hiddenText` (resolved @-file contents, up to ~192 KB per message)
+      // so reference-heavy sessions can't blow the localStorage quota and stop
+      // ALL persistence. After a reload the contents would be stale anyway —
+      // the chips (`refs`) survive, and the agent re-reads files via tools.
+      .map(({ hiddenText: _hidden, ...m }) => ({ ...m, streaming: false })),
   };
 }
 
@@ -140,9 +158,25 @@ function loadSessions(projects?: Project[]): Session[] {
       ...s,
       projectId,
       terminals: [],
-      messages: Array.isArray(s.messages) ? s.messages : [],
+      messages: dedupeMessageIds(Array.isArray(s.messages) ? s.messages : []),
       context: { ...createDefaultContext(), ...s.context, status: 'idle' },
     };
+  });
+}
+
+// Heal blobs written before ids were boot-scoped: a reload back then re-minted
+// `msg_1…` and could persist duplicate ids, which break React keys and make
+// UPDATE_AGENT_MESSAGE patch the wrong message. Re-mint any repeat on load.
+function dedupeMessageIds(messages: AgentMessage[]): AgentMessage[] {
+  const seen = new Set<string>();
+  return messages.map((m) => {
+    if (!seen.has(m.id)) {
+      seen.add(m.id);
+      return m;
+    }
+    const fresh = nextId(m.role === 'user' ? 'msg_u' : 'msg_a');
+    seen.add(fresh);
+    return { ...m, id: fresh };
   });
 }
 
@@ -227,6 +261,7 @@ export function persistState(state: AppState): void {
     } else {
       localStorage.removeItem(CHAT_FONT_STORAGE_KEY);
     }
+    localStorage.setItem(CHAT_BACKGROUND_STORAGE_KEY, state.chatBackground);
   } catch { /* quota / private mode */ }
 }
 
@@ -272,6 +307,7 @@ export const initialState: AppState = {
   logDensity: loadLogDensity(),
   terminalFont: loadTerminalFont(),
   chatFont: loadChatFont(),
+  chatBackground: loadChatBackground(),
   ...bootstrapProjectsAndSessions(),
   currentModel: loadCurrentModel(),
   providerStatus: {},
@@ -374,6 +410,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, terminalFont: action.family };
     case 'SET_CHAT_FONT':
       return { ...state, chatFont: action.family };
+    case 'SET_CHAT_BACKGROUND':
+      return { ...state, chatBackground: action.texture };
 
     case 'LOAD_ERROR':
       return {
@@ -579,7 +617,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
           const isPlaceholder = s.title === 'New session' || (!!proj && s.title === proj.name);
           if (isPlaceholder) title = deriveSessionTitle(action.message.text);
         }
-        return { ...s, title, messages: [...s.messages, action.message] };
+        // Defensive: sessions persisted before ids were boot-scoped can contain
+        // ids a fresh counter re-mints. A duplicate key would make streamed
+        // UPDATE_AGENT_MESSAGE patches land on the old message — remint instead.
+        let message = action.message;
+        if (s.messages.some((m) => m.id === message.id)) {
+          message = { ...message, id: nextId(message.role === 'user' ? 'msg_u' : 'msg_a') };
+        }
+        return { ...s, title, messages: [...s.messages, message] };
       });
 
     case 'RENAME_SESSION':

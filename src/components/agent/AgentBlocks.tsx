@@ -1,9 +1,10 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown, Brain, MessagesSquare, ShieldAlert, Copy,
   Sparkles, FileEdit, FilePlus, FileMinus, FileText as FileTextIcon,
   Bug, ShieldCheck, ClipboardList, Wrench, CornerDownRight,
+  AlertTriangle, FileCode, GitCompareArrows, RotateCcw, Search, SquareTerminal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -11,12 +12,13 @@ import { toast } from '@/services/toast';
 import type { AgentBlock } from '@/types/session';
 import type { LogDensity } from '@/types';
 import {
-  parseQuestions, filterBlocksByDensity,
+  parseQuestions, filterBlocksByDensity, extractAttr,
   type TaskSummaryFile, type AgentQuestion, type PlanStep, type StatusFile, type StatusCommand,
 } from './blocks';
 import Markdown from './Markdown';
 import StreamingText from './StreamingText';
 import CodeFrame from './CodeFrame';
+import ToolRow from './ToolRow';
 
 // ─── Block renderers ─────────────────────────────────────────────────────────
 // One component per structured block the agent emits. They share a visual
@@ -67,22 +69,28 @@ function LabeledCard({ label, tone, inner }: { label: string; tone?: string; inn
 }
 
 // ─── Collapsible "Thinking…" card ────────────────────────────────────────────
-// Surfaces the model's reasoning. Collapsed by default; pulses while the turn is
-// still streaming. Hidden in "clean" density (see filterBlocksByDensity).
+// Surfaces the model's reasoning. Collapsed by default with a one-line preview
+// (live tail while streaming, opening line once settled) so the closed card
+// still tells you what the model is working through.
 
 function ThinkingCard({ inner, streaming }: { inner: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
+  const lines = inner.trim().split('\n').filter((l) => l.trim());
+  const preview = (streaming ? lines[lines.length - 1] : lines[0]) ?? '';
   return (
     <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 overflow-hidden">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 w-full px-2.5 py-1.5 text-left hover:bg-muted/20 transition-colors"
       >
-        <Brain className={cn('w-3 h-3 text-muted-foreground', streaming && 'animate-pulse text-primary')} />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Brain className={cn('w-3 h-3 flex-shrink-0 text-muted-foreground', streaming && 'animate-pulse text-primary')} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex-shrink-0">
           {streaming ? 'Thinking…' : 'Thought process'}
         </span>
-        <ChevronDown className={cn('w-3 h-3 ml-auto text-muted-foreground transition-transform', open && 'rotate-180')} />
+        {!open && preview && (
+          <span className="text-[10px] italic text-muted-foreground/50 truncate min-w-0">{preview}</span>
+        )}
+        <ChevronDown className={cn('w-3 h-3 ml-auto flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -147,15 +155,35 @@ function QuestionsBlock({
 // auto-resubmits the last user prompt so the work resumes.
 
 function CliApprovalCard({
-  data, interactive, onApprove,
+  data, interactive, planningHint, onApprove,
 }: {
   data: Record<string, unknown>;
   interactive: boolean;
+  /** Extra footer line ("Approving will let the CLI finish writing your plan
+   *  file") shown when we know the current session is in planning mode. */
+  planningHint?: string;
   onApprove?: () => void;
 }) {
   const [decided, setDecided] = useState<'approved' | 'denied' | null>(null);
   const reason = String(data.reason ?? 'The agent needs permission to run commands.');
-  const commands = Array.isArray(data.commands) ? (data.commands as string[]) : [];
+  // Rows are `{ label, full }` — see hydrateApprovalCard in blocks.ts. Legacy
+  // blobs (plain string[]) still render by upgrading each to `{ label, full }`.
+  const rows: Array<{ label: string; full: string }> = Array.isArray(data.commands)
+    ? (data.commands as unknown[]).map((c) =>
+      typeof c === 'string' ? { label: c, full: c } : (c as { label: string; full: string }))
+    : [];
+  // Distinct source compounds — one per tool_use — for the "Copy compound"
+  // affordance, so the user can grab exactly what the CLI tried to run.
+  const distinctCompounds = Array.from(new Set(rows.map((r) => r.full)));
+  const copyAll = async () => {
+    if (distinctCompounds.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(distinctCompounds.join('\n'));
+      toast.success(distinctCompounds.length > 1 ? 'Copied compound commands' : 'Copied full command');
+    } catch {
+      toast.error('Copy failed');
+    }
+  };
 
   return (
     <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 overflow-hidden">
@@ -164,14 +192,27 @@ function CliApprovalCard({
         <span className="text-xs font-semibold text-foreground">
           {decided === 'approved' ? 'Approved · resuming' : decided === 'denied' ? 'Denied' : 'Approval needed'}
         </span>
+        {distinctCompounds.length > 0 && (
+          <button
+            onClick={copyAll}
+            title={distinctCompounds.join('\n')}
+            className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Copy className="w-3 h-3" /> Copy {distinctCompounds.length > 1 ? 'compounds' : 'full'}
+          </button>
+        )}
       </div>
       <div className="p-3 space-y-2">
         <p className="text-xs text-muted-foreground leading-relaxed">{reason}</p>
-        {commands.length > 0 && (
+        {rows.length > 0 && (
           <ul className="rounded border border-border/60 bg-background/60 px-2.5 py-1.5 space-y-0.5">
-            {commands.map((c, i) => (
-              <li key={i} className="text-[11px] font-mono text-foreground/90 truncate">
-                <span className="text-muted-foreground/60 mr-1.5">$</span>{c}
+            {rows.map((r, i) => (
+              <li
+                key={i}
+                title={r.full !== r.label ? `Part of: ${r.full}` : undefined}
+                className="text-[11px] font-mono text-foreground/90 truncate"
+              >
+                <span className="text-muted-foreground/60 mr-1.5">$</span>{r.label}
               </li>
             ))}
           </ul>
@@ -191,6 +232,9 @@ function CliApprovalCard({
               </Button>
             </div>
           </div>
+        )}
+        {planningHint && (
+          <p className="text-[10px] text-muted-foreground/70 italic pt-0.5">{planningHint}</p>
         )}
       </div>
     </div>
@@ -218,7 +262,7 @@ function PendingActionBlockCard({
   const reason = String(data.reason ?? '');
   const riskTone = risk === 'high' ? 'text-red-400 border-red-400/40 bg-red-400/10'
     : risk === 'medium' ? 'text-amber-400 border-amber-400/40 bg-amber-400/10'
-    : 'text-green-400 border-green-400/40 bg-green-400/10';
+      : 'text-green-400 border-green-400/40 bg-green-400/10';
 
   return (
     <div className="rounded-lg border border-primary/40 bg-primary/5 overflow-hidden">
@@ -424,48 +468,85 @@ function PlanCard({ data }: { data: Record<string, unknown> }) {
   const complexity = String(data.complexity ?? '');
   const steps = (data.steps as PlanStep[] | undefined) ?? [];
 
+  // Long plans dominate the transcript — collapse them by default with a
+  // one-line summary; short plans stay open so nothing hides.
+  const [open, setOpen] = useState(() => steps.length <= 6);
+
   return (
     <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
-      <div className="flex items-center gap-2 px-2.5 py-1 border-b border-primary/20">
-        <ClipboardList className="w-3 h-3 text-primary" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">Plan</span>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 w-full px-2.5 py-1 border-b border-primary/20 text-left hover:bg-primary/10 transition-colors"
+        aria-expanded={open}
+      >
+        <ClipboardList className="w-3 h-3 text-primary flex-shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary flex-shrink-0">Plan</span>
+        {!open && title && (
+          <span className="text-[11px] text-foreground/80 truncate min-w-0">{title}</span>
+        )}
+        {!open && steps.length > 0 && (
+          <span className="text-[10px] font-mono text-muted-foreground/70 flex-shrink-0">
+            · {steps.length} step{steps.length === 1 ? '' : 's'}
+          </span>
+        )}
         {complexity && (
-          <span className={cn('ml-auto text-[10px] font-medium', COMPLEXITY_TONE[complexity.toLowerCase()] ?? 'text-muted-foreground')}>
+          <span className={cn('ml-auto text-[10px] font-medium flex-shrink-0', COMPLEXITY_TONE[complexity.toLowerCase()] ?? 'text-muted-foreground')}>
             {complexity}
           </span>
         )}
-      </div>
-      <div className="px-3 py-2 space-y-2">
-        {title && <div className="text-sm font-semibold text-foreground">{title}</div>}
-        {objective && <div className="text-[13px] text-foreground/90 leading-relaxed">{objective}</div>}
-        {(inScope || outOfScope) && (
-          <div className="grid sm:grid-cols-2 gap-2 text-[11px]">
-            {inScope && <ScopeBox label="In scope" tone="text-green-400" body={inScope} />}
-            {outOfScope && <ScopeBox label="Out of scope" tone="text-muted-foreground" body={outOfScope} />}
-          </div>
-        )}
-        {steps.length > 0 && (
-          <ol className="space-y-1.5 mt-1">
-            {steps.map((s) => (
-              <li key={s.index} className="rounded-md border border-border/50 bg-background/40 px-2.5 py-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-muted-foreground">{s.index}</span>
-                  <span className="text-xs font-medium text-foreground flex-1 min-w-0">{s.title}</span>
-                  {s.complexity && <span className={cn('text-[9px]', COMPLEXITY_TONE[s.complexity.toLowerCase()] ?? 'text-muted-foreground')}>{s.complexity}</span>}
-                  <span className={cn('text-[9px] px-1.5 py-0.5 rounded', STEP_STATUS_TONE[s.status] ?? 'bg-muted text-muted-foreground')}>{s.status.replace(/_/g, ' ')}</span>
+        <ChevronDown className={cn('w-3 h-3 flex-shrink-0 text-muted-foreground transition-transform', open ? 'rotate-180' : '', !complexity && 'ml-auto')} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 py-2 space-y-2">
+              {title && <div className="text-sm font-semibold text-foreground">{title}</div>}
+              {/* Markdown for the objective — the model routinely uses backticks
+                  / bullets here and plain text swallowed all of it. */}
+              {objective && <div className="text-[13px] text-foreground/90 leading-relaxed"><Markdown text={objective} /></div>}
+              {(inScope || outOfScope) && (
+                <div className="grid sm:grid-cols-2 gap-2 text-[11px]">
+                  {inScope && <ScopeBox label="In scope" tone="text-green-400" body={inScope} />}
+                  {outOfScope && <ScopeBox label="Out of scope" tone="text-muted-foreground" body={outOfScope} />}
                 </div>
-                {s.description && <div className="text-[11px] text-foreground/80 mt-1 leading-relaxed">{s.description}</div>}
-                {s.filesAffected && s.filesAffected.toLowerCase() !== 'none' && (
-                  <div className="text-[10px] font-mono text-muted-foreground mt-1 truncate" title={s.filesAffected}>📄 {s.filesAffected}</div>
-                )}
-                {s.risks && s.risks.toLowerCase() !== 'none' && (
-                  <div className="text-[10px] text-amber-500/90 mt-0.5">⚠ {s.risks}</div>
-                )}
-              </li>
-            ))}
-          </ol>
+              )}
+              {steps.length > 0 && (
+                // Cap the step list so a 40-step plan doesn't push the whole
+                // transcript down; users scroll the plan on its own.
+                <ol className="space-y-1.5 mt-1 max-h-[70vh] overflow-auto pr-1">
+                  {steps.map((s) => (
+                    <li key={s.index} className="rounded-md border border-border/50 bg-background/40 px-2.5 py-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-muted-foreground">{s.index}</span>
+                        <span className="text-xs font-medium text-foreground flex-1 min-w-0">{s.title}</span>
+                        {s.complexity && <span className={cn('text-[9px]', COMPLEXITY_TONE[s.complexity.toLowerCase()] ?? 'text-muted-foreground')}>{s.complexity}</span>}
+                        <span className={cn('text-[9px] px-1.5 py-0.5 rounded', STEP_STATUS_TONE[s.status] ?? 'bg-muted text-muted-foreground')}>{s.status.replace(/_/g, ' ')}</span>
+                      </div>
+                      {s.description && (
+                        <div className="text-[11px] text-foreground/80 mt-1 leading-relaxed">
+                          <Markdown text={s.description} />
+                        </div>
+                      )}
+                      {s.filesAffected && s.filesAffected.toLowerCase() !== 'none' && (
+                        <div className="text-[10px] font-mono text-muted-foreground mt-1 truncate" title={s.filesAffected}>📄 {s.filesAffected}</div>
+                      )}
+                      {s.risks && s.risks.toLowerCase() !== 'none' && (
+                        <div className="text-[10px] text-amber-500/90 mt-0.5">⚠ {s.risks}</div>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
     </div>
   );
 }
@@ -474,7 +555,9 @@ function ScopeBox({ label, tone, body }: { label: string; tone: string; body: st
   return (
     <div className="rounded-md border border-border/50 bg-background/40 px-2 py-1.5">
       <div className={cn('text-[9px] font-semibold uppercase tracking-wider mb-0.5', tone)}>{label}</div>
-      <div className="text-foreground/80 whitespace-pre-wrap leading-snug">{body}</div>
+      <div className="text-foreground/80 leading-snug">
+        <Markdown text={body} />
+      </div>
     </div>
   );
 }
@@ -530,13 +613,118 @@ function StateChangeChip({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-const BlockView = memo(function BlockView({ block, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction }: {
+// ─── Agent error card ────────────────────────────────────────────────────────
+// Terminal failures (provider errors, tool blowups) and user stops render as a
+// distinct card instead of loose warning text. Retry — latest turn only —
+// replays the last user message.
+
+function AgentErrorCard({ data, interactive, onRetry }: {
+  data: Record<string, unknown>;
+  interactive: boolean;
+  onRetry?: () => void;
+}) {
+  const kind = extractAttr(String(data.attrs ?? ''), 'kind') ?? 'provider';
+  const message = String(data.inner ?? '').trim() || 'Something went wrong.';
+  const aborted = kind === 'aborted';
+  return (
+    <div className={cn(
+      'rounded-lg border overflow-hidden',
+      aborted ? 'border-amber-500/30 bg-amber-500/5' : 'border-destructive/40 bg-destructive/5',
+    )}>
+      <div className="flex items-center gap-2 px-3 py-2">
+        <AlertTriangle className={cn('w-4 h-4 flex-shrink-0', aborted ? 'text-amber-400' : 'text-destructive')} />
+        <span className="text-xs font-semibold text-foreground">
+          {aborted ? 'Stopped by user' : 'Agent error'}
+        </span>
+        {!aborted && interactive && onRetry && (
+          <Button size="xs" variant="outline" className="ml-auto" onClick={onRetry}>
+            <RotateCcw className="w-3 h-3 mr-1" /> Retry
+          </Button>
+        )}
+      </div>
+      {!aborted && (
+        <p className="px-3 pb-2.5 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Minimized backbox routing (clean density) ──────────────────────────────
+// Maps an action-category block to the one-line ToolRow header, with the full
+// renderer as the expandable body.
+
+const TOOL_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  grep: Search,
+  read_file: FileTextIcon,
+  write_file: FileEdit,
+  edit_file: FileEdit,
+  run_command: SquareTerminal,
+};
+
+function ToolRowBlock({ block, streaming, defaultOpen }: {
+  block: AgentBlock;
+  streaming?: boolean;
+  defaultOpen: boolean;
+}) {
+  const data = block.data ?? {};
+  let title = block.type.replace(/_/g, ' ');
+  let subtitle = '';
+  let status: 'ok' | 'error' | 'running' = 'ok';
+  let Icon: React.ComponentType<{ className?: string }> = Wrench;
+  let body: React.ReactNode;
+  if (block.type === 'action_log') {
+    const tool = String(data.tool ?? 'tool');
+    const output = String(data.output ?? '');
+    title = tool;
+    subtitle = String(data.description ?? '');
+    status = String(data.status ?? '') === 'error' ? 'error' : 'ok';
+    Icon = TOOL_ICON[tool] ?? Wrench;
+    // Output only — the row header already carries tool + description, so the
+    // full ActionLog card would just repeat it.
+    body = output
+      ? (
+        <pre className="px-1 py-0.5 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-auto">
+          {output}
+        </pre>
+      )
+      : <p className="px-1 py-0.5 text-[11px] text-muted-foreground/60 italic">No output.</p>;
+  } else {
+    if (block.type === 'code_file' || block.type === 'code_diff') {
+      title = block.type === 'code_file' ? 'file' : 'diff';
+      subtitle = extractAttr(String(data.attrs ?? ''), 'path') ?? '';
+      status = streaming ? 'running' : 'ok';
+      Icon = block.type === 'code_file' ? FileCode : GitCompareArrows;
+    } else if (block.type === 'file_changes') {
+      title = 'changes';
+      Icon = FileEdit;
+    }
+    body = <BlockView block={block} interactive={false} streaming={streaming} />;
+  }
+  return (
+    <ToolRow
+      icon={<Icon className="w-3 h-3 flex-shrink-0 text-muted-foreground" />}
+      title={title}
+      subtitle={subtitle}
+      status={status}
+      defaultOpen={defaultOpen}
+    >
+      {body}
+    </ToolRow>
+  );
+}
+
+const BlockView = memo(function BlockView({ block, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction, onRetry, cliApprovalHint }: {
   block: AgentBlock;
   interactive: boolean;
   streaming?: boolean;
   onOpenQuestions?: (questions: AgentQuestion[]) => void;
   onApproveCliBypass?: () => void;
   onPendingAction?: (decision: 'approve' | 'reject') => void;
+  onRetry?: () => void;
+  /** Extra hint shown on `cli_approval_needed` cards (e.g. planning mode). */
+  cliApprovalHint?: string;
 }) {
   const inner = String(block.data?.inner ?? '');
 
@@ -558,6 +746,7 @@ const BlockView = memo(function BlockView({ block, interactive, streaming, onOpe
         <CliApprovalCard
           data={block.data ?? {}}
           interactive={interactive}
+          planningHint={cliApprovalHint}
           onApprove={onApproveCliBypass}
         />
       );
@@ -577,6 +766,8 @@ const BlockView = memo(function BlockView({ block, interactive, streaming, onOpe
       return <StatusCard data={block.data ?? {}} />;
     case 'session_state_change':
       return <StateChangeChip data={block.data ?? {}} />;
+    case 'agent_error':
+      return <AgentErrorCard data={block.data ?? {}} interactive={interactive} onRetry={onRetry} />;
     case 'context_warning':
       return <LabeledCard label="Context warning" tone="text-amber-500" inner={inner} />;
     case 'security_review':
@@ -632,24 +823,32 @@ function groupRuns(blocks: AgentBlock[]): BlockRun[] {
   return runs;
 }
 
-// Collapsible cluster of tool steps / edits. Defaults open while streaming so
-// the user watches work happen; can be folded to focus on the response.
+// Collapsible cluster of tool steps / edits. Defaults open in verbose density
+// and while streaming (watch the work happen); clean starts it folded — the
+// quiet "backbox" — and routes each step through a minimized ToolRow. The
+// default follows density/streaming until the user toggles the section.
 function ActionsSection({
-  run, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction,
+  run, density, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction,
 }: {
   run: BlockRun;
+  density: LogDensity;
   interactive: boolean;
   streaming?: boolean;
   onOpenQuestions?: (questions: AgentQuestion[]) => void;
   onApproveCliBypass?: () => void;
   onPendingAction?: (decision: 'approve' | 'reject') => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const defaultOpen = density === 'verbose' || !!streaming;
+  const [open, setOpen] = useState(defaultOpen);
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!touched.current) setOpen(defaultOpen);
+  }, [defaultOpen]);
   const count = run.items.length;
   return (
     <div className="rounded-lg border border-border/50 bg-muted/10 overflow-hidden">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => { touched.current = true; setOpen((o) => !o); }}
         className="flex items-center gap-2 w-full px-2.5 py-1.5 text-left hover:bg-muted/25 transition-colors"
       >
         <Wrench className={cn('w-3 h-3 text-muted-foreground', streaming && 'text-primary')} />
@@ -670,17 +869,21 @@ function ActionsSection({
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            <div className="flex flex-col gap-1.5 px-2 pb-2 pt-0.5 border-t border-border/40">
+            <div className="flex flex-col gap-1.5 px-2 pb-2 pt-1.5 border-t border-border/40">
               {run.items.map(({ block, idx }) => (
-                <BlockView
-                  key={`${block.type}-${idx}`}
-                  block={block}
-                  interactive={interactive}
-                  streaming={streaming}
-                  onOpenQuestions={onOpenQuestions}
-                  onApproveCliBypass={onApproveCliBypass}
-                  onPendingAction={onPendingAction}
-                />
+                density === 'clean' ? (
+                  <ToolRowBlock key={`${block.type}-${idx}`} block={block} streaming={streaming} defaultOpen={false} />
+                ) : (
+                  <BlockView
+                    key={`${block.type}-${idx}`}
+                    block={block}
+                    interactive={interactive}
+                    streaming={streaming}
+                    onOpenQuestions={onOpenQuestions}
+                    onApproveCliBypass={onApproveCliBypass}
+                    onPendingAction={onPendingAction}
+                  />
+                )
               ))}
             </div>
           </motion.div>
@@ -691,7 +894,7 @@ function ActionsSection({
 }
 
 export default function AgentBlocks({
-  blocks, density = 'verbose', interactive = false, streaming = false, onOpenQuestions, onApproveCliBypass, onPendingAction,
+  blocks, density = 'verbose', interactive = false, streaming = false, onOpenQuestions, onApproveCliBypass, onPendingAction, onRetry, cliApprovalHint,
 }: {
   blocks: AgentBlock[];
   density?: LogDensity;
@@ -702,6 +905,10 @@ export default function AgentBlocks({
   onOpenQuestions?: (questions: AgentQuestion[]) => void;
   onApproveCliBypass?: () => void;
   onPendingAction?: (decision: 'approve' | 'reject') => void;
+  /** Replay the last user message (agent_error card, latest turn only). */
+  onRetry?: () => void;
+  /** Extra hint shown on the `cli_approval_needed` card. */
+  cliApprovalHint?: string;
 }) {
   const shown = filterBlocksByDensity(blocks, density);
   if (shown.length === 0) return null;
@@ -709,17 +916,41 @@ export default function AgentBlocks({
   const runs = groupRuns(shown);
   // Show a "Response" divider before the first prose/answer run that follows
   // reasoning or actions — the reader's cue that the agent is now explaining.
+  // A matching "Reasoning" divider marks the thinking section in verbose.
   const firstAnswer = runs.findIndex((r) => r.cat === 'answer');
   const showResponseDivider = firstAnswer > 0;
+  const firstThinking = runs.findIndex((r) => r.cat === 'thinking');
+  const showReasoningDivider = density === 'verbose' && firstThinking >= 0 && runs.length > 1;
 
   return (
     <div className="flex flex-col gap-2.5">
       {runs.map((run, ri) => {
         if (run.cat === 'action') {
+          // A lone tool step skips the "Actions" wrapper for a log-like rhythm:
+          // clean shows it as a single minimized row, verbose as the full card.
+          if (run.items.length === 1) {
+            const { block, idx } = run.items[0];
+            return density === 'clean' ? (
+              <ToolRowBlock key={`run-${ri}-${idx}`} block={block} streaming={streaming} defaultOpen={false} />
+            ) : (
+              <BlockView
+                key={`run-${ri}-${idx}`}
+                block={block}
+                interactive={interactive}
+                streaming={streaming}
+                onOpenQuestions={onOpenQuestions}
+                onApproveCliBypass={onApproveCliBypass}
+                onPendingAction={onPendingAction}
+                onRetry={onRetry}
+                cliApprovalHint={cliApprovalHint}
+              />
+            );
+          }
           return (
             <ActionsSection
               key={`run-${ri}`}
               run={run}
+              density={density}
               interactive={interactive}
               streaming={streaming}
               onOpenQuestions={onOpenQuestions}
@@ -730,6 +961,13 @@ export default function AgentBlocks({
         }
         return (
           <div key={`run-${ri}`} className="flex flex-col gap-2.5">
+            {showReasoningDivider && ri === firstThinking && (
+              <div className="flex items-center gap-2 pt-0.5 text-muted-foreground/50">
+                <Brain className="w-3 h-3" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider">Reasoning</span>
+                <span className="flex-1 h-px bg-border/50" />
+              </div>
+            )}
             {showResponseDivider && ri === firstAnswer && (
               <div className="flex items-center gap-2 pt-0.5 text-muted-foreground/50">
                 <CornerDownRight className="w-3 h-3" />
@@ -746,6 +984,8 @@ export default function AgentBlocks({
                 onOpenQuestions={onOpenQuestions}
                 onApproveCliBypass={onApproveCliBypass}
                 onPendingAction={onPendingAction}
+                onRetry={onRetry}
+                cliApprovalHint={cliApprovalHint}
               />
             ))}
           </div>

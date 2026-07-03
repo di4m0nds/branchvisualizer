@@ -3,11 +3,13 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 import CodeFrame from './CodeFrame';
+import { MermaidBlock } from '@/components/workspace/DocsMarkdown';
 
 // Lightweight markdown for assistant prose only. Deliberately constrained to
-// bold/italic, inline code, links, lists, and fenced code blocks — headings,
-// tables, images, and blockquotes degrade to plain/minimal renders so chat
-// prose never turns into a document. Safe to render on partial/streaming text.
+// bold/italic, inline code, links, lists, fenced code blocks, restrained
+// headings, and clean GFM tables — images and blockquotes degrade to
+// plain/minimal renders so chat prose never turns into a document. Safe to
+// render on partial/streaming text.
 
 // If the stream is mid-fence (an odd number of ``` markers), append a synthetic
 // closing fence so the partial code renders in a stable closed frame instead of
@@ -26,8 +28,12 @@ const COMPONENTS: Components = {
   // Fenced blocks arrive as <code class="language-x">; inline code has no class.
   code({ className, children, ...props }) {
     const lang = langOf(className);
-    if (lang || String(children).includes('\n')) {
-      return <CodeFrame code={String(children).replace(/\n$/, '')} lang={lang} className="my-1.5" />;
+    const text = String(children).replace(/\n$/, '');
+    if (lang === 'mermaid') {
+      return <MermaidBlock code={text} />;
+    }
+    if (lang || text.includes('\n')) {
+      return <CodeFrame code={text} lang={lang} className="my-1.5" />;
     }
     return (
       <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground" {...props}>
@@ -72,6 +78,38 @@ const COMPONENTS: Components = {
   h4: PlainHeading, h5: PlainHeading, h6: PlainHeading,
   blockquote({ children }) {
     return <div className="border-l-2 border-border pl-2.5 text-muted-foreground">{children}</div>;
+  },
+  // GFM tables: bordered, padded, aligned, and horizontally scrollable when
+  // wide so they stay readable inside the chat bubble instead of overflowing.
+  table({ children }) {
+    return (
+      <div className="my-2 overflow-x-auto rounded-md border border-border/60">
+        <table className="w-full text-[13px] border-collapse">{children}</table>
+      </div>
+    );
+  },
+  thead({ children }) {
+    return <thead className="bg-muted/40">{children}</thead>;
+  },
+  tbody({ children }) {
+    return <tbody>{children}</tbody>;
+  },
+  tr({ children }) {
+    return <tr>{children}</tr>;
+  },
+  th({ children, style }) {
+    return (
+      <th style={style} className="text-left font-semibold text-foreground px-2.5 py-1.5 border-b border-border/60 whitespace-nowrap">
+        {children}
+      </th>
+    );
+  },
+  td({ children, style }) {
+    return (
+      <td style={style} className="px-2.5 py-1.5 border-b border-border/40 align-top">
+        {children}
+      </td>
+    );
   },
 };
 

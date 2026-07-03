@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { Check, Trash2, MessageSquarePlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { formatTime } from '@/lib/time';
 import type { PlanComment } from '@/types/session';
 
@@ -92,12 +93,16 @@ export default function PlanComments({ comments, onAdd, onRemove, onResolveToggl
           </div>
         </div>
       ) : (
-        <button
+        // Full button treatment (not a text link) so first-time reviewers see
+        // that per-section commenting is a real affordance.
+        <Button
+          size="xs"
+          variant="ghost"
           onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          className="text-muted-foreground hover:text-foreground -ml-1.5"
         >
-          <MessageSquarePlus className="w-3 h-3" /> Comment
-        </button>
+          <MessageSquarePlus className="w-3 h-3 mr-1" /> Comment on this section
+        </Button>
       )}
     </div>
   );

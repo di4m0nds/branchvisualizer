@@ -8,7 +8,7 @@
 
 import type { Dispatch } from 'react';
 import type { AppAction } from '@/types';
-import type { AccessLevel, Session } from '@/types/session';
+import type { AccessLevel, MessageRef, Session } from '@/types/session';
 import { nextId } from '@/types/session';
 import { parseAgentBlocks, composeStreamingBlocks } from '@/components/agent/blocks';
 import { truncateForModel, isRetryableError, isAbortError } from './agentUtils';
@@ -120,7 +120,7 @@ export async function runAgentTurn(
   userText: string,
   deps: AgentLoopDeps,
   ts: string,
-  opts?: { display?: boolean },
+  opts?: { display?: boolean; hiddenText?: string; refs?: MessageRef[] },
 ): Promise<void> {
   const { transport, dispatch, requestApproval } = deps;
   const sessionId = session.id;
@@ -128,11 +128,18 @@ export async function runAgentTurn(
   const root = session.cwd ?? '.';
 
   // Record the user's message for display (skipped on silent resumes).
+  // `hiddenText` (resolved @-file contents) and `refs` (chip metadata) travel
+  // WITH the message so follow-up turns — which rebuild the conversation from
+  // session.messages — keep the attached context.
   if (opts?.display !== false) {
     dispatch({
       type: 'ADD_AGENT_MESSAGE',
       sessionId,
-      message: { id: nextId('msg'), role: 'user', text: userText, blocks: [], ts },
+      message: {
+        id: nextId('msg'), role: 'user', text: userText, blocks: [], ts,
+        ...(opts?.hiddenText ? { hiddenText: opts.hiddenText } : {}),
+        ...(opts?.refs?.length ? { refs: opts.refs } : {}),
+      },
     });
   }
   dispatch({ type: 'SET_SESSION_STATUS', sessionId, status: 'working' });
@@ -149,7 +156,12 @@ export async function runAgentTurn(
   // `buildAppendPrompt` in providers/claude_code.ts).
   const apiMessages: NeutralMessage[] = session.messages
     .filter((m) => m.text.trim().length > 0)
-    .map((m) => ({ role: m.role, content: [{ type: 'text', text: m.text }] }));
+    .map((m) => ({
+      role: m.role,
+      // Prompt-only sidecar (@-referenced file contents) precedes the visible
+      // text so prior turns keep their attached context on every rebuild.
+      content: [{ type: 'text', text: m.hiddenText ? `${m.hiddenText}\n\n${m.text}` : m.text }],
+    }));
   const skipSessionContext = transport.id === 'claude_code';
   // Resolve the real serving identity so the injected <session_context> tells
   // the model what it actually is (Gemini identifies as Gemini, etc.).
@@ -160,11 +172,15 @@ export async function runAgentTurn(
     modelId: transport.modelId,
     modelLabel: prov?.models().find((m) => m.id === transport.modelId)?.label ?? transport.modelId,
   };
+  // Attached @-references are real content (not session metadata), so they are
+  // injected for ALL providers — including claude_code, which skips the
+  // <session_context> block.
+  const turnText = opts?.hiddenText ? `${opts.hiddenText}\n\n${userText}` : userText;
   apiMessages.push({
     role: 'user',
     content: [{
       type: 'text',
-      text: skipSessionContext ? userText : `${renderSessionContext(session, identity)}\n\n---\n\n${userText}`,
+      text: skipSessionContext ? turnText : `${renderSessionContext(session, identity)}\n\n---\n\n${turnText}`,
     }],
   });
 
@@ -406,8 +422,13 @@ export async function runAgentTurn(
       // `interactive` would flip to false and its Approve/Deny buttons
       // wouldn't render.
       cancelStreamFlush();
+      const stoppedBlock = {
+        type: 'agent_error',
+        raw: '<agent_error kind="aborted">Stopped by user.</agent_error>',
+        data: { attrs: 'kind="aborted"', inner: 'Stopped by user.' },
+      };
       if (currentAsstId) {
-        const finalBlocks = [...currentBlocks(), { type: 'text', raw: '⚠ Stopped by user.' }];
+        const finalBlocks = [...currentBlocks(), stoppedBlock];
         dispatch({
           type: 'UPDATE_AGENT_MESSAGE',
           sessionId,
@@ -422,7 +443,7 @@ export async function runAgentTurn(
             id: nextId('msg'),
             role: 'assistant',
             text: '',
-            blocks: [{ type: 'text', raw: '⚠ Stopped by user.' }],
+            blocks: [stoppedBlock],
             ts: nowIso(ts),
           },
         });
@@ -438,7 +459,13 @@ export async function runAgentTurn(
         id: nextId('msg'),
         role: 'assistant',
         text: '',
-        blocks: [{ type: 'text', raw: `⚠️ ${msg}` }],
+        // Structured error block → renders as the AgentErrorCard (with Retry)
+        // instead of loose warning text.
+        blocks: [{
+          type: 'agent_error',
+          raw: `<agent_error kind="provider">${msg}</agent_error>`,
+          data: { attrs: 'kind="provider"', inner: msg },
+        }],
         ts: nowIso(ts),
       },
     });

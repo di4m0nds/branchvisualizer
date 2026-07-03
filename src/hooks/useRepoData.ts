@@ -4,25 +4,30 @@ import { parseGitHubURL } from '../lib/parser';
 import { fetchFullRepository, setToken, setRateLimitCallback } from '../lib/github';
 import * as localGit from '../lib/localGit';
 import { buildGraphData } from '../graph/layout';
-import { useAppContext } from '../store/AppContext';
+import { useAppDispatch, useAppSelector } from '../store/store';
 import { addToHistory } from '../lib/history';
 import { DesktopOnlyError } from '../lib/platform';
 import { setCachedRepo } from '../lib/repoCache';
 import { filterCheckpoints } from '../lib/refs';
 
 export function useRepoData() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  // Narrow subscriptions: consumers of this hook (ChatPanel, IdeWorkspace, …)
+  // must not re-render on unrelated store changes like streamed tokens.
+  const source = useAppSelector((s) => s.source);
+  const token = useAppSelector((s) => s.token);
+  const showCheckpoints = useAppSelector((s) => s.showCheckpoints);
 
   // Register rate-limit callback once — fires after every GitHub API call
   // so the token counter updates in real-time across the entire session.
   // GitHub-only: local git has no rate limit concept.
   useEffect(() => {
-    if (state.source !== 'github') return;
+    if (source !== 'github') return;
     setRateLimitCallback((rateLimit) => {
       dispatch({ type: 'SET_RATE_LIMIT', rateLimit });
     });
     return () => setRateLimitCallback(null);
-  }, [dispatch, state.source]);
+  }, [dispatch, source]);
 
   const loadRepo = useCallback(async (url: string) => {
     const parsed = parseGitHubURL(url);
@@ -33,7 +38,7 @@ export function useRepoData() {
       return;
     }
 
-    setToken(state.token);
+    setToken(token);
     dispatch({ type: 'LOAD_START' });
 
     const loadToastId = toast.loading(`Loading ${parsed.owner}/${parsed.repo}…`);
@@ -60,7 +65,7 @@ export function useRepoData() {
       dispatch({ type: 'SET_LOAD_STATE', state: { message: 'Building graph…', progress: 90 } });
 
       // Hide t3 checkpoint commits by default; keep the full set for the toggle.
-      const displayCommits = filterCheckpoints(commits, state.showCheckpoints);
+      const displayCommits = filterCheckpoints(commits, showCheckpoints);
       const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
         requestAnimationFrame(() => {
           try {
@@ -102,7 +107,7 @@ export function useRepoData() {
       toast.dismiss(loadToastId);
       toast.error('Failed to load repository', { description: msg });
     }
-  }, [state.token, state.showCheckpoints, dispatch]);
+  }, [token, showCheckpoints, dispatch]);
 
   // ── Local repository loader ──────────────────────────────────────────────
   // Mirrors loadRepo but sources from the local `git` binary via Tauri. Feeds
@@ -132,7 +137,7 @@ export function useRepoData() {
       dispatch({ type: 'SET_LOAD_STATE', state: { message: 'Building graph…', progress: 90 } });
 
       // Hide t3 checkpoint commits by default; keep the full set for the toggle.
-      const displayCommits = filterCheckpoints(commits, state.showCheckpoints);
+      const displayCommits = filterCheckpoints(commits, showCheckpoints);
       const graphData = await new Promise<ReturnType<typeof buildGraphData>>((resolve, reject) => {
         requestAnimationFrame(() => {
           try {
@@ -175,7 +180,7 @@ export function useRepoData() {
       toast.dismiss(loadToastId);
       toast.error('Failed to load local repository', { description: msg });
     }
-  }, [state.showCheckpoints, dispatch]);
+  }, [showCheckpoints, dispatch]);
 
   return { loadRepo, loadLocalRepo };
 }

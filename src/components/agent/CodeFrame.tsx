@@ -44,15 +44,15 @@ export default function CodeFrame({
   };
 
   return (
-    <div className={cn('group relative rounded-md border border-border bg-[#0a0a0a] overflow-hidden', className)}>
+    <div className={cn('group relative rounded-md border border-border bg-code-bg overflow-hidden', className)}>
       <div className="flex items-center justify-between px-2.5 py-1 border-b border-white/5">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-[#71717a]">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
           {lang || 'code'}
         </span>
         <button
           onClick={copy}
           title="Copy"
-          className="flex items-center gap-1 text-[10px] text-[#a1a1aa] hover:text-white transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+          className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
         >
           {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
           <span>{copied ? 'Copied' : 'Copy'}</span>

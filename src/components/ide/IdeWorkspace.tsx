@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAppContext } from '@/store/AppContext';
+import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
+import type { AppState } from '@/types';
 import { ResizeHandle } from '@/components/workspace/ResizeHandle';
 import TabWorkspace from '@/components/workspace/TabWorkspace';
 import TerminalDock from '@/components/terminal/TerminalDock';
@@ -11,26 +12,32 @@ import ProjectsSidebar from './sidebar/ProjectsSidebar';
 import FocusablePanel from './FocusablePanel';
 import PlanView from './plan/PlanView';
 import RuntimePanel from './runtime/RuntimePanel';
+import LocalDocsTab from '@/components/workspace/LocalDocsTab';
 import { sessionProjectKey, type Session } from '@/types/session';
-import { sessionHasPlan } from '@/lib/agent/plan';
+import { latestPlanText, sessionHasPlan } from '@/lib/agent/plan';
 import { useActiveSession } from '@/hooks/useActiveSession';
 import { useRepoData } from '@/hooks/useRepoData';
+import { registerRightViewSetter } from '@/hooks/useSetRightView';
 import { getCachedRepo } from '@/lib/repoCache';
 import { loadIdeLayout, saveIdeLayout, type IdeLayout } from '@/lib/ideLayout';
 import { useFocusedPanelZoom } from '@/hooks/useFocusedPanelZoom';
+import { usePanelShortcuts } from '@/hooks/usePanelShortcuts';
+import { registerShowPanel } from '@/hooks/usePanelVisibility';
 
 // ─── IDE workspace (fixed 3-zone chrome) ─────────────────────────────────────
 
 // Does the app-global repo currently loaded match this session's repo?
-function matchesRef(state: ReturnType<typeof useAppContext>['state'], s: Session): boolean {
+function matchesRef(state: AppState, s: Session): boolean {
   if (!state.graphData) return false;
   if (s.repoSource === 'local') return state.source === 'local' && state.localPath === s.cwd;
   return state.repoInfo?.fullName === s.repoRef;
 }
 
 export default function IdeWorkspace() {
-  const { state, dispatch } = useAppContext();
-  const { graphData } = state;
+  const dispatch = useAppDispatch();
+  // Only graphData is a render dependency; everything else the workspace needs
+  // (viewport, loadState) is read non-reactively at event time via getAppState.
+  const graphData = useAppSelector((s) => s.graphData);
   const active = useActiveSession();
   const { loadLocalRepo } = useRepoData();
 
@@ -42,26 +49,63 @@ export default function IdeWorkspace() {
   } = layout;
   const setLayoutKey = <K extends keyof IdeLayout>(key: K, val: IdeLayout[K]) =>
     setLayout((l) => ({ ...l, [key]: val }));
+  // Stable toggle so the memoized TerminalDock's props don't change when this
+  // component re-renders on streamed tokens.
+  const toggleDockCollapsed = useCallback(
+    () => setLayout((l) => ({ ...l, dockCollapsed: !l.dockCollapsed })),
+    [],
+  );
 
   const outerRowRef = useRef<HTMLDivElement>(null);  // sidebar | (middle+right) row
   const rootRowRef = useRef<HTMLDivElement>(null);   // middle|right row (existing handle)
   const agentStackRef = useRef<HTMLDivElement>(null); // chat/terminal stack (vertical handle)
 
   // Debounced persist so a drag (fires per mousemove) doesn't hammer localStorage.
+  // Preserve `docsSidebarWidth` from disk on write: LocalDocsTab owns that
+  // field, and our in-memory copy would be stale after the user drags the docs
+  // handle. Every other field lives here, so `...layout` wins for the rest.
   useEffect(() => {
-    const t = setTimeout(() => saveIdeLayout(layout), 250);
+    const t = setTimeout(() => {
+      const disk = loadIdeLayout();
+      saveIdeLayout({ ...layout, docsSidebarWidth: disk.docsSidebarWidth });
+    }, 250);
     return () => clearTimeout(t);
   }, [layout]);
+
+  // Register a cross-panel setter so the chat's docked plan strip can swap
+  // the right column to Plan (or back to Canvas/Runtime) without threading
+  // callbacks. Kept in sync with the layout via `setLayoutKey`.
+  useEffect(() => {
+    // setLayoutKey closes over `setLayout` (from useState) which is stable, so
+    // a single registration is safe for the panel's lifetime.
+    return registerRightViewSetter((v) => setLayoutKey('rightView', v));
+  }, []);
+
+  // Register the "make this panel visible" handler so keyboard shortcuts (and
+  // any future cross-panel affordance) can uncollapse the sidebar/dock or
+  // swap the right column before focusing a panel — otherwise focusing an
+  // unmounted panel silently succeeds and the follow-up maximize blanks the
+  // screen (workspace/plan/runtime share one slot via `rightView`).
+  useEffect(() => {
+    return registerShowPanel((id) => {
+      if (id === 'sidebar') setLayoutKey('sidebarCollapsed', false);
+      else if (id === 'terminal') setLayoutKey('dockCollapsed', false);
+      else if (id === 'workspace' || id === 'plan' || id === 'runtime' || id === 'docs') setLayoutKey('rightView', id);
+      // 'chat' is always mounted → no-op.
+    });
+  }, []);
 
   // Ctrl +/-/0 on the focused panel. When the workspace is focused, delegate to
   // the graph's viewport zoom (CSS zoom would distort the canvas).
   const onWorkspaceZoom = useCallback((cmd: 'in' | 'out' | 'reset') => {
-    const { scale, offsetX, offsetY } = state.viewport;
+    const { scale, offsetX, offsetY } = getAppState().viewport;
     if (cmd === 'in') dispatch({ type: 'SET_VIEWPORT', viewport: { scale: Math.min(3, scale * 1.2), offsetX, offsetY } });
     else if (cmd === 'out') dispatch({ type: 'SET_VIEWPORT', viewport: { scale: Math.max(0.15, scale * 0.8), offsetX, offsetY } });
     else dispatch({ type: 'SET_VIEWPORT', viewport: { scale: 1, offsetX: 16, offsetY: 16 } });
-  }, [state.viewport, dispatch]);
+  }, [dispatch]);
   useFocusedPanelZoom(onWorkspaceZoom);
+  // Alt+1..6 focuses a panel; Alt+F toggles maximize on the focused panel.
+  usePanelShortcuts();
 
   // Per-session repo view: swap the graph to the active session's repo. Reuses
   // the cache for an instant swap, else loads a local repo via the existing
@@ -69,7 +113,7 @@ export default function IdeWorkspace() {
   // no-op and switching back to an already-shown repo doesn't reload.
   useEffect(() => {
     if (!active) return;
-    if (matchesRef(state, active)) return;
+    if (matchesRef(getAppState(), active)) return;
 
     const cached = getCachedRepo(active.repoRef);
     if (cached) {
@@ -85,7 +129,7 @@ export default function IdeWorkspace() {
       });
       return;
     }
-    const busy = !['idle', 'error', 'done'].includes(state.loadState.phase);
+    const busy = !['idle', 'error', 'done'].includes(getAppState().loadState.phase);
     if (active.repoSource === 'local' && active.cwd && !busy) {
       void loadLocalRepo(active.cwd);
     }
@@ -93,6 +137,17 @@ export default function IdeWorkspace() {
     // on reload); reopen from the visualizer to repopulate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id]);
+
+  // Auto-focus the Plan view whenever a NEW plan lands. Ref-guarded by the
+  // plan's messageId so the user can manually flip back to Canvas/Runtime and
+  // stay there — only a new plan (different id) re-triggers the swap.
+  const planKey = active ? latestPlanText(active)?.messageId ?? null : null;
+  const lastAutoFocusedPlanRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!planKey || planKey === lastAutoFocusedPlanRef.current) return;
+    lastAutoFocusedPlanRef.current = planKey;
+    setLayoutKey('rightView', 'plan');
+  }, [planKey]);
 
   return (
     <div ref={outerRowRef} className="flex flex-1 min-h-0 overflow-hidden">
@@ -173,7 +228,7 @@ export default function IdeWorkspace() {
                     sessionId={active.id}
                     cwd={active.cwd ?? '.'}
                     collapsed={dockCollapsed}
-                    onToggleCollapsed={() => setLayoutKey('dockCollapsed', !dockCollapsed)}
+                    onToggleCollapsed={toggleDockCollapsed}
                   />
                 </FocusablePanel>
               </div>
@@ -215,6 +270,17 @@ export default function IdeWorkspace() {
                   hasPlan={sessionHasPlan(active)}
                 />
                 <RuntimePanel />
+              </FocusablePanel>
+            ) : rightView === 'docs' ? (
+              <FocusablePanel id="docs" className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <LocalDocsTab />
               </FocusablePanel>
             ) : (
               <FocusablePanel id="workspace" className="flex-1 min-h-0 overflow-hidden">

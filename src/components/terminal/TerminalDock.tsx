@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
@@ -31,7 +31,10 @@ function makeShell(cwd: string, existing: TerminalDef[]): TerminalDef {
  * killing on close/unmount prevents zombies. The `open-in-nvim` bus routes
  * `:e <path>` straight to the singleton — no lookup, no fallback spawn.
  */
-export default function TerminalDock({
+// Memoized: mounted next to the chat, whose streaming re-renders the parent
+// ~30×/s. With stable props (see IdeWorkspace's useCallback toggle) memo makes
+// those re-renders free — critical, since this hosts live xterm/PTY instances.
+export default memo(function TerminalDock({
   cwd,
   sessionId,
   collapsed = false,
@@ -264,4 +267,4 @@ export default function TerminalDock({
       </div>
     </div>
   );
-}
+});

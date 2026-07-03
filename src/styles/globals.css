@@ -102,6 +102,8 @@
 }
 
 [data-theme="light"] {
+  /* Code blocks stay dark in light mode — prism renders vsDark tokens. */
+  --code-bg: oklch(0.2 0.01 250);
   --background:    220 20% 98%;
   --surface:       0   0%  100%;
   --surface-2:     220 18% 96%;
@@ -205,6 +207,32 @@ body {
     -webkit-backdrop-filter: blur(12px) saturate(140%);
   }
 
+  /* Chat background textures — subtle but visible in both themes.
+     NOTE: --foreground is an `oklch(...)` token, so `hsl(var(--foreground)/α)`
+     is invalid CSS (mixing color systems) and browsers silently drop the whole
+     declaration → the previous patterns were literally not painting.
+     `color-mix(in oklch, …)` mixes correctly and works in every Chromium-based
+     shell (Tauri). Alphas are tuned to be barely visible so the pattern hints
+     at texture without competing with the message text for attention. */
+  .chat-bg-dots {
+    background-image: radial-gradient(color-mix(in oklch, var(--foreground) 5%, transparent) 1.25px, transparent 1.75px);
+    background-size: 18px 18px;
+  }
+  .chat-bg-grid {
+    background-image:
+      linear-gradient(color-mix(in oklch, var(--foreground) 3%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in oklch, var(--foreground) 3%, transparent) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .chat-bg-scanlines {
+    background-image: repeating-linear-gradient(
+      0deg,
+      color-mix(in oklch, var(--foreground) 3%, transparent) 0px,
+      color-mix(in oklch, var(--foreground) 3%, transparent) 1px,
+      transparent 1px,
+      transparent 4px);
+  }
+
   /* Focus ring */
   .ring-primary {
     --tw-ring-color: hsl(var(--primary) / 0.35);
@@ -252,6 +280,9 @@ body {
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  /* Code block surface — always dark (prism's vsDark theme needs it), slightly
+     adjusted per app theme. Used by CodeFrame via `bg-code-bg`. */
+  --color-code-bg: var(--code-bg, oklch(0.1 0.005 250));
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -263,6 +294,7 @@ body {
 
 .dark {
   /* Slightly warmer dark — less harsh than pure black */
+  --code-bg: oklch(0.1 0.005 250);
   --background: oklch(0.13 0.008 250);
   --foreground: oklch(0.94 0.006 250);
   --card: oklch(0.185 0.008 250);

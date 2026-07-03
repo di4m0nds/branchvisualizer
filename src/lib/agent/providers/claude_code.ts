@@ -244,6 +244,70 @@ interface CcStreamEvent {
 const OUTPUT_CAP = 500;
 const INPUT_CAP = 240;
 
+// ─── Compound-Bash approval parsing ─────────────────────────────────────────
+// When the Claude Code CLI rejects a chained command it emits
+// "The following parts require approval: cat FOO, echo BAR". Extract those
+// sub-commands so the approval card shows each part on its own row instead of
+// hiding them behind the compound blob.
+
+/** Extract the sub-commands the CLI itself named after "…require approval: …". */
+export function extractApprovalParts(errorText: string): string[] {
+  const m = errorText.match(/(?:following parts?|these parts?)[^:]*:\s*([\s\S]+?)(?:\.\s|\.$|$)/i);
+  if (!m) return [];
+  return m[1].split(/\s*,\s*/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Split a compound shell command on top-level `&&`, `||`, `;`, `|` — leaving
+ *  operators inside single/double quotes untouched. Fallback when the CLI's
+ *  error text doesn't spell out the offending parts. */
+export function splitCompound(cmd: string): string[] {
+  const parts: string[] = [];
+  let buf = '';
+  let quote: '"' | "'" | null = null;
+  let i = 0;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    // Bare `\` escape — keep the next char inside the current buffer.
+    if (c === '\\' && i + 1 < cmd.length) {
+      buf += c + cmd[i + 1];
+      i += 2;
+      continue;
+    }
+    if (quote) {
+      buf += c;
+      if (c === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      buf += c;
+      i += 1;
+      continue;
+    }
+    // Two-char operators first.
+    if ((c === '&' && cmd[i + 1] === '&') || (c === '|' && cmd[i + 1] === '|')) {
+      const t = buf.trim();
+      if (t) parts.push(t);
+      buf = '';
+      i += 2;
+      continue;
+    }
+    if (c === ';' || c === '|') {
+      const t = buf.trim();
+      if (t) parts.push(t);
+      buf = '';
+      i += 1;
+      continue;
+    }
+    buf += c;
+    i += 1;
+  }
+  const tail = buf.trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
 function esc(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -314,8 +378,11 @@ class ClaudeCodeTransport implements AgentTransport {
     // was trying to run so a denied tool_result can name it in the approval
     // card the user sees when the CLI needs permissions.
     const toolInputs = new Map<string, string>();
-    // Deduped list of commands that came back with "requires approval".
-    const approvalCommands = new Set<string>();
+    // Compound commands that came back with "requires approval". Each entry
+    // is `{ full, parts }` — `parts` is what the CLI actually flagged (either
+    // extracted from its error text, or a conservative shell split as a
+    // fallback). Deduped by `full`.
+    const approvalEntries = new Map<string, string[]>();
     // Set once we kill the subprocess to freeze the turn for approval, so we
     // don't fire the kill repeatedly for each subsequent denied command.
     let killedForApproval = false;
@@ -326,12 +393,20 @@ class ClaudeCodeTransport implements AgentTransport {
     // through — the card only needs to appear once.
     let approvalCardEmitted = false;
     const emitApprovalCardOnce = () => {
-      if (approvalCardEmitted || approvalCommands.size === 0) return;
+      if (approvalCardEmitted || approvalEntries.size === 0) return;
       approvalCardEmitted = true;
-      const cmds = Array.from(approvalCommands).map((c) => `<cmd>${esc(c)}</cmd>`).join('');
+      // Each compound → one row per sub-command, carrying the full compound as
+      // an attribute so the card can show it in a tooltip / copy-all button.
+      const cmds: string[] = [];
+      for (const [full, parts] of approvalEntries) {
+        const rows = parts.length > 0 ? parts : [full];
+        for (const p of rows) {
+          cmds.push(`<cmd full="${esc(full)}">${esc(p)}</cmd>`);
+        }
+      }
       const xml = `\n<cli_approval_needed>`
         + `<reason>The agent needs permission to run commands in this repo.</reason>`
-        + `<commands>${cmds}</commands>`
+        + `<commands>${cmds.join('')}</commands>`
         + `</cli_approval_needed>\n`;
       streamed += xml;
       cbs.onText?.(xml);
@@ -406,7 +481,14 @@ class ClaudeCodeTransport implements AgentTransport {
               // CLI uses when reporting multiple offending sub-commands).
               if (isErr && /require[sd]? approval/i.test(out)) {
                 const cmd = toolInputs.get(b.tool_use_id) || name;
-                if (cmd) approvalCommands.add(cmd);
+                if (cmd && !approvalEntries.has(cmd)) {
+                  // Prefer the sub-commands the CLI itself named; fall back to
+                  // a conservative shell-aware split of the compound.
+                  const named = extractApprovalParts(out);
+                  const parts = named.length > 0 ? named : splitCompound(cmd);
+                  // A single-part "split" carries no signal — collapse to [].
+                  approvalEntries.set(cmd, parts.length > 1 ? parts : []);
+                }
                 // Fire immediately on the first hit — waiting for onExit
                 // means the card never appears if the user hits Stop.
                 emitApprovalCardOnce();
