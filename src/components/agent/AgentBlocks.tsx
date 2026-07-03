@@ -10,7 +10,10 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/services/toast';
 import type { AgentBlock } from '@/types/session';
 import type { LogDensity } from '@/types';
-import { parseQuestions, filterBlocksByDensity, type TaskSummaryFile, type AgentQuestion } from './blocks';
+import {
+  parseQuestions, filterBlocksByDensity,
+  type TaskSummaryFile, type AgentQuestion, type PlanStep, type StatusFile, type StatusCommand,
+} from './blocks';
 import Markdown from './Markdown';
 import StreamingText from './StreamingText';
 import CodeFrame from './CodeFrame';
@@ -49,6 +52,8 @@ function ActionLog({ data }: { data: Record<string, unknown> }) {
 // Generic titled card for the assorted status blocks (agent_status, security
 // review, change explanation, …). `tone` colours the header label.
 function LabeledCard({ label, tone, inner }: { label: string; tone?: string; inner: string }) {
+  // Empty self-closing signal (e.g. `<editor_sync/>`) — nothing to show.
+  if (!inner.trim()) return null;
   return (
     <div className={cn('rounded-lg border border-border/60 bg-muted/10 overflow-hidden')}>
       <div className={cn('px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-b border-border/40', tone ?? 'text-muted-foreground')}>
@@ -401,6 +406,130 @@ function TaskSummaryCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// ─── Plan card ───────────────────────────────────────────────────────────────
+
+const COMPLEXITY_TONE: Record<string, string> = {
+  low: 'text-green-400', medium: 'text-yellow-400', high: 'text-red-400', complex: 'text-red-400',
+};
+const STEP_STATUS_TONE: Record<string, string> = {
+  pending: 'bg-muted text-muted-foreground', in_progress: 'bg-primary/15 text-primary',
+  complete: 'bg-green-500/15 text-green-400', blocked: 'bg-red-500/15 text-red-400',
+};
+
+function PlanCard({ data }: { data: Record<string, unknown> }) {
+  const title = String(data.planTitle ?? '');
+  const objective = String(data.objective ?? '');
+  const inScope = String(data.inScope ?? '');
+  const outOfScope = String(data.outOfScope ?? '');
+  const complexity = String(data.complexity ?? '');
+  const steps = (data.steps as PlanStep[] | undefined) ?? [];
+
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
+      <div className="flex items-center gap-2 px-2.5 py-1 border-b border-primary/20">
+        <ClipboardList className="w-3 h-3 text-primary" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">Plan</span>
+        {complexity && (
+          <span className={cn('ml-auto text-[10px] font-medium', COMPLEXITY_TONE[complexity.toLowerCase()] ?? 'text-muted-foreground')}>
+            {complexity}
+          </span>
+        )}
+      </div>
+      <div className="px-3 py-2 space-y-2">
+        {title && <div className="text-sm font-semibold text-foreground">{title}</div>}
+        {objective && <div className="text-[13px] text-foreground/90 leading-relaxed">{objective}</div>}
+        {(inScope || outOfScope) && (
+          <div className="grid sm:grid-cols-2 gap-2 text-[11px]">
+            {inScope && <ScopeBox label="In scope" tone="text-green-400" body={inScope} />}
+            {outOfScope && <ScopeBox label="Out of scope" tone="text-muted-foreground" body={outOfScope} />}
+          </div>
+        )}
+        {steps.length > 0 && (
+          <ol className="space-y-1.5 mt-1">
+            {steps.map((s) => (
+              <li key={s.index} className="rounded-md border border-border/50 bg-background/40 px-2.5 py-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-muted-foreground">{s.index}</span>
+                  <span className="text-xs font-medium text-foreground flex-1 min-w-0">{s.title}</span>
+                  {s.complexity && <span className={cn('text-[9px]', COMPLEXITY_TONE[s.complexity.toLowerCase()] ?? 'text-muted-foreground')}>{s.complexity}</span>}
+                  <span className={cn('text-[9px] px-1.5 py-0.5 rounded', STEP_STATUS_TONE[s.status] ?? 'bg-muted text-muted-foreground')}>{s.status.replace(/_/g, ' ')}</span>
+                </div>
+                {s.description && <div className="text-[11px] text-foreground/80 mt-1 leading-relaxed">{s.description}</div>}
+                {s.filesAffected && s.filesAffected.toLowerCase() !== 'none' && (
+                  <div className="text-[10px] font-mono text-muted-foreground mt-1 truncate" title={s.filesAffected}>📄 {s.filesAffected}</div>
+                )}
+                {s.risks && s.risks.toLowerCase() !== 'none' && (
+                  <div className="text-[10px] text-amber-500/90 mt-0.5">⚠ {s.risks}</div>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ScopeBox({ label, tone, body }: { label: string; tone: string; body: string }) {
+  return (
+    <div className="rounded-md border border-border/50 bg-background/40 px-2 py-1.5">
+      <div className={cn('text-[9px] font-semibold uppercase tracking-wider mb-0.5', tone)}>{label}</div>
+      <div className="text-foreground/80 whitespace-pre-wrap leading-snug">{body}</div>
+    </div>
+  );
+}
+
+// ─── Status heartbeat card ───────────────────────────────────────────────────
+
+function StatusCard({ data }: { data: Record<string, unknown> }) {
+  const files = (data.files as StatusFile[] | undefined) ?? [];
+  const commands = (data.commands as StatusCommand[] | undefined) ?? [];
+  const messages = (data.messages as string[] | undefined) ?? [];
+  const state = String(data.state ?? '');
+  const currentStep = String(data.currentStep ?? '');
+  // Pure-noise heartbeat (all sections empty) — render nothing.
+  if (!files.length && !commands.length && !messages.length && !state && !currentStep) return null;
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/10 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-1 border-b border-border/40">
+        <Wrench className="w-3 h-3 text-muted-foreground" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Status</span>
+        {state && <span className="ml-auto text-[10px] text-foreground/70">{state}{currentStep ? ` · ${currentStep}` : ''}</span>}
+      </div>
+      <div className="px-3 py-2 space-y-1.5">
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {files.map((f, i) => (
+              <span key={i} className="inline-flex items-center gap-1 text-[10px] font-mono rounded bg-background/60 border border-border/40 px-1.5 py-0.5">
+                {f.action && <span className="text-muted-foreground">{f.action}</span>}
+                <span className="text-foreground/80 truncate max-w-[200px]" title={f.path}>{f.path}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {commands.map((c, i) => <CodeFrame key={i} code={c.cmd} className="my-0.5" />)}
+        {messages.map((mtext, i) => <div key={i} className="text-[11px] text-foreground/80 leading-relaxed">{mtext}</div>)}
+      </div>
+    </div>
+  );
+}
+
+// ─── Session-state-change chip ───────────────────────────────────────────────
+
+function StateChangeChip({ data }: { data: Record<string, unknown> }) {
+  const to = String(data.to ?? '');
+  const reason = String(data.reason ?? '');
+  if (!to) return null;
+  return (
+    <div className="flex items-center gap-2 text-[11px] text-muted-foreground py-0.5" title={reason}>
+      <CornerDownRight className="w-3 h-3 flex-shrink-0" />
+      <span>state → <span className="font-medium text-foreground/80">{to.replace(/_/g, ' ')}</span></span>
+      {reason && <span className="truncate opacity-70">· {reason}</span>}
+    </div>
+  );
+}
+
 const BlockView = memo(function BlockView({ block, interactive, streaming, onOpenQuestions, onApproveCliBypass, onPendingAction }: {
   block: AgentBlock;
   interactive: boolean;
@@ -443,22 +572,11 @@ const BlockView = memo(function BlockView({ block, interactive, streaming, onOpe
     case 'task_summary':
       return <TaskSummaryCard data={block.data ?? {}} />;
     case 'plan':
-      // Render the plan as markdown so it's fully readable (lists, bold, code)
-      // rather than a monospace dump.
-      return (
-        <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
-          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary border-b border-primary/20">
-            Plan
-          </div>
-          <div className="px-3 py-2">
-            <Markdown text={inner || block.raw} />
-          </div>
-        </div>
-      );
+      return <PlanCard data={block.data ?? {}} />;
     case 'agent_status':
-      return <LabeledCard label="Status" inner={inner} />;
+      return <StatusCard data={block.data ?? {}} />;
     case 'session_state_change':
-      return <LabeledCard label="State change" inner={block.raw} />;
+      return <StateChangeChip data={block.data ?? {}} />;
     case 'context_warning':
       return <LabeledCard label="Context warning" tone="text-amber-500" inner={inner} />;
     case 'security_review':

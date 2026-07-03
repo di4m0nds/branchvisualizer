@@ -180,6 +180,8 @@ export interface AppState {
   logDensity: LogDensity;
   /** User-picked terminal/nvim font family (null = system default stack). */
   terminalFont: string | null;
+  /** User-picked chat prose font family (null = system sans stack). */
+  chatFont: string | null;
   /** Registered projects — each groups its own set of sessions/threads. */
   projects: Project[];
   /** Agent sessions (IDE mode). Additive — does not affect the flat repo view. */
@@ -228,6 +230,7 @@ export type AppAction =
   | { type: 'SET_SHOW_CHECKPOINTS'; show: boolean }
   | { type: 'SET_LOG_DENSITY'; density: LogDensity }
   | { type: 'SET_TERMINAL_FONT'; family: string | null }
+  | { type: 'SET_CHAT_FONT'; family: string | null }
   | { type: 'SET_SOURCE'; source: RepoSource; localPath?: string | null }
   // ── Projects ──
   | { type: 'ADD_PROJECT'; project: Project }

@@ -17,3 +17,12 @@ export function buildTerminalFontFamily(
     .join(', ');
   return [head, nerdTail, DEFAULT_STACK].filter(Boolean).join(', ');
 }
+
+// Sans stack for chat prose. The user's chosen family leads; the built-in
+// UI-sans fallback follows. Returns undefined when no custom font is set so
+// callers leave the inherited `--font-sans` in place.
+const DEFAULT_CHAT_STACK = 'var(--font-sans), ui-sans-serif, system-ui, sans-serif';
+
+export function buildChatFontFamily(user: string | null): string | undefined {
+  return user ? `"${user}", ${DEFAULT_CHAT_STACK}` : undefined;
+}

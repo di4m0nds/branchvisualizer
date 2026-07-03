@@ -34,8 +34,12 @@ export const KNOWN_BLOCK_TAGS = [
 // closing `>` being matched early — the bug that mangled choice labels.
 const ATTRS = '((?:[^>"]|"[^"]*")*)';
 
+// Matches either a paired `<tag …>…</tag>` (inner = group 3) OR a self-closing
+// `<tag … />` (inner undefined). Without the self-closing branch, tags like
+// `<session_state_change … />` never form a block and leak into the UI as raw
+// text.
 const BLOCK_RE = new RegExp(
-  `<(${KNOWN_BLOCK_TAGS.join('|')})${ATTRS}>([\\s\\S]*?)</\\1>`,
+  `<(${KNOWN_BLOCK_TAGS.join('|')})${ATTRS}(?:/>|>([\\s\\S]*?)</\\1>)`,
   'g',
 );
 
@@ -145,6 +149,98 @@ function hydrateTaskSummary(data: Record<string, unknown>): Record<string, unkno
   return { ...data, whatWasDone, rootCause, features, notes, files, commands };
 }
 
+export interface PlanStep {
+  index: string;
+  status: string;
+  complexity: string;
+  title: string;
+  description: string;
+  filesAffected: string;
+  dependencies: string;
+  risks: string;
+}
+
+/** Hydrate a `<plan>` block into structured fields + steps so the renderer shows
+ *  a readable card instead of dumping the raw `<title>/<step …>` XML. */
+function hydratePlan(data: Record<string, unknown>): Record<string, unknown> {
+  const inner = String(data.inner ?? '');
+  const steps: PlanStep[] = [];
+  const stepRe = new RegExp(`<step${ATTRS}>([\\s\\S]*?)<\\/step>`, 'g');
+  let sm: RegExpExecArray | null;
+  while ((sm = stepRe.exec(inner)) !== null) {
+    const a = sm[1] ?? '';
+    const body = sm[2];
+    steps.push({
+      index: extractAttr(a, 'index') || String(steps.length + 1),
+      status: extractAttr(a, 'status') || 'pending',
+      complexity: extractAttr(a, 'estimated_complexity') || '',
+      title: extractTag(body, 'title') || '',
+      description: extractTag(body, 'description') || '',
+      filesAffected: extractTag(body, 'files_affected') || '',
+      dependencies: extractTag(body, 'dependencies') || '',
+      risks: extractTag(body, 'risks') || '',
+    });
+  }
+  return {
+    ...data,
+    planTitle: extractTag(inner, 'title') || '',
+    objective: extractTag(inner, 'objective') || '',
+    inScope: extractTag(inner, 'in_scope') || '',
+    outOfScope: extractTag(inner, 'out_of_scope') || '',
+    complexity: extractTag(inner, 'total_estimated_complexity') || '',
+    steps,
+  };
+}
+
+export interface StatusFile { path: string; action: string }
+export interface StatusCommand { status: string; cmd: string }
+
+/** Hydrate an `<agent_status>` heartbeat into structured fields (state, files
+ *  touched, commands run, messages) so the renderer shows a compact summary
+ *  instead of the raw `<files_touched/>…<commands_run>…` XML. */
+function hydrateStatus(data: Record<string, unknown>): Record<string, unknown> {
+  const inner = String(data.inner ?? '');
+  const files: StatusFile[] = [];
+  const fileRe = /<file\b([^>]*?)\/?>/g;
+  let fm: RegExpExecArray | null;
+  while ((fm = fileRe.exec(inner)) !== null) {
+    const path = extractAttr(fm[1] ?? '', 'path');
+    if (path) files.push({ path, action: extractAttr(fm[1] ?? '', 'action') || '' });
+  }
+  const commands: StatusCommand[] = [];
+  const cmdRe = /<command(\s[^>]*)?>([\s\S]*?)<\/command>/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = cmdRe.exec(inner)) !== null) {
+    const t = cm[2].trim();
+    if (t) commands.push({ status: extractAttr(cm[1] ?? '', 'status') || '', cmd: t });
+  }
+  const messages: string[] = [];
+  const msgRe = /<message(\s[^>]*)?>([\s\S]*?)<\/message>/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = msgRe.exec(inner)) !== null) {
+    const t = mm[2].trim();
+    if (t) messages.push(t);
+  }
+  return {
+    ...data,
+    state: extractTag(inner, 'state') || '',
+    currentStep: extractTag(inner, 'current_step') || '',
+    files, commands, messages,
+  };
+}
+
+/** Hydrate a self-closing `<session_state_change to="…" reason="…" />` into the
+ *  fields its compact chip reads. */
+function hydrateStateChange(data: Record<string, unknown>): Record<string, unknown> {
+  const attrs = String(data.attrs ?? '');
+  return {
+    ...data,
+    from: extractAttr(attrs, 'from') || '',
+    to: extractAttr(attrs, 'to') || '',
+    reason: extractAttr(attrs, 'reason') || '',
+  };
+}
+
 /** Parse assistant text into ordered text + structured blocks. */
 export function parseAgentBlocks(text: string): AgentBlock[] {
   const blocks: AgentBlock[] = [];
@@ -159,14 +255,18 @@ export function parseAgentBlocks(text: string): AgentBlock[] {
     }
     const type = m[1];
     const data: Record<string, unknown> = {
-      attrs: m[2]?.trim() ?? '',
-      inner: m[3].trim(),
+      // A self-closing tag's greedy attr run can absorb the trailing `/` — trim it.
+      attrs: (m[2]?.trim() ?? '').replace(/\/\s*$/, '').trim(),
+      inner: (m[3] ?? '').trim(),
     };
     let hydrated = data;
     if (type === 'action_log') hydrated = hydrateActionLog(data);
     else if (type === 'pending_action') hydrated = hydratePendingAction(data);
     else if (type === 'cli_approval_needed') hydrated = hydrateApprovalCard(data);
     else if (type === 'task_summary') hydrated = hydrateTaskSummary(data);
+    else if (type === 'plan') hydrated = hydratePlan(data);
+    else if (type === 'agent_status') hydrated = hydrateStatus(data);
+    else if (type === 'session_state_change') hydrated = hydrateStateChange(data);
     blocks.push({
       type,
       raw: m[0],

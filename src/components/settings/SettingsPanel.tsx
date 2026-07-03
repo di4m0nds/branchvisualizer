@@ -15,7 +15,7 @@ import SessionsPanel from '@/components/ide/SessionsPanel';
 import PinnedRulesEditor from '@/components/ide/PinnedRulesEditor';
 import ArchiveSection from '@/components/settings/ArchiveSection';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
-import { buildTerminalFontFamily } from '@/lib/terminalFont';
+import { buildTerminalFontFamily, buildChatFontFamily } from '@/lib/terminalFont';
 import type { AccessLevel, BuildMode } from '@/types/session';
 import type { LogDensity } from '@/types';
 
@@ -213,6 +213,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                         </p>
                       </div>
                       <TerminalFontField />
+                      <ChatFontField />
                     </Section>
                   )}
 
@@ -373,5 +374,48 @@ function TerminalFontField() {
         </p>
       </div>
     </>
+  );
+}
+
+// ─── Chat font picker ────────────────────────────────────────────────────────
+// Applies to assistant/user chat prose (not code — inline code and fenced blocks
+// stay monospace). Free-text + datalist so any installed sans family works, even
+// ones the (mono-filtered) enumeration doesn't surface.
+function ChatFontField() {
+  const { state, dispatch } = useAppContext();
+  const { fonts } = useSystemFonts();
+  const selected = state.chatFont ?? '';
+  const previewFamily = buildChatFontFamily(state.chatFont);
+
+  const setFont = (family: string | null) =>
+    dispatch({ type: 'SET_CHAT_FONT', family });
+
+  return (
+    <div className="pt-4 mt-4 border-t border-border/40">
+      <Field
+        title="Chat font"
+        desc="Applies to chat message text. Code stays monospace. Uses the UI sans stack when unset."
+      >
+        <input
+          type="text"
+          list="chat-font-list"
+          placeholder="e.g. Inter, Georgia"
+          value={selected}
+          onChange={(e) => setFont(e.target.value.trim() || null)}
+          className="w-56 px-2 py-1 rounded border border-border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+        />
+        <datalist id="chat-font-list">
+          {fonts.map((f) => <option key={f} value={f} />)}
+        </datalist>
+      </Field>
+      <div className="pt-3">
+        <div
+          className="rounded border border-border bg-muted/20 px-3 py-2 text-[13px]"
+          style={previewFamily ? { fontFamily: previewFamily } : undefined}
+        >
+          The quick brown fox jumps over the lazy dog. <code className="font-mono text-[0.85em] bg-muted px-1 rounded">code stays mono</code>
+        </div>
+      </div>
+    </div>
   );
 }

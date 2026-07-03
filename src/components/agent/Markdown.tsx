@@ -64,8 +64,11 @@ const COMPONENTS: Components = {
   li({ children }) {
     return <li className="leading-relaxed">{children}</li>;
   },
-  // Heavy nodes degrade to plain text so prose stays "lightweight".
-  h1: PlainHeading, h2: PlainHeading, h3: PlainHeading,
+  // Real (but restrained) heading hierarchy — readable without turning chat
+  // prose into a document. Deeper levels degrade to bold text.
+  h1({ children }) { return <h3 className="text-[15px] font-semibold text-foreground mt-2 mb-1">{children}</h3>; },
+  h2({ children }) { return <h4 className="text-sm font-semibold text-foreground mt-2 mb-0.5">{children}</h4>; },
+  h3({ children }) { return <h5 className="text-[13px] font-semibold text-foreground/90 mt-1.5 mb-0.5">{children}</h5>; },
   h4: PlainHeading, h5: PlainHeading, h6: PlainHeading,
   blockquote({ children }) {
     return <div className="border-l-2 border-border pl-2.5 text-muted-foreground">{children}</div>;

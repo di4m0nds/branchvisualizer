@@ -7,6 +7,7 @@ import { registerChatSender } from '@/hooks/useSendToChat';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/services/toast';
 import { useAppContext } from '@/store/AppContext';
+import { buildChatFontFamily } from '@/lib/terminalFont';
 import { useRepoData } from '@/hooks/useRepoData';
 import AgentBlocks from './AgentBlocks';
 import ChatTimeline from './ChatTimeline';
@@ -163,6 +164,7 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
 export default function ChatPanel({ session }: { session: Session }) {
   const { state, dispatch } = useAppContext();
   const { loadRepo, loadLocalRepo } = useRepoData();
+  const chatFontFamily = buildChatFontFamily(state.chatFont);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
@@ -492,7 +494,10 @@ export default function ChatPanel({ session }: { session: Session }) {
           <div
             ref={contentRef}
             className="px-4 py-4 space-y-4 min-h-full"
-            style={chatZoom !== 1 ? ({ zoom: chatZoom } as React.CSSProperties) : undefined}
+            style={{
+              ...(chatZoom !== 1 ? ({ zoom: chatZoom } as React.CSSProperties) : {}),
+              ...(chatFontFamily ? { fontFamily: chatFontFamily } : {}),
+            }}
           >
             {live.messages.length === 0 && (
               <div className="h-full flex flex-col items-center justify-center text-center gap-1 px-6">

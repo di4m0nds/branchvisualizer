@@ -13,6 +13,7 @@ const ACTIVE_SESSION_STORAGE_KEY = 'code-agent:active_session';
 const SHOW_CHECKPOINTS_STORAGE_KEY = 'code-agent:show_checkpoints';
 const LOG_DENSITY_STORAGE_KEY = 'code-agent:log_density';
 const TERMINAL_FONT_STORAGE_KEY = 'code-agent:terminal_font';
+const CHAT_FONT_STORAGE_KEY = 'code-agent:chat_font';
 
 function loadBoolPref(key: string, fallback: boolean): boolean {
   if (typeof localStorage === 'undefined') return fallback;
@@ -37,6 +38,16 @@ function loadTerminalFont(): string | null {
   if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(TERMINAL_FONT_STORAGE_KEY);
+    return raw && raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadChatFont(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(CHAT_FONT_STORAGE_KEY);
     return raw && raw.length > 0 ? raw : null;
   } catch {
     return null;
@@ -211,6 +222,11 @@ export function persistState(state: AppState): void {
     } else {
       localStorage.removeItem(TERMINAL_FONT_STORAGE_KEY);
     }
+    if (state.chatFont) {
+      localStorage.setItem(CHAT_FONT_STORAGE_KEY, state.chatFont);
+    } else {
+      localStorage.removeItem(CHAT_FONT_STORAGE_KEY);
+    }
   } catch { /* quota / private mode */ }
 }
 
@@ -255,6 +271,7 @@ export const initialState: AppState = {
   showCheckpoints: loadBoolPref(SHOW_CHECKPOINTS_STORAGE_KEY, false),
   logDensity: loadLogDensity(),
   terminalFont: loadTerminalFont(),
+  chatFont: loadChatFont(),
   ...bootstrapProjectsAndSessions(),
   currentModel: loadCurrentModel(),
   providerStatus: {},
@@ -355,6 +372,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_TERMINAL_FONT':
       return { ...state, terminalFont: action.family };
+    case 'SET_CHAT_FONT':
+      return { ...state, chatFont: action.family };
 
     case 'LOAD_ERROR':
       return {

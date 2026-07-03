@@ -26,6 +26,7 @@ export interface Container {
   health: ContainerHealth | null;
   ports: string;
   uptime: string;
+  restartCount: number;
 }
 
 export interface ComposeService {

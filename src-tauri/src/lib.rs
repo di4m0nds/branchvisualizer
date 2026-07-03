@@ -55,6 +55,7 @@ pub fn run() {
       docker::docker_logs_stream,
       docker::docker_kill,
       docker::docker_action,
+      docker::docker_exec,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

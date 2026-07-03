@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshCw, Play, Square, RotateCw, Trash2, Download, Hammer,
   Boxes, ScrollText, Network, AlertTriangle, ArrowUpCircle, ArrowDownCircle,
+  Cpu, MemoryStick, RotateCcw, CornerDownLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -10,7 +11,7 @@ import { useActiveSession } from '@/hooks/useActiveSession';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ServiceGraph from './ServiceGraph';
 import {
-  runtimeDetect, dockerPs, dockerComposeServices, dockerAction, dockerKill,
+  runtimeDetect, dockerPs, dockerComposeServices, dockerAction, dockerKill, dockerExec,
   dockerStatsStream, dockerLogsStream, onRuntimeData, onRuntimeExit, parseStatsLine,
   type DockerAction,
 } from '@/lib/runtime';
@@ -186,51 +187,129 @@ export default function RuntimePanel() {
 
 // ─── Containers tab ──────────────────────────────────────────────────────────
 
+function pctVal(s?: string): number {
+  if (!s) return 0;
+  const n = parseFloat(s.replace('%', ''));
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+}
+
 function ContainersTab({ containers, stats, onAction }: {
   containers: Container[];
   stats: Record<string, ContainerStats>;
   onAction: (a: DockerAction, target: string | null, label: string) => void;
 }) {
   if (containers.length === 0) return <Empty icon={Boxes} msg="No containers." />;
+
+  const running = containers.filter((c) => c.state === 'running').length;
+  const unhealthy = containers.filter((c) => c.health === 'unhealthy').length;
+  const stopped = containers.length - running;
+  // Running first, then by name.
+  const sorted = [...containers].sort((a, b) => {
+    if ((a.state === 'running') !== (b.state === 'running')) return a.state === 'running' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
   return (
-    <table className="w-full text-[11px] font-mono">
-      <thead className="sticky top-0 bg-background/95 text-muted-foreground">
-        <tr className="text-left">
-          <th className="px-3 py-1.5 font-medium">Name</th>
-          <th className="px-2 py-1.5 font-medium">State</th>
-          <th className="px-2 py-1.5 font-medium">CPU</th>
-          <th className="px-2 py-1.5 font-medium">Mem</th>
-          <th className="px-2 py-1.5 font-medium">Net I/O</th>
-          <th className="px-2 py-1.5 font-medium">Uptime</th>
-          <th className="px-2 py-1.5 font-medium text-right">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {containers.map((c) => {
-          const s = stats[c.name];
-          const running = c.state === 'running';
-          return (
-            <tr key={c.id || c.name} className="border-t border-border/40 hover:bg-accent/20">
-              <td className="px-3 py-1.5 truncate max-w-[180px]" title={`${c.name} · ${c.image}`}>{c.name}</td>
-              <td className="px-2 py-1.5"><StateBadge state={c.state} health={c.health} /></td>
-              <td className="px-2 py-1.5 tabular-nums">{s?.cpuPerc ?? '—'}</td>
-              <td className="px-2 py-1.5 tabular-nums" title={s?.memUsage}>{s?.memPerc ?? '—'}</td>
-              <td className="px-2 py-1.5 tabular-nums">{s?.netIO ?? '—'}</td>
-              <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[120px]">{c.uptime || '—'}</td>
-              <td className="px-2 py-1.5">
-                <div className="flex items-center justify-end gap-0.5">
-                  {running
+    <div className="flex flex-col h-full min-h-0">
+      {/* Summary strip */}
+      <div className="flex items-center gap-3 px-3 py-1.5 border-b border-border flex-shrink-0 text-[11px]">
+        <Stat label="running" value={running} tone="green" />
+        <Stat label="stopped" value={stopped} tone="muted" />
+        {unhealthy > 0 && <Stat label="unhealthy" value={unhealthy} tone="red" />}
+        <span className="ml-auto text-muted-foreground">{containers.length} total</span>
+      </div>
+
+      {/* Card grid — fills the panel width */}
+      <div className="flex-1 min-h-0 overflow-auto p-2">
+        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(248px, 1fr))' }}>
+          {sorted.map((c) => {
+            const s = stats[c.name];
+            const isRunning = c.state === 'running';
+            const cpu = pctVal(s?.cpuPerc);
+            const mem = pctVal(s?.memPerc);
+            return (
+              <div key={c.id || c.name} className="group rounded-lg border border-border bg-card/40 p-2.5 flex flex-col gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <StatusDot state={c.state} health={c.health} />
+                  <span className="font-medium text-xs truncate" title={c.name}>{c.name || c.id.slice(0, 12)}</span>
+                  <StatePill state={c.state} health={c.health} className="ml-auto" />
+                </div>
+                <div className="text-[10px] font-mono text-muted-foreground truncate" title={c.image}>{c.image || '—'}</div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Meter icon={Cpu} label="CPU" pct={cpu} value={s?.cpuPerc} active={isRunning} />
+                  <Meter icon={MemoryStick} label="Mem" pct={mem} value={s?.memPerc} valueTitle={s?.memUsage} active={isRunning} />
+                </div>
+
+                <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[10px] text-muted-foreground font-mono">
+                  {isRunning && <span title="net I/O">⇅ {s?.netIO ?? '—'}</span>}
+                  {isRunning && c.uptime && <span title="uptime">↑ {c.uptime}</span>}
+                  {c.restartCount > 0 && <span className="text-yellow-500/90" title="restarts"><RotateCcw className="w-2.5 h-2.5 inline mr-0.5" />{c.restartCount}</span>}
+                  {c.ports && <span className="truncate max-w-[140px]" title={c.ports}>:{c.ports}</span>}
+                </div>
+
+                <div className="flex items-center gap-0.5 pt-0.5 border-t border-border/40 opacity-70 group-hover:opacity-100 transition-opacity">
+                  {isRunning
                     ? <IconBtn title="Stop" onClick={() => onAction('stop', c.id || c.name, `stop ${c.name}`)}><Square className="w-3 h-3" /></IconBtn>
                     : <IconBtn title="Start" onClick={() => onAction('start', c.id || c.name, `start ${c.name}`)}><Play className="w-3 h-3" /></IconBtn>}
                   <IconBtn title="Restart" onClick={() => onAction('restart', c.id || c.name, `restart ${c.name}`)}><RotateCw className="w-3 h-3" /></IconBtn>
                   <IconBtn title="Remove" onClick={() => onAction('rm', c.id || c.name, `remove ${c.name}`)}><Trash2 className="w-3 h-3" /></IconBtn>
                 </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number; tone: 'green' | 'red' | 'muted' }) {
+  const color = tone === 'green' ? 'text-green-400' : tone === 'red' ? 'text-red-400' : 'text-muted-foreground';
+  return (
+    <span className="flex items-center gap-1">
+      <span className={cn('tabular-nums font-semibold', color)}>{value}</span>
+      <span className="text-muted-foreground">{label}</span>
+    </span>
+  );
+}
+
+function Meter({ icon: Icon, label, pct, value, valueTitle, active }: {
+  icon: typeof Cpu; label: string; pct: number; value?: string; valueTitle?: string; active: boolean;
+}) {
+  const barColor = pct > 85 ? 'bg-red-500' : pct > 60 ? 'bg-yellow-500' : 'bg-primary';
+  return (
+    <div className="flex flex-col gap-0.5" title={valueTitle}>
+      <div className="flex items-center gap-1 text-[9px] text-muted-foreground uppercase tracking-wide">
+        <Icon className="w-2.5 h-2.5" />{label}
+        <span className="ml-auto tabular-nums text-foreground/70">{active ? (value ?? '—') : '—'}</span>
+      </div>
+      <div className="h-1 rounded-full bg-muted overflow-hidden">
+        <div className={cn('h-full rounded-full transition-all', active ? barColor : 'bg-transparent')} style={{ width: `${active ? pct : 0}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function StatusDot({ state, health }: { state: string; health: Container['health'] }) {
+  const color = state === 'running'
+    ? (health === 'unhealthy' ? 'bg-red-500' : health === 'starting' ? 'bg-yellow-500' : 'bg-green-500')
+    : state === 'restarting' ? 'bg-yellow-500'
+    : state === 'dead' ? 'bg-red-500'
+    : 'bg-muted-foreground/50';
+  return <span className={cn('w-2 h-2 rounded-full flex-shrink-0', color, state === 'running' && 'animate-pulse')} />;
+}
+
+function StatePill({ state, health, className }: { state: string; health: Container['health']; className?: string }) {
+  const color = state === 'running'
+    ? (health === 'unhealthy' ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-400')
+    : state === 'restarting' ? 'bg-yellow-500/15 text-yellow-400'
+    : state === 'dead' ? 'bg-red-500/15 text-red-400'
+    : 'bg-muted text-muted-foreground';
+  return (
+    <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0', color, className)}>
+      {state}{health ? ` · ${health}` : ''}
+    </span>
   );
 }
 
@@ -288,9 +367,37 @@ function LogsTab({ engine, cwd, containers, services, hasCompose }: {
   const [search, setSearch] = useState('');
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
+  const [cmd, setCmd] = useState('');
+  const [execBusy, setExecBusy] = useState(false);
   const linesRef = useRef<string[]>([]);
 
   const chosen = targets.find((t) => `${t.compose}:${t.target}` === sel) ?? targets[0];
+
+  const pushLines = useCallback((extra: string[]) => {
+    const arr = linesRef.current;
+    arr.push(...extra);
+    if (arr.length > MAX_LOG_LINES) arr.splice(0, arr.length - MAX_LOG_LINES);
+    setLines([...arr]);
+  }, []);
+
+  // Run a one-shot command inside the selected container; output goes into the
+  // log view. Compose services aren't container names, so exec targets containers.
+  const runExec = useCallback(async () => {
+    const command = cmd.trim();
+    if (!command || !chosen || chosen.compose || execBusy) return;
+    setExecBusy(true);
+    pushLines([`$ ${command}`]);
+    try {
+      const res = await dockerExec(engine, chosen.target, command);
+      const body = [res.stdout, res.stderr].filter((x) => x.trim()).join('\n');
+      pushLines(body ? body.split('\n') : [`(exit ${res.code ?? '?'})`]);
+    } catch (e) {
+      pushLines([`error: ${e instanceof Error ? e.message : String(e)}`]);
+    } finally {
+      setExecBusy(false);
+      setCmd('');
+    }
+  }, [cmd, chosen, engine, execBusy, pushLines]);
 
   useEffect(() => {
     if (!chosen || !isTauri()) return;
@@ -362,8 +469,28 @@ function LogsTab({ engine, cwd, containers, services, hasCompose }: {
         {shown.length === 0
           ? <div className="text-muted-foreground">{hasCompose ? 'Waiting for log output…' : 'No output.'}</div>
           : shown.map((l, i) => (
-            <div key={i} className={cn('whitespace-pre-wrap break-all', ERROR_RE.test(l) && 'text-red-400')}>{l}</div>
+            <div key={i} className={cn('whitespace-pre-wrap break-all', l.startsWith('$ ') && 'text-primary', ERROR_RE.test(l) && 'text-red-400')}>{l}</div>
           ))}
+      </div>
+      {/* Exec a command in the selected container (containers only, not compose services). */}
+      <div className="flex items-center gap-2 px-2 py-1.5 border-t border-border flex-shrink-0 bg-background">
+        <span className="text-[11px] font-mono text-muted-foreground">$</span>
+        <input
+          className="flex-1 min-w-0 text-[11px] font-mono bg-background border border-border rounded px-2 py-0.5 disabled:opacity-50"
+          placeholder={chosen?.compose ? 'Select a container (not a service) to run commands' : `Run in ${chosen?.label ?? '…'} — e.g. ls -la`}
+          value={cmd}
+          disabled={!chosen || chosen.compose || execBusy}
+          onChange={(e) => setCmd(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void runExec(); }}
+        />
+        <button
+          title="Run command (Enter)"
+          disabled={!cmd.trim() || !chosen || chosen.compose || execBusy}
+          onClick={() => void runExec()}
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-40 transition-colors"
+        >
+          <CornerDownLeft className="w-3.5 h-3.5" />
+        </button>
       </div>
     </div>
   );
@@ -428,19 +555,6 @@ function computeDiagnostics(services: ComposeService[], containers: Container[])
 }
 
 // ─── Small shared UI ─────────────────────────────────────────────────────────
-
-function StateBadge({ state, health }: { state: string; health: Container['health'] }) {
-  const color = state === 'running'
-    ? (health === 'unhealthy' ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-400')
-    : state === 'restarting' ? 'bg-yellow-500/15 text-yellow-400'
-    : state === 'dead' ? 'bg-red-500/15 text-red-400'
-    : 'bg-muted text-muted-foreground';
-  return (
-    <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]', color)}>
-      {state}{health ? ` · ${health}` : ''}
-    </span>
-  );
-}
 
 function TabBtn({ active, onClick, icon: Icon, label, badge }: {
   active: boolean; onClick: () => void; icon: typeof Boxes; label: string; badge?: number;

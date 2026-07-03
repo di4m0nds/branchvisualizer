@@ -162,13 +162,14 @@ pub struct Container {
     image: String,
     /// running | exited | created | paused | restarting | dead
     state: String,
-    /// Human status string, e.g. "Up 3 minutes (healthy)".
+    /// Human status string, e.g. "Up 3 minutes (healthy)" (may be empty on podman).
     status: String,
     /// healthy | unhealthy | starting | null (parsed from `status`).
     health: Option<String>,
     ports: String,
-    /// docker's "RunningFor" string, e.g. "3 minutes ago".
+    /// Human uptime for running containers, e.g. "2h 15m".
     uptime: String,
+    restart_count: u32,
 }
 
 /// Extract a health keyword from docker's human status string.
@@ -185,8 +186,63 @@ fn parse_health(status: &str) -> Option<String> {
     }
 }
 
-/// List all containers (`ps -a`). Parses docker's `{{json .}}` NDJSON leniently
-/// so both docker's and podman's key casings are tolerated.
+/// Read a string field that may be a plain string (docker) or an array whose
+/// first element is the value (podman `Names`).
+fn first_str(v: &serde_json::Value, keys: &[&str]) -> String {
+    for k in keys {
+        match v.get(*k) {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => return s.clone(),
+            Some(serde_json::Value::Array(a)) => {
+                if let Some(s) = a.first().and_then(|x| x.as_str()) {
+                    return s.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    String::new()
+}
+
+/// Best-effort ports string across engines: docker's "Ports" string, else
+/// podman's `ExposedPorts` object keys.
+fn extract_ports(v: &serde_json::Value) -> String {
+    if let Some(s) = v.get("Ports").and_then(|x| x.as_str()) {
+        if !s.is_empty() {
+            return s.to_string();
+        }
+    }
+    if let Some(obj) = v.get("ExposedPorts").and_then(|x| x.as_object()) {
+        let mut ks: Vec<String> = obj.keys().cloned().collect();
+        ks.sort();
+        return ks.join(", ");
+    }
+    String::new()
+}
+
+/// Format seconds-since-`started_at` as a compact human uptime.
+fn human_uptime(started_at: i64) -> String {
+    if started_at <= 0 {
+        return String::new();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let d = (now - started_at).max(0);
+    if d < 60 {
+        format!("{d}s")
+    } else if d < 3600 {
+        format!("{}m", d / 60)
+    } else if d < 86_400 {
+        format!("{}h {}m", d / 3600, (d % 3600) / 60)
+    } else {
+        format!("{}d {}h", d / 86_400, (d % 86_400) / 3600)
+    }
+}
+
+/// List all containers (`ps -a`). Normalizes the two engines' differing JSON:
+/// docker emits string fields + `RunningFor`; podman emits `Names` as an array,
+/// `StartedAt`/`Restarts` numbers, and an often-empty `Status`.
 #[tauri::command]
 pub fn docker_ps(bin: String) -> Result<Vec<Container>, String> {
     let raw = run_docker(&bin, &["ps", "-a", "--format", "{{json .}}"], None)?;
@@ -200,24 +256,30 @@ pub fn docker_ps(bin: String) -> Result<Vec<Container>, String> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        let get = |keys: &[&str]| -> String {
-            for k in keys {
-                if let Some(s) = v.get(*k).and_then(|x| x.as_str()) {
-                    return s.to_string();
-                }
-            }
-            String::new()
+        let status = first_str(&v, &["Status", "status"]);
+        let state = first_str(&v, &["State", "state"]);
+        // Uptime: podman via StartedAt (unix secs) for running containers; docker
+        // via its "RunningFor" string.
+        let started_at = v.get("StartedAt").and_then(|x| x.as_i64()).unwrap_or(0);
+        let uptime = if state == "running" && started_at > 0 {
+            human_uptime(started_at)
+        } else {
+            first_str(&v, &["RunningFor", "runningFor"])
         };
-        let status = get(&["Status", "status"]);
         out.push(Container {
-            id: get(&["ID", "Id", "id"]),
-            name: get(&["Names", "name"]),
-            image: get(&["Image", "image"]),
-            state: get(&["State", "state"]),
+            id: first_str(&v, &["ID", "Id", "id"]),
+            name: first_str(&v, &["Names", "name"]),
+            image: first_str(&v, &["Image", "image"]),
+            state,
             health: parse_health(&status),
             status,
-            ports: get(&["Ports", "ports"]),
-            uptime: get(&["RunningFor", "runningFor"]),
+            ports: extract_ports(&v),
+            uptime,
+            restart_count: v
+                .get("Restarts")
+                .or_else(|| v.get("RestartCount"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0) as u32,
         });
     }
     Ok(out)
@@ -504,6 +566,24 @@ pub fn docker_action(
     run_docker_capture(&bin, &arg_refs, cwd.as_deref())
 }
 
+/// Run a one-shot command inside a container (`exec <target> sh -c <command>`)
+/// and capture its output. The user types the command explicitly for their own
+/// dev container; `target` is validated but the command is intentionally free.
+#[tauri::command]
+pub fn docker_exec(
+    bin: String,
+    target: String,
+    command: String,
+) -> Result<CommandResult, String> {
+    if !valid_bin(&bin) {
+        return Err(format!("unsupported container engine: {bin}"));
+    }
+    if target.is_empty() || target.starts_with('-') {
+        return Err(format!("invalid container: {target}"));
+    }
+    run_docker_capture(&bin, &["exec", &target, "sh", "-c", &command], None)
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -527,6 +607,28 @@ mod tests {
         assert!(!valid_action("exec"));
         assert!(!valid_action("run"));
         assert!(!valid_action("--privileged"));
+    }
+
+    #[test]
+    fn first_str_handles_string_and_array() {
+        // docker: string
+        let dv = serde_json::json!({ "Names": "web-1" });
+        assert_eq!(first_str(&dv, &["Names", "name"]), "web-1");
+        // podman: array
+        let pv = serde_json::json!({ "Names": ["web-1"] });
+        assert_eq!(first_str(&pv, &["Names", "name"]), "web-1");
+        // missing → empty
+        assert_eq!(first_str(&serde_json::json!({}), &["Names"]), "");
+    }
+
+    #[test]
+    fn ports_across_engines() {
+        // docker: string
+        let dv = serde_json::json!({ "Ports": "0.0.0.0:8080->80/tcp" });
+        assert_eq!(extract_ports(&dv), "0.0.0.0:8080->80/tcp");
+        // podman: ExposedPorts object
+        let pv = serde_json::json!({ "Ports": null, "ExposedPorts": { "25565": ["tcp"], "8080": ["tcp"] } });
+        assert_eq!(extract_ports(&pv), "25565, 8080");
     }
 
     #[test]
