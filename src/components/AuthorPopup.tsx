@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
 import type { CommitAuthor } from '@/types';
 import { hashColor, getInitials, formatDate } from '@/lib/utils';
 
@@ -11,14 +11,14 @@ interface AuthorPopupProps {
 }
 
 export default function AuthorPopup({ author, anchorRect }: AuthorPopupProps) {
-  const { state } = useAppContext();
+  const allCommits = useAppSelector((s) => s.allCommits);
 
   const stats = useMemo(() => {
     const key = author.login || author.email;
     let commits = 0;
     let firstDate = '';
     let lastDate  = '';
-    for (const c of state.allCommits) {
+    for (const c of allCommits) {
       const ck = c.author.login || c.author.email;
       if (ck === key) {
         commits++;
@@ -26,11 +26,11 @@ export default function AuthorPopup({ author, anchorRect }: AuthorPopupProps) {
         if (!lastDate  || c.author.date > lastDate)  lastDate  = c.author.date;
       }
     }
-    const pct = state.allCommits.length > 0
-      ? Math.round((commits / state.allCommits.length) * 100)
+    const pct = allCommits.length > 0
+      ? Math.round((commits / allCommits.length) * 100)
       : 0;
     return { commits, pct, firstDate, lastDate };
-  }, [author, state.allCommits]);
+  }, [author, allCommits]);
 
   const color = hashColor(author.name);
   const initials = getInitials(author.name);

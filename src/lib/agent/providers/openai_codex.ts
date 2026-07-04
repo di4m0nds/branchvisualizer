@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { invoke, isTauri } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver } from './shared';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -32,15 +32,7 @@ async function checkCli(): Promise<CliProbePayload | null> {
   return invoke<CliProbePayload>('check_cli_provider', { name: 'codex' }).catch(() => null);
 }
 
-async function resolveKey(): Promise<string | null> {
-  const stored = await getProviderKey('openai');
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'openai' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_OPENAI_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('openai', () => import.meta.env.VITE_OPENAI_API_KEY);
 
 // ─── Adapters ─────────────────────────────────────────────────────────────
 

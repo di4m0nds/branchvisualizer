@@ -206,8 +206,26 @@ pub fn kill_pty(state: State<'_, PtyState>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// Windows: prefer PowerShell (better interactive UX), else %COMSPEC%, else cmd.
+#[cfg(windows)]
+fn default_shell() -> String {
+    if find_on_path("powershell.exe").is_some() {
+        return "powershell.exe".to_string();
+    }
+    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+}
+
+#[cfg(windows)]
+fn find_on_path(bin: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(bin))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Whether a shell binary path is a login shell that accepts `-l`.
@@ -220,10 +238,14 @@ fn is_login_shell(shell: &str) -> bool {
 }
 
 /// Resolve a usable working directory: the requested cwd if it exists, else
-/// $HOME, else `/`. Prevents an invalid path from silently killing the child.
+/// the home dir (HOME / USERPROFILE), else the filesystem root. Prevents an
+/// invalid path from silently killing the child.
 fn resolve_cwd(cwd: &str) -> String {
     if !cwd.is_empty() && std::path::Path::new(cwd).is_dir() {
         return cwd.to_string();
     }
-    std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+    let fallback = if cfg!(windows) { "C:\\" } else { "/" };
+    crate::fs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| fallback.to_string())
 }

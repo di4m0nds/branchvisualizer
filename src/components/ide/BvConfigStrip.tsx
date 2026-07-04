@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
 import { PanelMaximizeButton } from './FocusablePanel';
 import type { PanelId } from '@/hooks/usePanelFocus';
 
@@ -22,8 +22,10 @@ export default function BvConfigStrip({
   /** Show a dot on the Plan tab when the session has a plan to review. */
   hasPlan?: boolean;
 }) {
-  const { state } = useAppContext();
-  const { repoInfo, branches, tags, allCommits } = state;
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const branches = useAppSelector((s) => s.branches);
+  const tags = useAppSelector((s) => s.tags);
+  const allCommits = useAppSelector((s) => s.allCommits);
 
   return (
     <div className="flex-shrink-0 border-b border-border bg-muted/10">

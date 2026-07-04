@@ -3,7 +3,7 @@ import React, {
   type CSSProperties,
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector, useAppDispatch } from '@/store/store';
 import AuthorPopup, { useAnchorRect } from '@/components/AuthorPopup';
 import DetailPanel from '@/components/DetailPanel';
 import type { GraphNode, Commit } from '@/types';
@@ -364,8 +364,13 @@ function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationPro
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function CommitListView({ isActive = true }: { isActive?: boolean }) {
-  const { state, dispatch } = useAppContext();
-  const { graphData, filter, selectedNode, selectedNodes, branches, repoInfo } = state;
+  const dispatch = useAppDispatch();
+  const graphData = useAppSelector((s) => s.graphData);
+  const filter = useAppSelector((s) => s.filter);
+  const selectedNode = useAppSelector((s) => s.selectedNode);
+  const selectedNodes = useAppSelector((s) => s.selectedNodes);
+  const branches = useAppSelector((s) => s.branches);
+  const repoInfo = useAppSelector((s) => s.repoInfo);
   const selectedShaSet = new Set(selectedNodes.map(n => n.commit.sha));
 
   const [page, setPage]         = useState(0);

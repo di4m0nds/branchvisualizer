@@ -13,6 +13,10 @@ export type ToolCategory = 'file' | 'command' | 'git';
 export interface ToolContext {
   /** Project root; every path is jailed to this in Rust. */
   root: string;
+  /** Podman runtime sandbox (session setting). When enabled, `run_command`
+   *  executes inside an isolated container with `root` bind-mounted at the
+   *  same absolute path — file tools stay host-side, paths stay consistent. */
+  sandbox?: { enabled: boolean; network: boolean };
 }
 
 export const TOOLS: NeutralToolSchema[] = [
@@ -190,7 +194,23 @@ export async function executeTool(
     }
 
     case 'run_command': {
-      const res = await invoke<CommandResult>('agent_run_command', { root, command: String(input.command) });
+      let res: CommandResult;
+      if (ctx.sandbox?.enabled) {
+        // sandbox_ensure is idempotent — cheap after the container exists.
+        const name = await invoke<string>('sandbox_ensure', {
+          bin: 'podman',
+          root,
+          network: ctx.sandbox.network,
+        });
+        res = await invoke<CommandResult>('sandbox_exec', {
+          bin: 'podman',
+          name,
+          root,
+          command: String(input.command),
+        });
+      } else {
+        res = await invoke<CommandResult>('agent_run_command', { root, command: String(input.command) });
+      }
       const parts = [];
       if (res.stdout) parts.push(res.stdout);
       if (res.stderr) parts.push(`[stderr]\n${res.stderr}`);

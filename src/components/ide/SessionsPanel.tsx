@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
+import { closeSession } from '@/lib/sessionLifecycle';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Trash2, FolderGit2, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector, useAppDispatch } from '@/store/store';
 import { lastActivity, statusDot } from '@/lib/sessionStatus';
 import type { Session } from '@/types/session';
 
@@ -43,27 +44,28 @@ export default function SessionsPanel({
   variant?: 'inline' | 'popover';
   filterRepoRef?: string;
 }) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const allSessions = useAppSelector((s) => s.sessions);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
   const sessions = useMemo(() => {
     const ref = filterRepoRef?.trim();
-    if (!ref) return state.sessions;
+    if (!ref) return allSessions;
     // Normalize: GitHub refs are case-insensitive (owner/repo), and a session
     // may key off either its repoRef or its local cwd. Match on either so the
     // standalone visualizer page lists the same sessions the IDE does.
     const norm = ref.toLowerCase();
-    return state.sessions.filter(
+    return allSessions.filter(
       (s) => s.repoRef.toLowerCase() === norm || (s.cwd && s.cwd.toLowerCase() === norm),
     );
-  }, [state.sessions, filterRepoRef]);
+  }, [allSessions, filterRepoRef]);
 
   const openSession = (id: string) => {
     dispatch({ type: 'SET_ACTIVE_SESSION', id });
     navigate('/ide');
   };
-  const deleteSession = (id: string) => dispatch({ type: 'CLOSE_SESSION', id });
+  const deleteSession = (id: string) => closeSession(id);
 
   const list = (
     <div className="space-y-0.5">

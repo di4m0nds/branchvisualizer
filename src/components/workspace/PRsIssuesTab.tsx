@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { useAppContext } from '@/store/AppContext';
-import { fetchPRs, fetchIssues, setToken, type PRInfo, type IssueInfo } from '@/lib/github';
+import { useState } from 'react';
+import { useAppSelector } from '@/store/store';
+import { fetchPRs, fetchIssues, type PRInfo, type IssueInfo } from '@/lib/github';
+import { useAsyncResource } from '@/hooks/useAsyncResource';
 import { cn, formatDateDMY } from '@/lib/utils';
 
 // ─── State badge ─────────────────────────────────────────────────────────
@@ -170,41 +171,26 @@ type ActiveTab = 'prs' | 'issues';
 type StateFilter = 'all' | 'open' | 'closed' | 'merged';
 
 export default function PRsIssuesTab() {
-  const { state } = useAppContext();
-  const { repoInfo, token } = state;
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const token = useAppSelector((s) => s.token);
 
   const [tab, setTab] = useState<ActiveTab>('prs');
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
-  const [prs, setPRs] = useState<PRInfo[]>([]);
-  const [issues, setIssues] = useState<IssueInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadedForRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!repoInfo) return;
-    const key = `${repoInfo.owner}/${repoInfo.repo}`;
-    if (loadedForRef.current === key) return;
-    loadedForRef.current = key;
-
-    setToken(token);
-    setLoading(true);
-    setError(null);
-
-    Promise.all([
-      fetchPRs(repoInfo.owner, repoInfo.repo),
-      fetchIssues(repoInfo.owner, repoInfo.repo),
-    ])
-      .then(([{ prs: p }, { issues: i }]) => {
-        setPRs(p);
-        setIssues(i.filter(x => !x.isPR)); // exclude PR entries from issues list
-      })
-      .catch(e => {
-        setError(e.message);
-        loadedForRef.current = null;
-      })
-      .finally(() => setLoading(false));
-  }, [repoInfo, token]);
+  const { data, loading, error } = useAsyncResource(
+    async () => {
+      const [{ prs }, { issues }] = await Promise.all([
+        fetchPRs(repoInfo!.owner, repoInfo!.repo),
+        fetchIssues(repoInfo!.owner, repoInfo!.repo),
+      ]);
+      // Exclude PR entries from the issues list.
+      return { prs, issues: issues.filter((x) => !x.isPR) };
+    },
+    [repoInfo?.owner, repoInfo?.repo],
+    { enabled: !!repoInfo, scope: 'prs-issues' },
+  );
+  const prs: PRInfo[] = data?.prs ?? [];
+  const issues: IssueInfo[] = data?.issues ?? [];
 
   if (!repoInfo) {
     return (

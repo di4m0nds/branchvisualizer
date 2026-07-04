@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { swallow } from '@/lib/log';
 import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
@@ -131,7 +132,7 @@ export default memo(function TerminalDock({
       const writer = writersRef.current[nvim.id];
       if (!writer) return;
       const escaped = path.replace(/ /g, '\\ ');
-      await writer(`\x1b:e ${escaped}\r`).catch(() => {});
+      await writer(`\x1b:e ${escaped}\r`).catch(swallow('pty', 'nvim open-file escape'));
     });
   }, [sessionId, nvim.id]);
 

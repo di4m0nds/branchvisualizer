@@ -70,6 +70,11 @@ export interface SessionContext {
    *  `--permission-mode bypassPermissions` to the CLI for every subsequent
    *  turn until the session is reset. Undefined ↔ false. */
   cliBypass?: boolean;
+  /** Podman runtime sandbox: when enabled, the agent's `run_command` executes
+   *  inside an isolated container (session root bind-mounted at the same
+   *  path). `network` toggles container network access. Undefined ↔ disabled.
+   *  Persisted with the session context. */
+  sandbox?: { enabled: boolean; network: boolean };
 }
 
 // ─── Conversation ────────────────────────────────────────────────────────────

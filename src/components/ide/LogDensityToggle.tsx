@@ -1,6 +1,6 @@
 import { Layers, List } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import type { LogDensity } from '@/types';
 
 // Switches the agent transcript between full-fidelity output ("verbose") and a
@@ -13,7 +13,8 @@ const OPTIONS: { id: LogDensity; label: string; icon: React.ReactNode; title: st
 ];
 
 export default function LogDensityToggle() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const logDensity = useAppSelector((s) => s.logDensity);
   return (
     <div className="flex items-center gap-0.5 p-0.5 rounded border border-border bg-muted/30">
       {OPTIONS.map((o) => (
@@ -23,7 +24,7 @@ export default function LogDensityToggle() {
           title={o.title}
           className={cn(
             'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors',
-            state.logDensity === o.id
+            logDensity === o.id
               ? 'bg-accent text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground',
           )}

@@ -27,8 +27,15 @@ import {
   deriveSteps, filterBlocksByDensity, parseQuestions, extractTag, plainTextForCopy, composeStreamingBlocks, type AgentQuestion,
 } from './blocks';
 import { formatTime, formatFull, formatDuration } from '@/lib/time';
-import type { AgentTransport } from '@/lib/agent/transport';
-import { createTransportFor } from '@/lib/agent/providers';
+import { useAgentTransport } from '@/hooks/useAgentTransport';
+import {
+  approvePlan as approvePlanAction,
+  approveCliBypass as approveCliBypassAction,
+  resumePendingAction,
+  planAwaitingApproval,
+  cliApprovalHintFor,
+  type RunTurnOptions,
+} from '@/lib/agent/planActions';
 import { runAgentTurn, type PendingAction } from '@/lib/agent/loop';
 import type { AgentMessage, MessageRef, Session } from '@/types/session';
 import type { LogDensity } from '@/types';
@@ -239,7 +246,9 @@ export default function ChatPanel({ session }: { session: Session }) {
   const [timelineOpen, setTimelineOpen] = useState(true);
   const [activeMsgId, setActiveMsgId] = useState<string | undefined>();
   const approvalResolver = useRef<((ok: boolean) => void) | null>(null);
-  const transportRef = useRef<AgentTransport | null>(null);
+  // Transport creation + caching (keyed on provider/model/context-size) lives
+  // in the hook; `getTransport` is identity-stable.
+  const { getTransport } = useAgentTransport();
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -359,33 +368,17 @@ export default function ChatPanel({ session }: { session: Session }) {
     }, 0);
   }, [dispatch, session.id]);
 
-  // Approve the CLI approval card: grant session-scoped bypass, then RESUME
-  // silently. The model already has the full conversation (incl. the original
-  // request), so we drive it with a short continuation prompt and `display:
-  // false` — no duplicate user bubble; it just picks up where it stopped with
-  // full permissions.
+  // Approval drivers (CLI-bypass grant + silent resume, pending-action
+  // approve/reject) live in planActions — these wrappers only bind the
+  // session/dispatch and keep memoized identities for MessageView.
   const approveCliBypass = useCallback(() => {
-    dispatch({ type: 'SET_SESSION_CLI_BYPASS', sessionId: session.id, bypass: true });
-    // The dispatch above only takes effect on the next render, so patch the
-    // context for THIS immediate resume too — otherwise permissionMode would
-    // still compute to `acceptEdits` and the command would need approval again.
-    runTurn(
-      'Permission granted for commands. Continue and complete the previous request.',
-      { display: false, contextPatch: { cliBypass: true } },
-    );
+    approveCliBypassAction(session.id, dispatch, runTurn);
     // runTurn declared below; TS hoisting keeps this valid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, session.id]);
 
-  // Approve/reject a prose <pending_action> the model proposed in supervised
-  // mode. The turn already ended, so we continue it with a short follow-up
-  // (silent — no duplicate user bubble), mirroring the CLI-bypass resume.
   const handlePendingAction = useCallback((decision: 'approve' | 'reject') => {
-    if (decision === 'approve') {
-      runTurn('✅ Approved the pending action above. Proceed and carry it out now.', { display: false });
-    } else {
-      runTurn('❌ Rejected the pending action above. Do not run it — suggest an alternative or ask how to proceed.', { display: false });
-    }
+    resumePendingAction(decision, runTurn);
     // runTurn is a hoisted function declaration below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -499,33 +492,14 @@ export default function ChatPanel({ session }: { session: Session }) {
     else if (repoInfo) loadRepo(`https://github.com/${repoInfo.fullName}`).catch(() => { });
   }
 
-  async function runTurn(
-    text: string,
-    opts?: {
-      display?: boolean;
-      contextPatch?: Partial<Session['context']>;
-      hiddenText?: string;
-      refs?: MessageRef[];
-      /** Rebuild the API conversation only from messages BEFORE this id — used
-       *  by Retry, whose truncate dispatch hasn't landed in `state` yet. */
-      messagesUpTo?: string;
-    },
-  ) {
+  async function runTurn(text: string, opts?: RunTurnOptions) {
     if (!text || busy) return;
     setBusy(true);
     // Fresh abort controller per turn — Stop button aborts this one.
     abortRef.current = new AbortController();
     try {
       const { providerId, modelId, context } = getAppState().currentModel;
-      const ctx = context ?? 'standard';
-      if (
-        !transportRef.current
-        || transportRef.current.id !== providerId
-        || transportRef.current.modelId !== modelId
-        || (transportRef.current.contextSize ?? 'standard') !== ctx
-      ) {
-        transportRef.current = await createTransportFor(providerId, modelId, ctx);
-      }
+      const transport = await getTransport(providerId, modelId, context);
       const ts = new Date().toISOString();
       // Re-read the freshest session at call time (build mode may have flipped).
       // A `contextPatch` lets a just-dispatched change (e.g. cliBypass) apply to
@@ -539,7 +513,7 @@ export default function ChatPanel({ session }: { session: Session }) {
         ? { ...base, context: { ...base.context, ...opts.contextPatch } }
         : base;
       await runAgentTurn(current, text, {
-        transport: transportRef.current,
+        transport,
         dispatch,
         requestApproval,
         onSideEffect,
@@ -604,28 +578,14 @@ export default function ChatPanel({ session }: { session: Session }) {
     runTurn(text, { hiddenText, refs });
   }
 
+  // Plan-approval driver + derivations live in planActions (pure, testable).
   function approvePlan() {
-    // Planning mode: approve → switch to direct execution → replay as instruction.
-    dispatch({ type: 'SET_BUILD_MODE', sessionId: live.id, mode: 'direct' });
-    runTurn('The plan is approved. Proceed with the implementation, executing the steps in order.');
+    approvePlanAction(live.id, dispatch, runTurn);
   }
 
-  // Show the plan-approval affordance when the last assistant turn produced a plan
-  // while in planning mode.
   const last = live.messages[live.messages.length - 1];
-  const showApprovePlan =
-    live.context.buildMode === 'planning'
-    && !busy
-    && !!last
-    && last.role === 'assistant'
-    && !last.streaming
-    && last.blocks.some((b) => b.type === 'plan');
-
-  // Planning-mode approval hint — surfaced on any `cli_approval_needed` card so
-  // users understand approving unblocks the CLI writing the plan file.
-  const cliApprovalHint = live.context.buildMode === 'planning'
-    ? 'Approving will let the CLI finish writing your plan file.'
-    : undefined;
+  const showApprovePlan = planAwaitingApproval(live, busy);
+  const cliApprovalHint = cliApprovalHintFor(live);
 
   return (
     // ── Layout: header · (timeline | messages) · working pill · composer · dialogs

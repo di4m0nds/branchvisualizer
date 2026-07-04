@@ -1,4 +1,4 @@
-import { useAppContext } from '../store/AppContext';
+import { useAppSelector, useAppDispatch } from '../store/store';
 import type { ViewMode } from '../types';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
@@ -37,8 +37,8 @@ function GraphIcon() {
 // ─── Component ────────────────────────────────────────────────────────────
 
 export default function ViewToggle() {
-  const { state, dispatch } = useAppContext();
-  const current = state.viewMode;
+  const dispatch = useAppDispatch();
+  const current = useAppSelector((s) => s.viewMode);
 
   function setView(mode: ViewMode) {
     if (mode !== current) {

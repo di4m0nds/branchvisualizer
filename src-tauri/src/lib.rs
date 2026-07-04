@@ -5,6 +5,7 @@ mod fs;
 mod git;
 mod keys;
 mod pty;
+mod sandbox;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -56,6 +57,11 @@ pub fn run() {
       docker::docker_kill,
       docker::docker_action,
       docker::docker_exec,
+      sandbox::sandbox_status,
+      sandbox::sandbox_build,
+      sandbox::sandbox_ensure,
+      sandbox::sandbox_exec,
+      sandbox::sandbox_teardown,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
@@ -68,6 +74,7 @@ pub fn run() {
         claude_code::kill_all_children();
         antigravity::kill_all_children();
         docker::kill_all_children();
+        sandbox::teardown_all();
       }
     });
 }

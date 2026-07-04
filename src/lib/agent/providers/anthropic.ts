@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { invoke, isTauri } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver, probeWithKey } from './shared';
 import type {
   AgentRequest, AgentTransport, ContextSizeId, ModelInfo, NeutralContent, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -21,15 +20,7 @@ const MODELS: ModelInfo[] = [
   { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
 ];
 
-async function resolveKey(): Promise<string | null> {
-  const stored = await getProviderKey('anthropic');
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'anthropic' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_ANTHROPIC_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('anthropic', () => import.meta.env.VITE_ANTHROPIC_API_KEY);
 
 // ─── Adapters between neutral and Anthropic shapes ────────────────────────
 
@@ -127,9 +118,7 @@ export const anthropicProvider: Provider = {
   models: () => MODELS,
 
   async probe(): Promise<ProbeResult> {
-    const key = await resolveKey();
-    if (!key) return { state: 'not_detected', tier: 'unknown', label: 'ANTHROPIC_API_KEY not set' };
-    try {
+    return probeWithKey(resolveKey, 'ANTHROPIC_API_KEY not set', async (key) => {
       // A tiny count_tokens probe: cheap, exposes rate-limit headers.
       const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
       const resp = await client.messages.countTokens({
@@ -138,11 +127,8 @@ export const anthropicProvider: Provider = {
       });
       // If we can count tokens, the key is live. Anthropic doesn't cleanly expose
       // tier via the SDK — call it "paid" (developer key). Free tier = console-only.
-      return { state: 'connected', tier: 'paid', label: `key ok · ${resp.input_tokens ?? '?'} tok probe` };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { state: 'detected', tier: 'unknown', label: 'key present but request failed', error: msg };
-    }
+      return { tier: 'paid', label: `key ok · ${resp.input_tokens ?? '?'} tok probe` };
+    });
   },
 
   async createTransport(modelId: string, context: ContextSizeId = 'standard'): Promise<AgentTransport> {

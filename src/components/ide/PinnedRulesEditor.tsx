@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import { nextId, type PinnedRule } from '@/types/session';
 
 // App-global pinned-rules CRUD. New sessions inherit whatever's here at creation
@@ -81,7 +81,8 @@ export default function PinnedRulesEditor({
   onClose: () => void;
   sessionId?: string;
 }) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const pinnedRules = useAppSelector((s) => s.pinnedRules);
 
   if (!open) return null;
 
@@ -102,12 +103,12 @@ export default function PinnedRulesEditor({
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {state.pinnedRules.length === 0 && (
+          {pinnedRules.length === 0 && (
             <p className="text-xs text-muted-foreground/60 text-center py-6">
               No pinned rules. Add one — for example: "Do not commit or push anything."
             </p>
           )}
-          {state.pinnedRules.map((rule) => (
+          {pinnedRules.map((rule) => (
             <RuleRow
               key={rule.id}
               rule={rule}

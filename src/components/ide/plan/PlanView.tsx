@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react';
 import { ClipboardList, Pencil, Send, X, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch } from '@/store/store';
 import { nextId, type Session, type PlanComment } from '@/types/session';
 import { latestPlanText, parsePlanSections } from '@/lib/agent/plan';
 import { sendToChat } from '@/hooks/useSendToChat';
@@ -33,7 +33,7 @@ function composeFeedback(comments: PlanComment[]): string {
 }
 
 export default function PlanView({ session }: { session: Session }) {
-  const { dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');

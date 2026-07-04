@@ -369,7 +369,7 @@ export async function runAgentTurn(
             isError = true;
           } else {
             try {
-              content = await executeTool(tu.name, input, { root });
+              content = await executeTool(tu.name, input, { root, sandbox: ctx.sandbox });
             } catch (e) {
               content = e instanceof Error ? e.message : String(e);
               isError = true;

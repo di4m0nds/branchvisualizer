@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { RotateCw, Loader2, Check, AlertTriangle, ArrowUpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import { invoke } from '@/lib/platform';
 import { PROVIDERS } from '@/lib/agent/providers';
 import type { ProbeResult, ProbeState } from '@/lib/agent/transport';
@@ -155,7 +155,8 @@ function ProviderCard({ providerId, label, description, status, retrying, onRetr
 // ─── Panel ───────────────────────────────────────────────────────────────────
 
 export default function ProvidersPanel() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const providerStatus = useAppSelector((s) => s.providerStatus);
   const [retrying, setRetrying] = useState<Record<string, boolean>>({});
 
   const probeOne = async (providerId: string) => {
@@ -176,7 +177,7 @@ export default function ProvidersPanel() {
   // Probe any provider we don't yet have a status for, on mount.
   useEffect(() => {
     for (const p of PROVIDERS) {
-      if (!state.providerStatus[p.id]) void probeOne(p.id);
+      if (!providerStatus[p.id]) void probeOne(p.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -194,7 +195,7 @@ export default function ProvidersPanel() {
             providerId={p.id}
             label={p.label}
             description={p.description}
-            status={(state.providerStatus[p.id] ?? null) as ProbeResult | null}
+            status={(providerStatus[p.id] ?? null) as ProbeResult | null}
             retrying={!!retrying[p.id]}
             onRetry={() => probeOne(p.id)}
           />

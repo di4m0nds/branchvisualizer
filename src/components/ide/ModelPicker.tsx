@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, RotateCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector, useAppDispatch } from '@/store/store';
 import { PROVIDERS } from '@/lib/agent/providers';
 import { setProviderKey } from '@/lib/providerKeys';
 import type { ContextSizeId, ProbeResult, ProbeState, Provider } from '@/lib/agent/transport';
@@ -180,18 +180,21 @@ function ProviderRow({
 // ─── Main picker ─────────────────────────────────────────────────────────────
 
 export default function ModelPicker() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const currentModel = useAppSelector((s) => s.currentModel);
+  const providerStatus = useAppSelector((s) => s.providerStatus);
+  const servedModels = useAppSelector((s) => s.servedModels);
   const [open, setOpen] = useState(false);
   const [probing, setProbing] = useState(false);
 
-  const selected = state.currentModel;
+  const selected = currentModel;
   const activeProvider = useMemo(() => PROVIDERS.find((p) => p.id === selected.providerId), [selected.providerId]);
   const activeModel = activeProvider?.models().find((m) => m.id === selected.modelId);
-  const activeStatus = state.providerStatus[selected.providerId] as ProbeResult | undefined;
+  const activeStatus = providerStatus[selected.providerId] as ProbeResult | undefined;
   const ctxId: ContextSizeId = selected.context ?? 'standard';
   // Prefer the model the provider actually served (from the last turn) over the
   // requested one, so the chip reflects what really ran.
-  const served = state.servedModels[`${selected.providerId}:${selected.modelId}`];
+  const served = servedModels[`${selected.providerId}:${selected.modelId}`];
   const chipLabel = served ? shortModel(served) : (activeModel?.label ?? selected.modelId);
 
   const probeOne = async (providerId: string) => {
@@ -231,7 +234,7 @@ export default function ModelPicker() {
 
   // Probe once on mount so the trigger label reflects reality without a click.
   useEffect(() => {
-    if (Object.keys(state.providerStatus).length === 0) void runProbes();
+    if (Object.keys(providerStatus).length === 0) void runProbes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -281,7 +284,7 @@ export default function ModelPicker() {
                 <ProviderRow
                   key={p.id}
                   provider={p}
-                  status={(state.providerStatus[p.id] ?? null) as ProbeResult | null}
+                  status={(providerStatus[p.id] ?? null) as ProbeResult | null}
                   selected={selected}
                   onSaveKey={saveKey}
                   onRetry={probeOne}

@@ -21,16 +21,18 @@ export class GitHubError extends Error {
   }
 }
 
-let _token = '';
-export function setToken(t: string): void { _token = t.trim(); }
-export function getToken(): string { return _token; }
+// ─── Client configuration ──────────────────────────────────────────────────
+// Configured once at app startup (AppProvider). `getToken` is read per request
+// so call sites never have to push the token before each fetch, and
+// `onRateLimit` fires after every API response so the UI counter stays live.
+export interface GitHubConfig {
+  getToken(): string;
+  onRateLimit?(rl: RateLimit): void;
+}
 
-// ─── Rate limit callback ───────────────────────────────────────────────────
-// Called after every API response so the UI can update the remaining count
-// in real-time without waiting for a full repo reload.
-let _onRateLimitUpdate: ((rl: RateLimit) => void) | null = null;
-export function setRateLimitCallback(fn: ((rl: RateLimit) => void) | null): void {
-  _onRateLimitUpdate = fn;
+let _config: GitHubConfig = { getToken: () => '' };
+export function configureGitHub(cfg: GitHubConfig): void {
+  _config = cfg;
 }
 
 async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: number } = {}): Promise<{ data: T; rateLimit: RateLimit | null }> {
@@ -45,13 +47,14 @@ async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: 
   const headers: HeadersInit = {
     Accept: 'application/vnd.github.v3+json',
   };
-  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+  const token = _config.getToken().trim();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(url, { headers });
 
   const rateLimit = parseRateLimit(res);
   // Notify listener on every request so the UI stays live
-  if (rateLimit && _onRateLimitUpdate) _onRateLimitUpdate(rateLimit);
+  if (rateLimit) _config.onRateLimit?.(rateLimit);
 
   if (!res.ok) {
     if (res.status === 403) {
@@ -615,6 +618,19 @@ export async function fetchIssues(
 
 // ─── File tree ────────────────────────────────────────────────────────────
 
+/** Resolve a branch's root tree SHA (input for fetchFileTree). */
+export async function fetchDefaultTreeSha(
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<string> {
+  const { data } = await apiFetch<{ commit: { commit: { tree: { sha: string } } } }>(
+    `/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`,
+    { cache: true, cacheTtl: 60_000 },
+  );
+  return data.commit.commit.tree.sha;
+}
+
 export async function fetchFileTree(
   owner: string,
   repo: string,
@@ -1031,7 +1047,8 @@ export async function fetchREADME(
   const headers: HeadersInit = {
     Accept: 'application/vnd.github.html',
   };
-  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+  const token = _config.getToken().trim();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(url, { headers });
   if (!res.ok) {

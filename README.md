@@ -12,6 +12,11 @@ runtime prompt (cache-friendly), then decorated per-turn with a live
 `<session_context>` block reflecting the current access level, build mode,
 skills, and pinned rules.
 
+**Documentation:**
+[SETUP.md](docs/SETUP.md) — install & use the app (Linux/Windows installers, nvim, API keys) ·
+[BUILDING.md](docs/BUILDING.md) — build executables & release pipeline ·
+[SANDBOX.md](docs/SANDBOX.md) — Podman agent-runtime sandbox.
+
 ## What it does
 
 ### Visualizer (the seed feature — still works)
@@ -53,6 +58,17 @@ skills, and pinned rules.
 - **Docs tab** — walks the working tree, renders `.md` / `.rst` / `.txt` /
   `.org` / `.adoc` via `react-markdown`, `.pdf` via lazy-loaded `pdfjs-dist`,
   `.docx` via `mammoth`. Click a file → opens in the session's nvim.
+- **Podman runtime sandbox (opt-in per session)** — the agent's `run_command`
+  executes inside an isolated rootless container (project bind-mounted at the
+  same path, `--userns=keep-id`, resource limits, network toggle). Toggle in
+  the session bar; see [docs/SANDBOX.md](docs/SANDBOX.md).
+
+### Runtime Environment panel
+Container operations for the project (`src-tauri/src/docker.rs`): detects
+`docker`/`podman`, lists containers, resolves the compose service graph,
+streams live stats/logs over `runtime://` events, and runs allow-listed
+lifecycle actions (start/stop/restart/rm/pull/build/prune/up/down) — arg-vector
+spawning only, never `sh -c`, so there is no shell-injection surface.
 
 ## Providers
 
@@ -62,12 +78,24 @@ skills, and pinned rules.
 | **Claude Code** — Opus / Sonnet / Haiku via the `claude` CLI | `claude` CLI login, or `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`) / `ANTHROPIC_API_KEY` | `claude --version` + credential/env sniff |
 | **OpenAI Codex** — GPT-5/5.1 Codex, GPT-4.1, o4-mini | `codex login` (CLI OAuth), `OPENAI_API_KEY` fallback | `~/.codex/auth.json` sniff |
 | **Google Gemini** — 2.5 Pro / Flash / Flash-Lite | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | live `countTokens` probe |
+| **Google Antigravity** — via the Python SDK bridge | `GEMINI_API_KEY` / `GOOGLE_API_KEY` + `python3` | SDK import probe |
 | **MiniMax** — M2 / Text-01 / abab6.5s | `MINIMAX_API_KEY` | 1-token chat probe |
 | **OpenCode** — CLI + local server | `opencode auth login` | `~/.local/share/opencode/auth.json` + `/health` |
 
 The picker in the chat rail exposes every provider × model with a live status
 pip (**not detected** / **detected** / **connected**) and a tier chip
 (**paid** / **free** / **unknown**). Click *refresh* to re-probe everything.
+
+Two provider classes: API transports driven by the app's own agent loop
+(Anthropic, Gemini, MiniMax, Codex, OpenCode), and **complete external
+agents** relayed as subprocesses — Claude Code (`src-tauri/src/claude_code.rs`
+drives `claude -p --output-format stream-json`) and Antigravity
+(`src-tauri/src/antigravity.rs` drives a Python SDK bridge over NDJSON).
+
+**Secure key storage:** keys entered in Settings → Providers are stored in the
+OS keychain (`src-tauri/src/keys.rs`, `keyring` crate — Secret Service on
+Linux, Credential Manager on Windows), falling back to localStorage only in
+the browser build.
 
 ## Tech stack
 
@@ -87,9 +115,14 @@ pip (**not detected** / **detected** / **connected**) and a tier chip
 
 ## Getting started
 
+**Just want to use the app?** Grab an installer from Releases and follow
+[docs/SETUP.md](docs/SETUP.md). Building from source:
+
 Prerequisites: Node ≥ 18, pnpm, Rust (`rustup` — required for the Tauri build),
 and Linux GTK/WebKit dev packages (`libsoup3`, `webkit2gtk-4.1`,
-`javascriptcoregtk-4.1`). `nvim` on `$PATH` if you want the editor pane.
+`javascriptcoregtk-4.1`) — Fedora/Windows equivalents in
+[docs/BUILDING.md](docs/BUILDING.md). `nvim` on `$PATH` if you want the editor
+pane; `podman` for the runtime sandbox.
 
 ```bash
 pnpm install
@@ -103,6 +136,9 @@ pnpm build
 
 # Full desktop app (spawns Vite, compiles Rust, opens native window)
 pnpm tauri dev
+
+# Native installers (AppImage/.deb/.rpm on Linux; NSIS on Windows)
+pnpm tauri build --bundles appimage,deb,rpm
 ```
 
 Set provider keys in your shell before launching (each is optional; only the
@@ -170,8 +206,10 @@ src/
 │       └── loop.ts               # Manual streaming agentic loop
 │
 ├── store/
-│   ├── AppContext.tsx            # Provider + persistState effect
-│   └── reducer.ts                # AppState reducer (additive slices)
+│   ├── AppContext.tsx            # Persistence effects + GitHub client wiring
+│   ├── store.ts                  # External store (useAppSelector / getAppState)
+│   ├── reducer.ts                # Root reducer: initialState + domain composition
+│   └── reducers/                 # graph / ui / projects / sessions / providers / persistence
 │
 ├── types/
 │   ├── index.ts                  # AppState, ModelRef, actions, TabId
@@ -181,22 +219,27 @@ src/
 └── styles/globals.css            # Tailwind v4 @theme tokens
 
 src-tauri/src/
-├── lib.rs                        # invoke_handler registry + plugin setup
+├── lib.rs                        # invoke_handler registry + child reaping on exit
 ├── main.rs                       # Windows subsystem entry
 ├── git.rs                        # git_full_repository / _commit_details / _status
-├── pty.rs                        # portable-pty PtyState + spawn/write/resize/kill
-└── fs.rs                         # agent_* (jailed) + walk_tree + provider probes
+├── pty.rs                        # portable-pty PtyState (+ PowerShell/cmd on Windows)
+├── fs.rs                         # agent_* (jailed) + pure-Rust grep + walk_tree + probes
+├── docker.rs                     # Runtime panel bridge (docker/podman, runtime:// streams)
+├── sandbox.rs                    # Podman agent sandbox (ensure/exec/teardown)
+├── claude_code.rs                # Claude Code CLI subprocess bridge (NDJSON)
+├── antigravity.rs                # Antigravity Python-SDK subprocess bridge
+└── keys.rs                       # OS-keychain secure key storage (keyring)
+
+containers/sandbox/Containerfile  # agent sandbox image (docs/SANDBOX.md)
 ```
 
 ## Persistence
 
-The app persists two things to `localStorage`:
-
-- `code-agent:pinned_rules` — app-global rule set (seeds new sessions)
-- `code-agent:current_model` — provider + model picked in the ModelPicker
-
-Sessions themselves are in-memory for now (multi-session polish flagged in the
-plan file at `docs/` if you want to persist them).
+`localStorage` (debounced, capped): projects, sessions (last 100 messages
+each, runtime fields stripped), active session, pinned rules
+(`code-agent:pinned_rules`), current model (`code-agent:current_model`), and
+UI prefs. Provider API keys go to the **OS keychain**, never localStorage on
+desktop.
 
 ## Design system
 

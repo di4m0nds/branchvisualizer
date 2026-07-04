@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
-import { useAppContext } from '@/store/AppContext';
+import { useState } from 'react';
+import { useAppSelector } from '@/store/store';
+import { useAsyncResource } from '@/hooks/useAsyncResource';
 import {
   fetchReleases,
   fetchDeployments,
-  setToken,
   type ReleaseInfo,
   type DeploymentInfo,
 } from '@/lib/github';
@@ -213,41 +213,25 @@ type ActiveTab = 'releases' | 'deployments';
 type EnvFilter = 'all' | 'production' | 'preview' | 'other';
 
 export default function ReleasesDeploymentsTab() {
-  const { state } = useAppContext();
-  const { repoInfo, token } = state;
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const token = useAppSelector((s) => s.token);
 
   const [tab, setTab] = useState<ActiveTab>('releases');
   const [envFilter, setEnvFilter] = useState<EnvFilter>('all');
-  const [releases, setReleases] = useState<ReleaseInfo[]>([]);
-  const [deployments, setDeployments] = useState<DeploymentInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadedForRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!repoInfo) return;
-    const key = `${repoInfo.owner}/${repoInfo.repo}`;
-    if (loadedForRef.current === key) return;
-    loadedForRef.current = key;
-
-    setToken(token);
-    setLoading(true);
-    setError(null);
-
-    Promise.all([
-      fetchReleases(repoInfo.owner, repoInfo.repo),
-      fetchDeployments(repoInfo.owner, repoInfo.repo),
-    ])
-      .then(([{ releases: r }, { deployments: d }]) => {
-        setReleases(r);
-        setDeployments(d);
-      })
-      .catch(e => {
-        setError(e.message);
-        loadedForRef.current = null;
-      })
-      .finally(() => setLoading(false));
-  }, [repoInfo, token]);
+  const { data, loading, error } = useAsyncResource(
+    async () => {
+      const [{ releases }, { deployments }] = await Promise.all([
+        fetchReleases(repoInfo!.owner, repoInfo!.repo),
+        fetchDeployments(repoInfo!.owner, repoInfo!.repo),
+      ]);
+      return { releases, deployments };
+    },
+    [repoInfo?.owner, repoInfo?.repo],
+    { enabled: !!repoInfo, scope: 'releases' },
+  );
+  const releases: ReleaseInfo[] = data?.releases ?? [];
+  const deployments: DeploymentInfo[] = data?.deployments ?? [];
 
   if (!repoInfo) {
     return (

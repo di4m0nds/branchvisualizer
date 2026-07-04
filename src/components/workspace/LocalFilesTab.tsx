@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useAppContext } from '@/store/AppContext';
+import { useMemo, useState } from 'react';
+import { useAppSelector } from '@/store/store';
 import { invoke, DesktopOnlyError } from '@/lib/platform';
+import { useAsyncResource } from '@/hooks/useAsyncResource';
 import { FileRow } from './FilesTabPrimitives';
 import { openInNvim } from '@/hooks/useOpenInNvim';
 import { toast } from '@/services/toast';
@@ -20,27 +21,19 @@ interface TreeEntry {
  * useOpenInNvim event bus).
  */
 export default function LocalFilesTab() {
-  const { state } = useAppContext();
-  const root = state.localPath ?? '.';
-  const sessionId = state.activeSessionId ?? '__no_session';
-  const [entries, setEntries] = useState<TreeEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const root = useAppSelector((s) => s.localPath) ?? '.';
+  const sessionId = useAppSelector((s) => s.activeSessionId) ?? '__no_session';
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    invoke<TreeEntry[]>('walk_tree', { root, maxDepth: 0 })
-      .then((rows) => { if (alive) setEntries(rows); })
-      .catch((e) => {
-        if (!alive) return;
-        setError(e instanceof DesktopOnlyError ? 'Files require the desktop app.' : String(e));
-      })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [root]);
+  const { data, loading, error } = useAsyncResource(
+    () =>
+      invoke<TreeEntry[]>('walk_tree', { root, maxDepth: 0 }).catch((e) => {
+        throw e instanceof DesktopOnlyError ? new Error('Files require the desktop app.') : e;
+      }),
+    [root],
+    { scope: 'local-files' },
+  );
+  const entries = useMemo(() => data ?? [], [data]);
 
   const visible = useMemo(() => {
     // Only render a row when every parent segment is expanded.

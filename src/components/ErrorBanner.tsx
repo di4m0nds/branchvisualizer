@@ -1,8 +1,8 @@
-import { useAppContext } from '../store/AppContext';
+import { useAppDispatch, useAppSelector } from '../store/store';
 
 export default function ErrorBanner() {
-  const { state, dispatch } = useAppContext();
-  const { loadState } = state;
+  const dispatch = useAppDispatch();
+  const loadState = useAppSelector((s) => s.loadState);
 
   if (loadState.phase !== 'error') return null;
 

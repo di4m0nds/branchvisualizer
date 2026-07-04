@@ -231,6 +231,9 @@ export type AppAction =
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
   | { type: 'SET_SHOW_CHECKPOINTS'; show: boolean }
+  /** Swap in a rebuilt graph (checkpoint toggle). The rebuild itself runs
+   *  outside the reducer (rAF in useShowCheckpoints) — dispatch stays cheap. */
+  | { type: 'SET_GRAPH_DATA'; graphData: GraphData; allCommits: Commit[] }
   | { type: 'SET_LOG_DENSITY'; density: LogDensity }
   | { type: 'SET_TERMINAL_FONT'; family: string | null }
   | { type: 'SET_CHAT_FONT'; family: string | null }

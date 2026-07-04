@@ -1,5 +1,4 @@
-import { invoke, isTauri } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver, probeWithKey } from './shared';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, ProbeResult, Provider, StreamCallbacks,
@@ -16,15 +15,7 @@ const MODELS: ModelInfo[] = [
   { id: 'abab6.5s-chat',         label: 'abab6.5s',                  defaultTier: 'paid', contextTokens: 245_000 },
 ];
 
-async function resolveKey(): Promise<string | null> {
-  const stored = await getProviderKey('minimax');
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'minimax' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_MINIMAX_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('minimax', () => import.meta.env.VITE_MINIMAX_API_KEY);
 
 // ─── Adapters (OpenAI-compatible chat format) ─────────────────────────────
 
@@ -171,9 +162,7 @@ export const minimaxProvider: Provider = {
   models: () => MODELS,
 
   async probe(): Promise<ProbeResult> {
-    const key = await resolveKey();
-    if (!key) return { state: 'not_detected', tier: 'unknown', label: 'MINIMAX_API_KEY not set' };
-    try {
+    return probeWithKey(resolveKey, 'MINIMAX_API_KEY not set', async (key) => {
       // MiniMax doesn't publish a free ping; a tiny chat completion is the cheapest check.
       const res = await fetch(`${BASE_URL}/text/chatcompletion_v2`, {
         method: 'POST',
@@ -181,11 +170,8 @@ export const minimaxProvider: Provider = {
         body: JSON.stringify({ model: 'abab6.5s-chat', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return { state: 'connected', tier: 'unknown', label: 'key ok · 1-token probe' };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { state: 'detected', tier: 'unknown', label: 'key present but request failed', error: msg };
-    }
+      return { tier: 'unknown', label: 'key ok · 1-token probe' };
+    });
   },
 
   async createTransport(modelId: string): Promise<AgentTransport> {

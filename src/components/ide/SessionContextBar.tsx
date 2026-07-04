@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch } from '@/store/store';
 import PinnedRulesEditor from './PinnedRulesEditor';
+import SandboxToggle from './SandboxToggle';
 import type {
   AccessLevel, BuildMode, ReasoningBudget, Session,
 } from '@/types/session';
@@ -45,7 +46,7 @@ function Segmented<T extends string>({
 }
 
 export default function SessionContextBar({ session }: { session: Session }) {
-  const { dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
   const [editorOpen, setEditorOpen] = useState(false);
   const { context: ctx } = session;
   const id = session.id;
@@ -111,6 +112,9 @@ export default function SessionContextBar({ session }: { session: Session }) {
           </button>
         ))}
       </div>
+
+      {/* Podman runtime sandbox */}
+      <SandboxToggle session={session} />
 
       <div className="h-4 w-px bg-border hidden md:block" />
 

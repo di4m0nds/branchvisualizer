@@ -7,6 +7,7 @@ import { CanvasAddon } from 'xterm-addon-canvas';
 import 'xterm/css/xterm.css';
 import { isTauri, type Unlisten } from '@/lib/platform';
 import { spawnPty, writePty, resizePty, killPty, onPtyData, onPtyExit } from '@/lib/pty';
+import { swallow } from '@/lib/log';
 import { useAppSelector } from '@/store/store';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 import { buildTerminalFontFamily } from '@/lib/terminalFont';
@@ -132,7 +133,7 @@ export default function Terminal({
     let unlistenExit: Unlisten = () => {};
 
     const dataDisposable = term.onData((d) => {
-      writePty(id, d).catch(() => {});
+      writePty(id, d).catch(swallow('pty', 'write'));
     });
 
     registerWriterRef.current?.((data: string) => writePty(id, data));
@@ -163,7 +164,7 @@ export default function Terminal({
         fitRaf = 0;
         try {
           fit.fit();
-          resizePty(id, term.cols, term.rows).catch(() => {});
+          resizePty(id, term.cols, term.rows).catch(swallow('pty', 'resize'));
         } catch { /* noop */ }
       });
     });
@@ -176,7 +177,7 @@ export default function Terminal({
       dataDisposable.dispose();
       unlistenData();
       unlistenExit();
-      killPty(id).catch(() => {});
+      killPty(id).catch(swallow('pty', 'kill on unmount'));
       rendererAddon?.dispose();
       term.dispose();
       termRef.current = null;
@@ -194,7 +195,7 @@ export default function Terminal({
     try {
       fit.fit();
       if (activePtyIdRef.current) {
-        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(swallow('pty', 'resize'));
       }
     } catch { /* container not laid out yet */ }
   }, [fontFamily]);
@@ -208,7 +209,7 @@ export default function Terminal({
     try {
       fit.fit();
       if (activePtyIdRef.current) {
-        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(swallow('pty', 'resize'));
       }
     } catch { /* container not laid out yet */ }
   }, [fontScale]);
@@ -222,7 +223,7 @@ export default function Terminal({
       if (!term || !fit || !activePtyIdRef.current) return;
       try {
         fit.fit();
-        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(swallow('pty', 'resize'));
       } catch { /* not laid out yet */ }
     });
     return () => cancelAnimationFrame(raf);

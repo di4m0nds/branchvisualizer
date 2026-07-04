@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter};
 
 /// Only these engines may be invoked. Everything the frontend passes as `bin`
 /// funnels through here so a bad value can never become an arbitrary binary.
-fn valid_bin(bin: &str) -> bool {
+pub(crate) fn valid_bin(bin: &str) -> bool {
     matches!(bin, "docker" | "podman")
 }
 
@@ -39,7 +39,7 @@ fn valid_action(action: &str) -> bool {
 
 /// Run a container-engine subcommand and return stdout on success (arg-vector,
 /// no shell). Modeled on `git.rs::run_git`.
-fn run_docker(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
+pub(crate) fn run_docker(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
     if !valid_bin(bin) {
         return Err(format!("unsupported container engine: {bin}"));
     }
@@ -70,7 +70,7 @@ pub struct CommandResult {
 
 /// Like `run_docker` but returns the full result (incl. stderr/code) even on
 /// failure, so the UI can surface what went wrong. Used for lifecycle actions.
-fn run_docker_capture(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<CommandResult, String> {
+pub(crate) fn run_docker_capture(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<CommandResult, String> {
     if !valid_bin(bin) {
         return Err(format!("unsupported container engine: {bin}"));
     }
@@ -382,7 +382,7 @@ struct ExitPayload {
 
 /// Spawn a long-running engine command and stream its stdout lines to the
 /// webview on `runtime://data/<id>`, emitting `runtime://exit` when it ends.
-fn spawn_stream(
+pub(crate) fn spawn_stream(
     app: AppHandle,
     id: String,
     bin: &str,

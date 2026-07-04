@@ -6,7 +6,8 @@ import {
   SlidersHorizontal, Palette, KeyRound, Bot, ShieldCheck, FolderGit2, Keyboard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
+import { useShowCheckpoints } from '@/hooks/useShowCheckpoints';
 import { useAppZoom, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from '@/hooks/useAppZoom';
 import { resetIdeLayout } from '@/lib/ideLayout';
 import { loadAgentDefaults, saveAgentDefaults, type AgentDefaults } from '@/lib/agentDefaults';
@@ -73,9 +74,13 @@ export default function SettingsPanel({ open, onOpenChange }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const theme = useAppSelector((s) => s.theme);
+  const logDensity = useAppSelector((s) => s.logDensity);
+  const { showCheckpoints, setShowCheckpoints } = useShowCheckpoints();
+  const pinnedRules = useAppSelector((s) => s.pinnedRules);
   const { zoom, zoomIn, zoomOut, reset, setZoom } = useAppZoom();
-  const isDark = state.theme === 'dark';
+  const isDark = theme === 'dark';
   const [defaults, setDefaults] = useState<AgentDefaults>(loadAgentDefaults);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [category, setCategory] = useState<CategoryId>('general');
@@ -152,16 +157,16 @@ export default function SettingsPanel({ open, onOpenChange }: {
                     <Section title="General" desc="High-level workspace behavior.">
                       <Field title="Agent log density" desc="Verbose shows everything; Clean keeps only file changes, commands, and agent messages.">
                         <Seg<LogDensity>
-                          value={state.logDensity}
+                          value={logDensity}
                           options={[{ id: 'verbose', label: 'Verbose' }, { id: 'clean', label: 'Clean' }]}
                           onChange={(density) => dispatch({ type: 'SET_LOG_DENSITY', density })}
                         />
                       </Field>
                       <Field title="Graph checkpoints" desc="Show or hide t3 checkpoint commits in the branch graph.">
                         <Seg<'hide' | 'show'>
-                          value={state.showCheckpoints ? 'show' : 'hide'}
+                          value={showCheckpoints ? 'show' : 'hide'}
                           options={[{ id: 'hide', label: 'Hidden' }, { id: 'show', label: 'Shown' }]}
-                          onChange={(v) => dispatch({ type: 'SET_SHOW_CHECKPOINTS', show: v === 'show' })}
+                          onChange={(v) => setShowCheckpoints(v === 'show')}
                         />
                       </Field>
                       <Field title="Reset panel sizes" desc="Restore the IDE's split layout to defaults (reloads).">
@@ -179,7 +184,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                     <Section title="Appearance" desc="Theme, scale, and terminal font.">
                       <Field title="Theme">
                         <Seg<'dark' | 'light'>
-                          value={state.theme}
+                          value={theme}
                           options={[{ id: 'dark', label: 'Dark' }, { id: 'light', label: 'Light' }]}
                           onChange={(t) => { dispatch({ type: 'SET_THEME', theme: t }); document.documentElement.setAttribute('data-theme', t); }}
                         />
@@ -250,7 +255,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                           onClick={() => setRulesOpen(true)}
                           className="px-2.5 py-1.5 rounded border border-border hover:bg-accent/40 text-xs"
                         >
-                          Edit pinned rules ({state.pinnedRules.length})
+                          Edit pinned rules ({pinnedRules.length})
                         </button>
                       </div>
                       <PinnedRulesEditor open={rulesOpen} onClose={() => setRulesOpen(false)} />
@@ -315,10 +320,11 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
 // Splits off from SettingsPanel because it owns its own hook state (font
 // enumeration is async) and would otherwise clutter the outer render.
 function TerminalFontField() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const terminalFont = useAppSelector((s) => s.terminalFont);
   const { fonts, nerdFonts, loading, error } = useSystemFonts();
-  const selected = state.terminalFont ?? '';
-  const previewFamily = buildTerminalFontFamily(state.terminalFont, nerdFonts);
+  const selected = terminalFont ?? '';
+  const previewFamily = buildTerminalFontFamily(terminalFont, nerdFonts);
 
   const setFont = (family: string | null) =>
     dispatch({ type: 'SET_TERMINAL_FONT', family });
@@ -386,10 +392,11 @@ function TerminalFontField() {
 // stay monospace). Free-text + datalist so any installed sans family works, even
 // ones the (mono-filtered) enumeration doesn't surface.
 function ChatFontField() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const chatFont = useAppSelector((s) => s.chatFont);
   const { fonts } = useSystemFonts();
-  const selected = state.chatFont ?? '';
-  const previewFamily = buildChatFontFamily(state.chatFont);
+  const selected = chatFont ?? '';
+  const previewFamily = buildChatFontFamily(chatFont);
 
   const setFont = (family: string | null) =>
     dispatch({ type: 'SET_CHAT_FONT', family });
@@ -434,7 +441,8 @@ const CHAT_BG_OPTIONS: { id: ChatBackground; label: string }[] = [
   { id: 'scanlines', label: 'Scanlines' },
 ];
 function ChatBackgroundField() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const chatBackground = useAppSelector((s) => s.chatBackground);
   return (
     <div className="pt-4 mt-4 border-t border-border/40">
       <Field
@@ -442,7 +450,7 @@ function ChatBackgroundField() {
         desc="Subtle texture behind chat messages. Adapts to light/dark."
       >
         <Seg<ChatBackground>
-          value={state.chatBackground}
+          value={chatBackground}
           options={CHAT_BG_OPTIONS}
           onChange={(texture) => dispatch({ type: 'SET_CHAT_BACKGROUND', texture })}
         />

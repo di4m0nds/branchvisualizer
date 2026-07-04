@@ -83,20 +83,51 @@ pub fn agent_list_dir(root: String, path: String) -> Result<Vec<DirEntry>, Strin
     Ok(out)
 }
 
-/// Grep (regex) within root. Shells out to `grep -rInE`, capped at 200 matches.
+/// Per-file match cap (mirrors the old `grep --max-count=200`).
+const GREP_MAX_PER_FILE: usize = 200;
+/// Global output cap so a pathological pattern can't flood the tool result.
+const GREP_MAX_TOTAL: usize = 2000;
+
+/// Grep (regex) within root. Pure Rust (`ignore` walk + `regex`) so it works
+/// identically on every OS with no external `grep` dependency, respects
+/// .gitignore, and skips hidden/binary files. Output format matches the old
+/// `grep -rInE`: `path:lineno:line`.
 #[tauri::command]
 pub fn agent_grep(root: String, pattern: String, path: Option<String>) -> Result<String, String> {
     let search_root = jail(&root, &path.unwrap_or_else(|| ".".to_string()))?;
-    let output = Command::new("grep")
-        .args(["-rInE", "--max-count=200", "--", &pattern])
-        .arg(&search_root)
-        .output()
-        .map_err(|e| format!("grep failed: {e}"))?;
-    // grep exits 1 on no matches — treat as empty, not error.
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    let re = regex::Regex::new(&pattern).map_err(|e| format!("invalid pattern: {e}"))?;
+
+    let mut out = String::new();
+    let mut total = 0usize;
+
+    let walker = ignore::WalkBuilder::new(&search_root).build();
+    for entry in walker.flatten() {
+        if total >= GREP_MAX_TOTAL {
+            break;
+        }
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let file_path = entry.path();
+        let Ok(bytes) = fs::read(file_path) else { continue };
+        // Binary-file skip (grep -I): NUL byte in the first 8 KiB.
+        if bytes[..bytes.len().min(8192)].contains(&0) {
+            continue;
+        }
+        let content = String::from_utf8_lossy(&bytes);
+        let mut per_file = 0usize;
+        for (lineno, line) in content.lines().enumerate() {
+            if re.is_match(line) {
+                out.push_str(&format!("{}:{}:{}\n", file_path.display(), lineno + 1, line));
+                per_file += 1;
+                total += 1;
+                if per_file >= GREP_MAX_PER_FILE || total >= GREP_MAX_TOTAL {
+                    break;
+                }
+            }
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(out)
 }
 
 #[derive(Serialize)]
@@ -109,9 +140,17 @@ pub struct CommandResult {
 
 /// Run a one-shot command in root, capturing output. Distinct from the PTY
 /// (which is for interactive terminals) — tool results need captured output.
+/// Windows gets `cmd /C` (the closest one-shot equivalent of `sh -c`).
 #[tauri::command]
 pub fn agent_run_command(root: String, command: String) -> Result<CommandResult, String> {
     let cwd = jail(&root, ".")?;
+    #[cfg(windows)]
+    let output = Command::new("cmd")
+        .args(["/C", &command])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    #[cfg(not(windows))]
     let output = Command::new("sh")
         .arg("-c")
         .arg(&command)
@@ -171,7 +210,7 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
     };
 
     // Detected?
-    let version_out = Command::new(binary).arg("--version").output();
+    let version_out = run_cli(binary, &["--version"]);
     let detected = version_out.as_ref().map(|o| o.status.success()).unwrap_or(false);
     let version = version_out
         .ok()
@@ -213,7 +252,7 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
     // Optional CLI list probe (opencode); ignore its exit code — we only surface
     // the error if the file check *also* misses.
     let cli_err = list_args
-        .and_then(|args| Command::new(binary).args(args).output().ok())
+        .and_then(|args| run_cli(binary, args).ok())
         .and_then(|o| if o.status.success() { None } else {
             Some(String::from_utf8_lossy(&o.stderr).trim().to_string())
         });
@@ -263,8 +302,32 @@ pub fn check_cli_provider(name: String) -> Result<CliProbe, String> {
     })
 }
 
+/// The user's home directory: `HOME` (Unix, and respected if set on Windows),
+/// falling back to `USERPROFILE` (Windows). Shared with pty.rs so credential
+/// probes like `~/.claude/...` resolve to `%USERPROFILE%\.claude\...` too.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()))
+        .map(PathBuf::from)
+}
+
 fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    home_dir()
+}
+
+/// Spawn an allow-listed CLI and capture output. On Windows, npm-installed
+/// CLIs are `.cmd` shims that CreateProcess won't resolve via `Command::new`,
+/// so a NotFound error retries through `cmd /C`.
+fn run_cli(binary: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    let direct = Command::new(binary).args(args).output();
+    #[cfg(windows)]
+    if matches!(&direct, Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+        let mut all = vec![binary];
+        all.extend_from_slice(args);
+        return Command::new("cmd").arg("/C").args(&all).output();
+    }
+    direct
 }
 
 #[derive(Serialize)]
@@ -284,19 +347,19 @@ pub struct UpdateResult {
 ///   antigravity          → `python3 -m pip install --upgrade google-antigravity`
 #[tauri::command]
 pub fn provider_update(name: String) -> Result<UpdateResult, String> {
+    // Windows installs CPython as `python`; `python3` is the Unix name.
+    let python = if cfg!(windows) { "python" } else { "python3" };
     let (bin, args): (&str, Vec<&str>) = match name.as_str() {
         "claude" | "claude_code" => ("claude", vec!["update"]),
         "antigravity" => (
-            "python3",
+            python,
             vec!["-m", "pip", "install", "--upgrade", "google-antigravity"],
         ),
         other => return Err(format!("provider `{other}` has no update command")),
     };
 
     let command = format!("{bin} {}", args.join(" "));
-    let out = Command::new(bin)
-        .args(&args)
-        .output()
+    let out = run_cli(bin, &args)
         .map_err(|e| format!("failed to run `{command}`: {e}"))?;
 
     let mut output = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -452,5 +515,65 @@ mod tests {
         let root_str = root.to_str().unwrap();
         assert!(jail(root_str, "../../etc/passwd").is_err());
         assert!(jail(root_str, "/etc/passwd").is_err());
+    }
+
+    // ── agent_grep (pure-Rust) ───────────────────────────────────────────────
+
+    fn grep_fixture(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("codeagent_grep_{}_{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn grep_matches_with_path_line_format() {
+        let root = grep_fixture("fmt");
+        fs::write(root.join("a.txt"), "alpha\nneedle here\nomega\n").unwrap();
+        fs::write(root.join("b.txt"), "nothing\n").unwrap();
+        let out = super::agent_grep(root.to_str().unwrap().into(), "needle".into(), None).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with(":2:needle here"), "got: {}", lines[0]);
+        assert!(lines[0].contains("a.txt"));
+    }
+
+    #[test]
+    fn grep_invalid_pattern_errors_and_no_match_is_empty() {
+        let root = grep_fixture("err");
+        fs::write(root.join("a.txt"), "text\n").unwrap();
+        assert!(super::agent_grep(root.to_str().unwrap().into(), "(".into(), None).is_err());
+        let out = super::agent_grep(root.to_str().unwrap().into(), "zzz_no_match".into(), None).unwrap();
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn grep_skips_binary_and_respects_gitignore() {
+        let root = grep_fixture("skip");
+        fs::write(root.join("bin.dat"), b"needle\x00binary").unwrap();
+        fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
+        fs::write(root.join("ignored.txt"), "needle ignored\n").unwrap();
+        fs::write(root.join("kept.txt"), "needle kept\n").unwrap();
+        // `ignore` only applies .gitignore inside a git repo — mark it as one.
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let out = super::agent_grep(root.to_str().unwrap().into(), "needle".into(), None).unwrap();
+        assert!(out.contains("kept.txt"), "got: {out}");
+        assert!(!out.contains("ignored.txt"), "got: {out}");
+        assert!(!out.contains("bin.dat"), "got: {out}");
+    }
+
+    #[test]
+    fn grep_caps_per_file_matches() {
+        let root = grep_fixture("cap");
+        let many = "needle\n".repeat(500);
+        fs::write(root.join("many.txt"), many).unwrap();
+        let out = super::agent_grep(root.to_str().unwrap().into(), "needle".into(), None).unwrap();
+        assert_eq!(out.lines().count(), super::GREP_MAX_PER_FILE);
+    }
+
+    #[test]
+    fn home_dir_resolves() {
+        // On any dev/CI machine one of HOME/USERPROFILE is set.
+        assert!(super::home_dir().is_some());
     }
 }
