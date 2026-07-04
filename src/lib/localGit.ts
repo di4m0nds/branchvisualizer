@@ -6,6 +6,7 @@
 // same unchanged `buildGraphData`.
 
 import type { Branch, Commit, RepoInfo, Tag } from '../types';
+import { loadGraphLimits } from './graphLimits';
 import type { CommitDetails } from './github';
 import { invoke } from './platform';
 
@@ -33,7 +34,7 @@ export async function fetchFullRepository(
   rateLimit: null;
 }> {
   progressCb('Reading local repository…', 10);
-  const payload = await invoke<LocalRepoPayload>('git_full_repository', { repoPath });
+  const payload = await invoke<LocalRepoPayload>('git_full_repository', { repoPath, maxCount: loadGraphLimits().localMaxCommits || null });
   progressCb('Parsing commit graph…', 70);
   return { ...payload, rateLimit: null };
 }

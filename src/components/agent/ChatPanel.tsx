@@ -1,10 +1,15 @@
 import { memo, useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { openPathInNvim } from '@/hooks/useOpenInNvim';
+import { resolveTaskModel } from '@/lib/agent/modelRouting';
+import { attachmentSupportFor } from '@/lib/agent/providers';
+import { invoke, isTauri } from '@/lib/platform';
+import { maybeGenerateTitle } from '@/lib/agent/autoTitle';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowDownToLine, Check, ChevronDown, Loader2, PanelLeftClose, PanelLeftOpen, Square } from 'lucide-react';
+import { ArrowDownToLine, Check, ChevronDown, Loader2, PanelLeftClose, PanelLeftOpen, Paperclip, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMaximizedPanel, usePanelZoom } from '@/hooks/usePanelFocus';
 import { PanelMaximizeButton } from '@/components/ide/FocusablePanel';
-import { registerChatSender } from '@/hooks/useSendToChat';
+import { registerChatPrefiller, registerChatSender } from '@/hooks/useSendToChat';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/services/toast';
 import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
@@ -47,12 +52,63 @@ function escapeRegExp(s: string): string {
 }
 function renderUserText(text: string, refs?: MessageRef[]): React.ReactNode {
   if (!refs?.length) return text;
-  const tokens = [...new Set(refs.map((r) => r.token))].sort((a, b) => b.length - a.length);
+  const byToken = new Map(refs.map((r) => [r.token, r]));
+  const tokens = [...byToken.keys()].sort((a, b) => b.length - a.length);
   const parts = text.split(new RegExp(`(${tokens.map(escapeRegExp).join('|')})`, 'g'));
-  return parts.map((part, i) =>
-    tokens.includes(part)
-      ? <span key={i} className="text-primary font-mono text-[13px]">{part}</span>
-      : part,
+  return parts.map((part, i) => {
+    const ref = byToken.get(part);
+    if (!ref) return part;
+    const clickable = ref.kind === 'file' && ref.status !== 'error';
+    return (
+      <span
+        key={i}
+        role={clickable ? 'button' : undefined}
+        onClick={clickable ? () => openPathInNvim(ref.path) : undefined}
+        title={clickable ? `${ref.path} — click to open in nvim` : ref.path}
+        className={cn('text-primary font-mono text-[13px]', clickable && 'cursor-pointer hover:underline decoration-dotted underline-offset-2')}
+      >
+        {part}
+      </span>
+    );
+  });
+}
+
+// ─── Chat title (click to rename) ────────────────────────────────────────────
+
+function ChatTitle({ sessionId, title }: { sessionId: string; title: string }) {
+  const dispatch = useAppDispatch();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+
+  const commit = () => {
+    const clean = draft.trim();
+    if (clean && clean !== title) dispatch({ type: 'RENAME_SESSION', id: sessionId, title: clean });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-full max-w-[380px] text-center text-[12px] font-medium bg-muted/40 border border-border rounded px-2 py-0.5 text-foreground focus:outline-none focus:border-ring"
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => { setDraft(title); setEditing(true); }}
+      title="Click to rename this session"
+      className="max-w-[380px] truncate text-[12px] font-medium text-foreground/90 hover:text-foreground px-2 py-0.5 rounded hover:bg-accent/30 transition-colors"
+    >
+      {title}
+    </button>
   );
 }
 
@@ -176,6 +232,15 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
           ? (
             <div className="min-w-0">
               {msg.refs && msg.refs.length > 0 && <RefChips refs={msg.refs} />}
+              {msg.attachments && msg.attachments.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1 justify-end">
+                  {msg.attachments.map((a, i) => (
+                    <span key={i} className="px-1.5 py-0.5 rounded-full border border-border/60 bg-muted/30 text-[9px] font-mono text-muted-foreground" title={a.path ?? a.name}>
+                      📎 {a.name}
+                    </span>
+                  ))}
+                </div>
+              )}
               <p className="whitespace-pre-wrap break-words text-foreground/90 leading-relaxed">
                 {renderUserText(msg.text, msg.refs)}
               </p>
@@ -236,6 +301,9 @@ export default function ChatPanel({ session }: { session: Session }) {
   const chatFontFamily = buildChatFontFamily(chatFont);
   const chatBgClass = chatBackground === 'none' ? '' : `chat-bg-${chatBackground}`;
   const [input, setInput] = useState('');
+  type Attachment = NonNullable<AgentMessage['attachments']>[number];
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
   // @-mention state: the token under the caret (menu open while non-null) and
@@ -466,10 +534,15 @@ export default function ChatPanel({ session }: { session: Session }) {
   // post follow-up messages. If busy, stage the text in the composer instead of
   // starting an overlapping turn.
   useEffect(() => {
-    return registerChatSender(session.id, (text) => {
+    const unSend = registerChatSender(session.id, (text) => {
       if (busy) setInput((prev) => (prev ? `${prev}\n${text}` : text));
       else runTurn(text);
     });
+    const unPrefill = registerChatPrefiller(session.id, (text) => {
+      setInput((prev) => (prev ? `${prev}\n${text}` : text));
+      composerRef.current?.focus();
+    });
+    return () => { unSend(); unPrefill(); };
     // runTurn is stable (hoisted); re-bind on busy so the guard stays current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id, busy]);
@@ -498,8 +571,16 @@ export default function ChatPanel({ session }: { session: Session }) {
     // Fresh abort controller per turn — Stop button aborts this one.
     abortRef.current = new AbortController();
     try {
-      const { providerId, modelId, context } = getAppState().currentModel;
-      const transport = await getTransport(providerId, modelId, context);
+      // Per-task model routing: planning turns may use a routed (cheaper)
+      // model; resolution falls back to the session model when the routed
+      // provider isn't connected. Context patches apply before resolution so
+      // an approval that flips planning→direct routes the SAME turn correctly.
+      const { currentModel, providerStatus } = getAppState();
+      const liveMode = opts?.contextPatch?.buildMode
+        ?? getAppState().sessions.find((s) => s.id === session.id)?.context.buildMode
+        ?? live.context.buildMode;
+      const { model } = resolveTaskModel(liveMode === 'planning' ? 'planning' : 'main', currentModel, providerStatus);
+      const transport = await getTransport(model.providerId, model.modelId, model.context);
       const ts = new Date().toISOString();
       // Re-read the freshest session at call time (build mode may have flipped).
       // A `contextPatch` lets a just-dispatched change (e.g. cliBypass) apply to
@@ -518,7 +599,7 @@ export default function ChatPanel({ session }: { session: Session }) {
         requestApproval,
         onSideEffect,
         signal: abortRef.current.signal,
-      }, ts, { display: opts?.display, hiddenText: opts?.hiddenText, refs: opts?.refs });
+      }, ts, { display: opts?.display, hiddenText: opts?.hiddenText, refs: opts?.refs, attachments: opts?.attachments });
     } catch (e) {
       // Aborts flow through the loop's clean-stop path; anything reaching here
       // is a real error.
@@ -553,6 +634,54 @@ export default function ChatPanel({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, live.messages, dispatch, session.id]);
 
+  // ── Attachments (images + PDF; provider-capability gated) ────────────────
+  const attachSupport = attachmentSupportFor(useAppSelector((sel) => sel.currentModel.providerId));
+  const canAttach = isTauri() && (attachSupport.image || attachSupport.pdf || attachSupport.pathPassthrough);
+
+  async function pickAttachments() {
+    if (!canAttach || attaching) return;
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const exts = [
+      ...(attachSupport.image || attachSupport.pathPassthrough ? ['png', 'jpg', 'jpeg', 'gif', 'webp'] : []),
+      ...(attachSupport.pdf || attachSupport.pathPassthrough ? ['pdf'] : []),
+    ];
+    const picked = await open({ multiple: true, filters: [{ name: 'Attachments', extensions: exts }] });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    setAttaching(true);
+    try {
+      const next: Attachment[] = [...attachments];
+      for (const path of paths) {
+        const name = path.split(/[/\\]/).pop() ?? path;
+        const isPdf = /\.pdf$/i.test(name);
+        const maxBytes = isPdf ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+        try {
+          const data = await invoke<{ base64: string; sizeBytes: number; mime: string }>(
+            'read_attachment', { path, maxBytes },
+          );
+          const total = next.reduce((n, a) => n + a.sizeBytes, 0) + data.sizeBytes;
+          if (total > 20 * 1024 * 1024) {
+            toast.error('Attachment limit', { description: 'Total attachments exceed 20 MB.' });
+            break;
+          }
+          next.push({
+            kind: isPdf ? 'document' : 'image',
+            mime: data.mime,
+            name,
+            sizeBytes: data.sizeBytes,
+            base64: data.base64,
+            path,
+          });
+        } catch (e) {
+          toast.error(`Couldn't attach ${name}`, { description: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      setAttachments(next);
+    } finally {
+      setAttaching(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
@@ -575,7 +704,16 @@ export default function ChatPanel({ session }: { session: Session }) {
         setResolvingRefs(0);
       }
     }
-    runTurn(text, { hiddenText, refs });
+    // First user message of the session → optionally generate a better title
+    // with the routed `title` model (fire-and-forget; heuristic title already
+    // applied by the reducer, so failures cost nothing).
+    if (!live.messages.some((m) => m.role === 'user')) {
+      const { currentModel, providerStatus } = getAppState();
+      void maybeGenerateTitle(session.id, text, currentModel, providerStatus, dispatch);
+    }
+    const outAttachments = attachments.length ? attachments : undefined;
+    setAttachments([]);
+    runTurn(text, { hiddenText, refs, attachments: outAttachments });
   }
 
   // Plan-approval driver + derivations live in planActions (pure, testable).
@@ -600,7 +738,13 @@ export default function ChatPanel({ session }: { session: Session }) {
           {timelineOpen ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
           <span className="text-[11px] font-medium hidden sm:inline">Timeline</span>
         </button>
-        <div className="ml-auto flex items-center gap-1">
+
+        {/* Session title — click to rename */}
+        <div className="flex-1 min-w-0 flex justify-center">
+          <ChatTitle sessionId={live.id} title={live.title} />
+        </div>
+
+        <div className="flex items-center gap-1">
           <LogDensityToggle />
           <PanelMaximizeButton id="chat" />
         </div>
@@ -782,6 +926,24 @@ export default function ChatPanel({ session }: { session: Session }) {
         maximized ? 'px-8' : 'px-3',
       )}>
         <div className="pointer-events-none absolute -top-6 left-0 right-0 h-6 bg-gradient-to-t from-background to-transparent" />
+        {attachments.length > 0 && (
+          <div className={cn('flex flex-wrap items-center gap-1.5 pb-2', maximized && 'max-w-5xl mx-auto')}>
+            {attachments.map((a, i) => (
+              <span key={`${a.name}-${i}`} className="flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-muted/30 text-[10px] font-mono text-muted-foreground">
+                <Paperclip className="w-3 h-3" />
+                <span className="max-w-[160px] truncate" title={a.path ?? a.name}>{a.name}</span>
+                <span className="text-muted-foreground/60">{(a.sizeBytes / 1024 / 1024).toFixed(1)}MB</span>
+                <button
+                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                  className="hover:text-foreground"
+                  title="Remove attachment"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className={cn(
           'relative flex items-stretch gap-2 rounded-xl border bg-muted/10 p-1.5 transition-colors',
           'border-border/70 focus-within:border-primary/50 focus-within:bg-muted/20',
@@ -799,6 +961,16 @@ export default function ChatPanel({ session }: { session: Session }) {
               />
             )}
           </AnimatePresence>
+          <button
+            onClick={() => void pickAttachments()}
+            disabled={!canAttach || attaching || busy}
+            title={canAttach
+              ? 'Attach images or PDFs for the model'
+              : 'The selected provider does not accept file attachments'}
+            className="self-end mb-1 p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-30 transition-colors"
+          >
+            {attaching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+          </button>
           <textarea
             ref={composerRef}
             value={input}

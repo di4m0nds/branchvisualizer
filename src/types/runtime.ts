@@ -3,8 +3,17 @@
 
 export type ContainerEngine = 'docker' | 'podman';
 
+export interface EngineProbe {
+  name: ContainerEngine;
+  version: string | null;
+  /** Daemon/service reachable (`<bin> info` succeeded) — `--version` alone lies. */
+  alive: boolean;
+}
+
 export interface RuntimeInfo {
-  /** null when neither docker nor podman is on PATH. */
+  /** Every installed engine with liveness — feeds the header switcher. */
+  engines: EngineProbe[];
+  /** Backend-chosen default; null when neither engine is on PATH. */
   engine: ContainerEngine | null;
   version: string | null;
   composeFile: string | null;

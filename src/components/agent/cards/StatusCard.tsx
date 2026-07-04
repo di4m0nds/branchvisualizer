@@ -1,4 +1,5 @@
 import { Wrench } from 'lucide-react';
+import FileLink from '@/components/FileLink';
 import type { StatusFile, StatusCommand } from '../blocks';
 import CodeFrame from '../CodeFrame';
 
@@ -26,7 +27,7 @@ export function StatusCard({ data }: { data: Record<string, unknown> }) {
             {files.map((f, i) => (
               <span key={i} className="inline-flex items-center gap-1 text-[10px] font-mono rounded bg-background/60 border border-border/40 px-1.5 py-0.5">
                 {f.action && <span className="text-muted-foreground">{f.action}</span>}
-                <span className="text-foreground/80 truncate max-w-[200px]" title={f.path}>{f.path}</span>
+                <FileLink path={f.path} className="text-foreground/80 truncate max-w-[200px]" />
               </span>
             ))}
           </div>

@@ -8,11 +8,14 @@
 
 import type { Dispatch } from 'react';
 import type { AppAction } from '@/types';
-import type { AccessLevel, MessageRef, Session } from '@/types/session';
+import type { AccessLevel, AgentMessage, MessageRef, Session } from '@/types/session';
 import { nextId } from '@/types/session';
 import { parseAgentBlocks, composeStreamingBlocks } from '@/components/agent/blocks';
 import { truncateForModel, isRetryableError, isAbortError } from './agentUtils';
-import { BASE_SYSTEM_PROMPT, renderSessionContext, type ModelIdentity } from './systemPrompt';
+import { applyHistoryWindow, loadCostPrefs } from './costPrefs';
+import { baseSystemPrompt, renderSessionContext, type ModelIdentity } from './systemPrompt';
+import { getPrompt, renderPrompt } from './prompts';
+import { detectFailure, failureTail } from './triage';
 import { buildAppendPrompt } from './providers/claude_code';
 import { findProvider } from './providers';
 import {
@@ -120,7 +123,7 @@ export async function runAgentTurn(
   userText: string,
   deps: AgentLoopDeps,
   ts: string,
-  opts?: { display?: boolean; hiddenText?: string; refs?: MessageRef[] },
+  opts?: { display?: boolean; hiddenText?: string; refs?: MessageRef[]; attachments?: AgentMessage['attachments'] },
 ): Promise<void> {
   const { transport, dispatch, requestApproval } = deps;
   const sessionId = session.id;
@@ -139,6 +142,7 @@ export async function runAgentTurn(
         id: nextId('msg'), role: 'user', text: userText, blocks: [], ts,
         ...(opts?.hiddenText ? { hiddenText: opts.hiddenText } : {}),
         ...(opts?.refs?.length ? { refs: opts.refs } : {}),
+        ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
       },
     });
   }
@@ -154,14 +158,20 @@ export async function runAgentTurn(
   // already receives the equivalent guidance (skills + supervised clause)
   // through the sanctioned `--append-system-prompt` channel (see
   // `buildAppendPrompt` in providers/claude_code.ts).
-  const apiMessages: NeutralMessage[] = session.messages
-    .filter((m) => m.text.trim().length > 0)
+  const costPrefs = loadCostPrefs();
+  // History window (Settings → Models & Cost): bound per-turn input cost by
+  // sending only the last N prior messages. 0 = full history.
+  const apiMessages: NeutralMessage[] = applyHistoryWindow(
+    session.messages.filter((m) => m.text.trim().length > 0),
+    costPrefs.historyWindow,
+  )
     .map((m) => ({
       role: m.role,
       // Prompt-only sidecar (@-referenced file contents) precedes the visible
       // text so prior turns keep their attached context on every rebuild.
       content: [{ type: 'text', text: m.hiddenText ? `${m.hiddenText}\n\n${m.text}` : m.text }],
-    }));
+      ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+    } as NeutralMessage));
   const skipSessionContext = transport.id === 'claude_code';
   // Resolve the real serving identity so the injected <session_context> tells
   // the model what it actually is (Gemini identifies as Gemini, etc.).
@@ -178,6 +188,7 @@ export async function runAgentTurn(
   const turnText = opts?.hiddenText ? `${opts.hiddenText}\n\n${userText}` : userText;
   apiMessages.push({
     role: 'user',
+    ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
     content: [{
       type: 'text',
       text: skipSessionContext ? turnText : `${renderSessionContext(session, identity)}\n\n---\n\n${turnText}`,
@@ -203,6 +214,8 @@ export async function runAgentTurn(
       // Real wall-clock start for this message so the footer can show how long
       // it took (the display `ts` is the shared turn-start timestamp).
       const startedAt = Date.now();
+  // Cumulative token usage across the turn's tool-loop iterations (telemetry).
+  const turnUsage = { input: 0, output: 0 };
       dispatch({
         type: 'ADD_AGENT_MESSAGE',
         sessionId,
@@ -266,10 +279,10 @@ export async function runAgentTurn(
           : 'acceptEdits';
 
       const req: AgentRequest = {
-        system: BASE_SYSTEM_PROMPT,
+        system: baseSystemPrompt(),
         messages: apiMessages,
         tools: TOOLS,
-        maxTokens: 64000,
+        maxTokens: costPrefs.maxOutputTokens,
         effort: ctx.reasoningBudget,
         thinking: ctx.deepThinking || ctx.reasoningBudget !== 'low',
         cwd: session.cwd,
@@ -296,6 +309,8 @@ export async function runAgentTurn(
       // Drop any pending throttled flush; the finalize dispatch below carries
       // the freshest text plus the one-time block parse.
       cancelStreamFlush();
+      turnUsage.input += final.usage.inputTokens;
+      turnUsage.output += final.usage.outputTokens;
       dispatch({
         type: 'UPDATE_AGENT_MESSAGE',
         sessionId,
@@ -303,6 +318,7 @@ export async function runAgentTurn(
         patch: {
           text: acc, thinking: thinkingAcc, blocks: composeBlocks(), streaming: false,
           endTs: new Date().toISOString(), durationMs: Date.now() - startedAt,
+          usage: { ...turnUsage, modelId: final.providerModel || transport.modelId },
         },
       });
       dispatch({ type: 'UPDATE_CONTEXT_TOKENS', sessionId, used: totalTokens(final.usage) });
@@ -348,7 +364,7 @@ export async function runAgentTurn(
 
         const pinned = checkPinnedRules(tu.name, input, ctx.pinnedRules);
         if (pinned.blocked) {
-          content = `Blocked by pinned rule: "${pinned.reason}". This cannot be overridden.`;
+          content = renderPrompt('blocked_by_rule', { rule: pinned.reason ?? '' });
           isError = true;
         } else {
           let approved = true;
@@ -365,7 +381,7 @@ export async function runAgentTurn(
             dispatch({ type: 'SET_SESSION_STATUS', sessionId, status: 'working' });
           }
           if (!approved) {
-            content = 'Denied by user.';
+            content = getPrompt('denied_by_user');
             isError = true;
           } else {
             try {
@@ -377,7 +393,7 @@ export async function runAgentTurn(
           }
         }
 
-        results.push({ type: 'tool_result', toolUseId: tu.id, content: truncateForModel(content), isError });
+        results.push({ type: 'tool_result', toolUseId: tu.id, content: truncateForModel(content, costPrefs.toolResultCap), isError });
 
         // Render an action-log entry for this execution.
         dispatch({
@@ -395,11 +411,41 @@ export async function runAgentTurn(
                 description: describeTool(tu.name, input),
                 status: isError ? 'error' : 'complete',
                 output: content.slice(0, 4000),
+                // Structured path so the UI can render a click-to-nvim link.
+                ...(typeof input.path === 'string' && input.path ? { path: input.path } : {}),
               },
             }],
             ts: nowIso(ts),
           },
         });
+
+        // Failing command → structured triage card with a one-click Diagnose.
+        if (tu.name === 'run_command') {
+          const hit = detectFailure(content);
+          if (hit) {
+            dispatch({
+              type: 'ADD_AGENT_MESSAGE',
+              sessionId,
+              message: {
+                id: nextId('msg'),
+                role: 'assistant',
+                text: '',
+                blocks: [{
+                  type: 'error_triage',
+                  raw: '',
+                  data: {
+                    command: String(input.command ?? ''),
+                    exitCode: hit.exitCode,
+                    flavor: hit.flavor,
+                    output: failureTail(content),
+                    sessionId,
+                  },
+                }],
+                ts: nowIso(ts),
+              },
+            });
+          }
+        }
       }
 
       // Return ALL results in a single user message (never split, never drop).

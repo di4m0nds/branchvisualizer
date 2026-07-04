@@ -23,6 +23,13 @@ function toGenaiContents(system: string, msgs: NeutralMessage[]): { systemInstru
   const contents: Content[] = [];
   for (const m of msgs) {
     const parts: Part[] = [];
+    // Attachments (images/PDFs) lead the user turn as inlineData parts.
+    for (const a of m.attachments ?? []) {
+      if (!a.base64) continue;
+      if (a.kind === 'image' || a.mime === 'application/pdf') {
+        parts.push({ inlineData: { mimeType: a.mime, data: a.base64 } });
+      }
+    }
     for (const c of m.content) {
       switch (c.type) {
         case 'text': if (c.text) parts.push({ text: c.text }); break;

@@ -5,7 +5,8 @@
 // argument, which also makes these trivial to test.
 
 import type { AppAction } from '@/types';
-import type { MessageRef, Session } from '@/types/session';
+import type { AgentMessage, MessageRef, Session } from '@/types/session';
+import { getPrompt } from './prompts';
 
 /** Options accepted by ChatPanel's `runTurn` (the single turn entry point). */
 export interface RunTurnOptions {
@@ -17,6 +18,8 @@ export interface RunTurnOptions {
   /** Resolved @-reference payload delivered to the model but not displayed. */
   hiddenText?: string;
   refs?: MessageRef[];
+  /** Files attached from the composer (images/PDFs). */
+  attachments?: AgentMessage['attachments'];
   /** Rebuild the API conversation only from messages BEFORE this id — used
    *  by Retry, whose truncate dispatch hasn't landed in `state` yet. */
   messagesUpTo?: string;
@@ -29,7 +32,7 @@ type DispatchFn = (action: AppAction) => void;
 /** Planning mode: approve → switch to direct execution → replay as instruction. */
 export function approvePlan(sessionId: string, dispatch: DispatchFn, runTurn: RunTurn): void {
   dispatch({ type: 'SET_BUILD_MODE', sessionId, mode: 'direct' });
-  runTurn('The plan is approved. Proceed with the implementation, executing the steps in order.');
+  runTurn(getPrompt('plan_approved'));
 }
 
 /** Approve the CLI approval card: grant session-scoped bypass, then RESUME
@@ -42,10 +45,7 @@ export function approvePlan(sessionId: string, dispatch: DispatchFn, runTurn: Ru
  *  need approval again. */
 export function approveCliBypass(sessionId: string, dispatch: DispatchFn, runTurn: RunTurn): void {
   dispatch({ type: 'SET_SESSION_CLI_BYPASS', sessionId, bypass: true });
-  runTurn(
-    'Permission granted for commands. Continue and complete the previous request.',
-    { display: false, contextPatch: { cliBypass: true } },
-  );
+  runTurn(getPrompt('cli_bypass_resume'), { display: false, contextPatch: { cliBypass: true } });
 }
 
 /** Approve/reject a prose <pending_action> the model proposed in supervised
@@ -53,9 +53,9 @@ export function approveCliBypass(sessionId: string, dispatch: DispatchFn, runTur
  *  (silent — no duplicate user bubble), mirroring the CLI-bypass resume. */
 export function resumePendingAction(decision: 'approve' | 'reject', runTurn: RunTurn): void {
   if (decision === 'approve') {
-    runTurn('✅ Approved the pending action above. Proceed and carry it out now.', { display: false });
+    runTurn(getPrompt('action_approved'), { display: false });
   } else {
-    runTurn('❌ Rejected the pending action above. Do not run it — suggest an alternative or ask how to proceed.', { display: false });
+    runTurn(getPrompt('action_rejected'), { display: false });
   }
 }
 
@@ -77,6 +77,6 @@ export function planAwaitingApproval(session: Session, busy: boolean): boolean {
  *  users understand approving unblocks the CLI writing the plan file. */
 export function cliApprovalHintFor(session: Session): string | undefined {
   return session.context.buildMode === 'planning'
-    ? 'Approving will let the CLI finish writing your plan file.'
+    ? getPrompt('planning_hint')
     : undefined;
 }

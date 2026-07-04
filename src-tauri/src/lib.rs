@@ -6,6 +6,7 @@ mod git;
 mod keys;
 mod pty;
 mod sandbox;
+mod system;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,6 +38,7 @@ pub fn run() {
       fs::agent_grep,
       fs::agent_run_command,
       fs::agent_read_file_bytes,
+      fs::read_attachment,
       fs::walk_tree,
       fs::get_provider_key,
       fs::check_cli_provider,
@@ -57,11 +59,16 @@ pub fn run() {
       docker::docker_kill,
       docker::docker_action,
       docker::docker_exec,
+      docker::docker_inspect,
       sandbox::sandbox_status,
       sandbox::sandbox_build,
       sandbox::sandbox_ensure,
       sandbox::sandbox_exec,
       sandbox::sandbox_teardown,
+      system::system_snapshot,
+      system::system_processes,
+      system::system_ports,
+      system::system_kill,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

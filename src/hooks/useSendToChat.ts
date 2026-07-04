@@ -24,3 +24,23 @@ export function sendToChat(sessionId: string, text: string): boolean {
   fn(text);
   return true;
 }
+
+// ── Prefill bus ─────────────────────────────────────────────────────────────
+// Like the sender, but only fills the composer — never auto-sends. Used by the
+// debug/log inspector's "send to agent" so the user reviews before sending.
+
+const prefillers = new Map<string, Sender>();
+
+export function registerChatPrefiller(sessionId: string, fn: Sender): () => void {
+  prefillers.set(sessionId, fn);
+  return () => {
+    if (prefillers.get(sessionId) === fn) prefillers.delete(sessionId);
+  };
+}
+
+export function prefillChat(sessionId: string, text: string): boolean {
+  const fn = prefillers.get(sessionId);
+  if (!fn) return false;
+  fn(text);
+  return true;
+}

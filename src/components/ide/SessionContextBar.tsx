@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useAppDispatch } from '@/store/store';
 import PinnedRulesEditor from './PinnedRulesEditor';
 import SandboxToggle from './SandboxToggle';
+import { estimateTotalCost, formatCost } from '@/lib/agent/pricing';
+import { loadCostPrefs } from '@/lib/agent/costPrefs';
 import type {
   AccessLevel, BuildMode, ReasoningBudget, Session,
 } from '@/types/session';
@@ -56,6 +58,22 @@ export default function SessionContextBar({ session }: { session: Session }) {
     : 0;
   const tokWarn = pct >= 80;
   const tokHigh = pct >= 90;
+
+  // Cost telemetry: ≈$ across every turn of this session (usage is recorded on
+  // each assistant message with the model that served it).
+  const sessionCost = useMemo(() => {
+    const usages = session.messages.map((m) => m.usage).filter((u): u is NonNullable<typeof u> => !!u);
+    return usages.length ? estimateTotalCost(usages) : null;
+  }, [session.messages]);
+
+  // Live estimate of the NEXT turn's input (chars/4 across the windowed
+  // history) so budget changes have a visible effect.
+  const estNextTokens = useMemo(() => {
+    const { historyWindow } = loadCostPrefs();
+    const msgs = historyWindow > 0 ? session.messages.slice(-historyWindow) : session.messages;
+    const chars = msgs.reduce((n, m) => n + m.text.length + (m.hiddenText?.length ?? 0), 0);
+    return Math.round(chars / 4);
+  }, [session.messages]);
 
   return (
     <div className="flex flex-wrap items-center gap-2 gap-y-1.5 px-3 py-2 border-b border-border bg-muted/10 text-xs">
@@ -152,6 +170,16 @@ export default function SessionContextBar({ session }: { session: Session }) {
         </button>
         <PinnedRulesEditor open={editorOpen} onClose={() => setEditorOpen(false)} sessionId={id} />
 
+        {/* Session cost (≈, static price table — see Settings → Models & Cost) */}
+        {sessionCost !== null && (
+          <div
+            className="flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-muted/30 text-[11px] font-mono tabular-nums text-muted-foreground"
+            title={`Approximate session cost across all turns. Next turn ≈${estNextTokens.toLocaleString()} input tokens (history window applied).`}
+          >
+            ≈{formatCost(sessionCost)}
+          </div>
+        )}
+
         {/* Context-token meter */}
         <div
           className={cn(
@@ -160,7 +188,7 @@ export default function SessionContextBar({ session }: { session: Session }) {
               : tokWarn ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
                 : 'border-border bg-muted/30 text-muted-foreground',
           )}
-          title={`${ctx.contextTokens.used.toLocaleString()} / ${ctx.contextTokens.max.toLocaleString()} tokens`}
+          title={`${ctx.contextTokens.used.toLocaleString()} / ${ctx.contextTokens.max.toLocaleString()} tokens · next turn ≈${estNextTokens.toLocaleString()} tok input`}
         >
           <span className={cn('w-1.5 h-1.5 rounded-full', tokHigh ? 'bg-red-400' : tokWarn ? 'bg-amber-400' : 'bg-green-400')} />
           {pct}%

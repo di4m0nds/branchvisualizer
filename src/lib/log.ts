@@ -17,12 +17,15 @@ export interface LogEntry {
 
 const RING_SIZE = 500;
 const ring: LogEntry[] = [];
+const logListeners = new Set<(e: LogEntry) => void>();
 
 const DEV = typeof import.meta !== 'undefined' && Boolean(import.meta.env?.DEV);
 
 function push(level: LogLevel, scope: string, msg: string, data?: unknown): void {
-  ring.push({ ts: Date.now(), level, scope, msg, data });
+  const entry: LogEntry = { ts: Date.now(), level, scope, msg, data };
+  ring.push(entry);
   if (ring.length > RING_SIZE) ring.splice(0, ring.length - RING_SIZE);
+  logListeners.forEach((l) => l(entry));
 
   if (level === 'warn' || level === 'error' || DEV) {
     const line = `[${scope}] ${msg}`;
@@ -69,4 +72,10 @@ export function swallow(scope: string, note?: string): (e: unknown) => void {
 /** Recent log entries (newest last) for debugging / a future debug panel. */
 export function recentLogs(): LogEntry[] {
   return ring.slice();
+}
+
+/** Live-tail the log stream (debug panel). Returns an unsubscribe fn. */
+export function subscribeLogs(cb: (e: LogEntry) => void): () => void {
+  logListeners.add(cb);
+  return () => logListeners.delete(cb);
 }

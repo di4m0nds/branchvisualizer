@@ -5,8 +5,8 @@ import type { Branch, Commit, CommitAuthor, RateLimit, RepoInfo, Tag } from '../
 import { cacheGet, cacheSet } from './cache';
 
 const API_BASE = 'https://api.github.com';
-const MAX_COMMITS_PER_BRANCH = 150; // pages × 100
-const MAX_BRANCHES = 40;
+// Fetch caps are user-tunable (Settings → General); read at fetch time.
+import { capOrInfinity, loadGraphLimits } from './graphLimits';
 
 // ─── Low-level fetch ───────────────────────────────────────────────────────
 
@@ -406,7 +406,7 @@ export async function fetchBranches(owner: string, repo: string, defaultBranch: 
     cacheTtl: 30_000,
   });
 
-  const branches = data.slice(0, MAX_BRANCHES).map((b): Branch => ({
+  const branches = data.slice(0, capOrInfinity(loadGraphLimits().githubBranches)).map((b): Branch => ({
     name: b.name,
     sha: b.commit.sha,
     isDefault: b.name === defaultBranch,
@@ -481,7 +481,8 @@ export async function fetchCommitsForBranch(
   let page = 1;
   const perPage = 100;
 
-  while (commits.length < MAX_COMMITS_PER_BRANCH) {
+  const maxCommits = capOrInfinity(loadGraphLimits().githubCommitsPerBranch);
+  while (commits.length < maxCommits) {
     const path = `/repos/${owner}/${repo}/commits?sha=${branchSha}&per_page=${perPage}&page=${page}`;
     const { data } = await apiFetch<GHCommit[]>(path, { cache: true, cacheTtl: 30_000 });
 
@@ -529,7 +530,7 @@ export async function fetchFullRepository(
   const allCommits: Commit[] = [];
   const knownShas = new Set<string>();
 
-  const branchesToFetch = branches.slice(0, MAX_BRANCHES);
+  const branchesToFetch = branches.slice(0, capOrInfinity(loadGraphLimits().githubBranches));
   const progressPerBranch = 55 / Math.max(branchesToFetch.length, 1);
 
   for (let i = 0; i < branchesToFetch.length; i++) {
@@ -544,7 +545,7 @@ export async function fetchFullRepository(
       owner, repo, branch.sha, knownShas,
       (n) => progressCb(
         `Fetching commits for ${branch.name}: ${n} found…`,
-        Math.round(baseProgress + (n / MAX_COMMITS_PER_BRANCH) * progressPerBranch),
+        Math.round(baseProgress + (n / Math.max(1, loadGraphLimits().githubCommitsPerBranch)) * progressPerBranch),
       ),
     );
     allCommits.push(...newCommits);

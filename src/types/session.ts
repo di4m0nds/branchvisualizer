@@ -126,6 +126,19 @@ export interface AgentMessage {
   /** How long this message took to produce, in ms (assistant only). Rendered as
    *  a per-message footer alongside the finish time. */
   durationMs?: number;
+  /** Token usage for the turn that produced this message (assistant only) —
+   *  cumulative across the turn's tool-loop iterations. Feeds cost telemetry. */
+  usage?: { input: number; output: number; modelId?: string };
+  /** Files attached to a user message. `base64` payloads are dropped at
+   *  persistence time (metadata chips survive; bytes don't). */
+  attachments?: {
+    kind: 'image' | 'document';
+    mime: string;
+    name: string;
+    sizeBytes: number;
+    base64?: string;
+    path?: string;
+  }[];
 }
 
 export type TerminalId = string;

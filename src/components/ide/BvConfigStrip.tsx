@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes, BookOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes, BookOpen, Bug } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppSelector } from '@/store/store';
 import { PanelMaximizeButton } from './FocusablePanel';
@@ -10,7 +10,7 @@ import type { PanelId } from '@/hooks/usePanelFocus';
 // graph/split/direction toolbar; this strip owns repo identity + collapse, and
 // the Canvas ↔ Plan view switch for the right column.
 
-export type RightView = 'workspace' | 'plan' | 'runtime' | 'docs';
+export type RightView = 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug';
 
 export default function BvConfigStrip({
   collapsed, onToggle, view, onViewChange, hasPlan,
@@ -65,6 +65,10 @@ export default function BvConfigStrip({
           <SwitchButton active={view === 'docs'} onClick={() => onViewChange('docs')} title="Repository documentation">
             <BookOpen className="w-3 h-3" />
             <span className="hidden md:inline">Docs</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'debug'} onClick={() => onViewChange('debug')} title="Unified log inspector (app + agent)">
+            <Bug className="w-3 h-3" />
+            <span className="hidden md:inline">Debug</span>
           </SwitchButton>
         </div>
 

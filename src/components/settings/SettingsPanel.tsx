@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Sun, Moon, ZoomIn, ZoomOut, RotateCcw, Trash2, X,
-  SlidersHorizontal, Palette, KeyRound, Bot, ShieldCheck, FolderGit2, Keyboard,
+  SlidersHorizontal, Palette, KeyRound, Bot, ShieldCheck, FolderGit2, Keyboard, ScrollText, Coins,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppDispatch, useAppSelector } from '@/store/store';
@@ -15,6 +15,9 @@ import ProvidersPanel from '@/components/settings/ProvidersPanel';
 import SessionsPanel from '@/components/ide/SessionsPanel';
 import PinnedRulesEditor from '@/components/ide/PinnedRulesEditor';
 import ArchiveSection from '@/components/settings/ArchiveSection';
+import PromptsSection from '@/components/settings/PromptsSection';
+import ModelsCostSection from '@/components/settings/ModelsCostSection';
+import GraphLimitsFields from '@/components/settings/GraphLimitsFields';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 import { buildTerminalFontFamily, buildChatFontFamily } from '@/lib/terminalFont';
 import type { AccessLevel, BuildMode } from '@/types/session';
@@ -23,13 +26,15 @@ import type { ChatBackground, LogDensity } from '@/types';
 // ─── Category registry ───────────────────────────────────────────────────────
 
 type CategoryId =
-  | 'general' | 'appearance' | 'providers' | 'agent' | 'rules' | 'sessions' | 'keybindings';
+  | 'general' | 'appearance' | 'providers' | 'agent' | 'prompts' | 'cost' | 'rules' | 'sessions' | 'keybindings';
 
 const CATEGORIES: { id: CategoryId; label: string; icon: React.ReactNode }[] = [
   { id: 'general', label: 'General', icon: <SlidersHorizontal className="w-4 h-4" /> },
   { id: 'appearance', label: 'Appearance', icon: <Palette className="w-4 h-4" /> },
   { id: 'providers', label: 'Providers & Keys', icon: <KeyRound className="w-4 h-4" /> },
   { id: 'agent', label: 'Agent', icon: <Bot className="w-4 h-4" /> },
+  { id: 'prompts', label: 'Prompts', icon: <ScrollText className="w-4 h-4" /> },
+  { id: 'cost', label: 'Models & Cost', icon: <Coins className="w-4 h-4" /> },
   { id: 'rules', label: 'Rules', icon: <ShieldCheck className="w-4 h-4" /> },
   { id: 'sessions', label: 'Sessions', icon: <FolderGit2 className="w-4 h-4" /> },
   { id: 'keybindings', label: 'Keybindings', icon: <Keyboard className="w-4 h-4" /> },
@@ -162,6 +167,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                           onChange={(density) => dispatch({ type: 'SET_LOG_DENSITY', density })}
                         />
                       </Field>
+                      <GraphLimitsFields />
                       <Field title="Graph checkpoints" desc="Show or hide t3 checkpoint commits in the branch graph.">
                         <Seg<'hide' | 'show'>
                           value={showCheckpoints ? 'show' : 'hide'}
@@ -247,6 +253,10 @@ export default function SettingsPanel({ open, onOpenChange }: {
                       </Field>
                     </Section>
                   )}
+
+                  {category === 'prompts' && <PromptsSection />}
+
+                  {category === 'cost' && <ModelsCostSection />}
 
                   {category === 'rules' && (
                     <Section title="Pinned rules" desc="App-global rules new sessions inherit (inviolable during a turn).">

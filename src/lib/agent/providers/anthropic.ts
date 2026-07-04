@@ -27,22 +27,49 @@ const resolveKey = makeKeyResolver('anthropic', () => import.meta.env.VITE_ANTHR
 type AnthropicContent = Anthropic.MessageParam['content'];
 
 function toAnthropicMessages(msgs: NeutralMessage[]): Anthropic.MessageParam[] {
-  return msgs.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }));
+  const out = msgs.map((m) => ({ role: m.role, content: toAnthropicContent(m.content, m.attachments) }));
+  // Prompt-caching hygiene: mark the end of the SECOND-TO-LAST user message as
+  // a cache breakpoint. Everything up to it is a stable prefix across turns
+  // (system prompt has its own breakpoint), so each new turn re-reads the
+  // conversation at cache-read prices instead of full input price.
+  const userIdxs = out.reduce<number[]>((acc, m, i) => (m.role === 'user' ? [...acc, i] : acc), []);
+  const anchor = userIdxs.length >= 2 ? userIdxs[userIdxs.length - 2] : -1;
+  if (anchor >= 0 && Array.isArray(out[anchor].content)) {
+    const blocks = out[anchor].content as unknown as Array<Record<string, unknown>>;
+    const last = blocks[blocks.length - 1];
+    if (last && (last.type === 'text' || last.type === 'tool_result')) {
+      last.cache_control = { type: 'ephemeral' };
+    }
+  }
+  return out;
 }
 
-function toAnthropicContent(items: NeutralContent[]): AnthropicContent {
-  return items.map((c) => {
+function toAnthropicContent(items: NeutralContent[], attachments?: NeutralAttachment[]): AnthropicContent {
+  const blocks: unknown[] = [];
+  // Attachments lead the message (image/document blocks), text follows. Only
+  // in-memory attachments (with base64) are sendable — persisted metadata-only
+  // ones from a previous app run are skipped.
+  for (const a of attachments ?? []) {
+    if (!a.base64) continue;
+    if (a.kind === 'image') {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: a.base64 } });
+    } else if (a.mime === 'application/pdf') {
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.base64 } });
+    }
+  }
+  for (const c of items) {
     switch (c.type) {
-      case 'text': return { type: 'text', text: c.text } as const;
-      case 'tool_use': return { type: 'tool_use', id: c.id, name: c.name, input: c.input } as const;
-      case 'tool_result': return {
-        type: 'tool_result', tool_use_id: c.toolUseId, content: c.content, is_error: c.isError ?? false,
-      } as const;
+      case 'text': blocks.push({ type: 'text', text: c.text }); break;
+      case 'tool_use': blocks.push({ type: 'tool_use', id: c.id, name: c.name, input: c.input }); break;
+      case 'tool_result':
+        blocks.push({ type: 'tool_result', tool_use_id: c.toolUseId, content: c.content, is_error: c.isError ?? false });
+        break;
       // Thinking blocks aren't part of the API request surface — they only appear
       // in responses. Round-tripping them from prior turns is the model's job.
-      case 'thinking': return { type: 'text', text: '' } as const;
+      case 'thinking': blocks.push({ type: 'text', text: '' }); break;
     }
-  }) as unknown as AnthropicContent;
+  }
+  return blocks as unknown as AnthropicContent;
 }
 
 function fromAnthropicMessage(msg: Anthropic.Message): NeutralResponse {
@@ -109,7 +136,7 @@ class AnthropicTransport implements AgentTransport {
 
 // ─── Provider ────────────────────────────────────────────────────────────
 
-import type { NeutralMessage } from '../transport';
+import type { NeutralAttachment, NeutralMessage } from '../transport';
 
 export const anthropicProvider: Provider = {
   id: 'anthropic',

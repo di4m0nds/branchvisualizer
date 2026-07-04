@@ -24,7 +24,7 @@ export interface IdeLayout {
   dockCollapsed: boolean;
   /** Right column view: repo workspace (canvas/tabs), plan review, the
    *  container runtime panel, or the repository docs viewer. */
-  rightView: 'workspace' | 'plan' | 'runtime' | 'docs';
+  rightView: 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug';
   /** LocalDocsTab: doc-list rail width as % of the docs container. Persisted
    *  once and shared by both mount points (right-column view + canvas
    *  sub-tab) so the drag position feels consistent regardless of where the

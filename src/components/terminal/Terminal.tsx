@@ -51,6 +51,7 @@ export default function Terminal({
   fontScale = 1,
   onExit,
   registerWriter,
+  registerReader,
 }: {
   def: TerminalDef;
   /** Whether this terminal's tab is currently visible. Drives refit-on-show. */
@@ -59,6 +60,8 @@ export default function Terminal({
   fontScale?: number;
   onExit?: (code: number | null) => void;
   registerWriter?: (write: (data: string) => Promise<void>) => void;
+  /** Expose a snapshot reader for the last N buffer lines (debug handoff). */
+  registerReader?: (read: (lines: number) => string) => void;
 }) {
   // Slice subscriptions — xterm must not re-render on chat/session churn.
   const terminalFont = useAppSelector((s) => s.terminalFont);
@@ -101,6 +104,16 @@ export default function Terminal({
       macOptionIsMeta: true, // Alt-based nvim mappings on macOS
     });
     termRef.current = term;
+    registerReader?.((lines: number) => {
+      const buf = term.buffer.active;
+      const end = buf.baseY + buf.cursorY;
+      const start = Math.max(0, end - lines);
+      const out: string[] = [];
+      for (let i = start; i <= end; i++) {
+        out.push(buf.getLine(i)?.translateToString(true) ?? '');
+      }
+      return out.join('\n').trimEnd();
+    });
     const fit = new FitAddon();
     fitRef.current = fit;
     term.loadAddon(fit);

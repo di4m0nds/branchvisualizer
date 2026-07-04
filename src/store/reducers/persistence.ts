@@ -69,7 +69,14 @@ function stripSessionForStorage(s: Session): Session {
       // so reference-heavy sessions can't blow the localStorage quota and stop
       // ALL persistence. After a reload the contents would be stale anyway —
       // the chips (`refs`) survive, and the agent re-reads files via tools.
-      .map(({ hiddenText: _hidden, ...m }) => ({ ...m, streaming: false })),
+      .map(({ hiddenText: _hidden, ...m }) => ({
+        ...m,
+        streaming: false,
+        // Attachment BYTES never persist (quota); metadata chips survive.
+        ...(m.attachments?.length
+          ? { attachments: m.attachments.map(({ base64: _b64, ...a }) => a) }
+          : {}),
+      })),
   };
 }
 

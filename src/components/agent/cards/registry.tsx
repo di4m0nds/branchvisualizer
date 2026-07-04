@@ -14,6 +14,7 @@ import { PlanCard } from './PlanCard';
 import { StatusCard } from './StatusCard';
 import { StateChangeChip } from './StateChangeChip';
 import { AgentErrorCard } from './AgentErrorCard';
+import ErrorTriageCard from './ErrorTriageCard';
 import { TypeLabeledBlock, CodeFrameBlock, FallbackBlock } from './shared';
 
 // ─── Block-renderer registry ─────────────────────────────────────────────────
@@ -79,6 +80,9 @@ export const BLOCK_RENDERERS: Record<string, ComponentType<BlockRenderProps>> = 
   plan: ({ block }) => <PlanCard data={block.data ?? {}} />,
   agent_status: ({ block }) => <StatusCard data={block.data ?? {}} />,
   session_state_change: ({ block }) => <StateChangeChip data={block.data ?? {}} />,
+  error_triage: ({ block, interactive }) => (
+    <ErrorTriageCard data={block.data ?? {}} interactive={interactive} />
+  ),
   agent_error: ({ block, interactive, ctx }) => (
     <AgentErrorCard data={block.data ?? {}} interactive={interactive} onRetry={ctx.onRetry} />
   ),

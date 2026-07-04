@@ -479,6 +479,46 @@ pub fn agent_read_file_bytes(root: String, path: String) -> Result<String, Strin
     Ok(base64_of(&bytes))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentData {
+    base64: String,
+    size_bytes: u64,
+    mime: String,
+}
+
+/// Read a user-picked attachment (chat composer). NOT jailed — the path comes
+/// from the native file dialog, i.e. an explicit user choice, and may live
+/// anywhere. Size-capped so a mis-pick can't balloon memory.
+#[tauri::command]
+pub fn read_attachment(path: String, max_bytes: u64) -> Result<AttachmentData, String> {
+    let p = PathBuf::from(&path);
+    let meta = fs::metadata(&p).map_err(|e| format!("stat {path}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("not a file: {path}"));
+    }
+    if meta.len() > max_bytes {
+        return Err(format!(
+            "file is {} bytes — exceeds the {} byte attachment limit",
+            meta.len(), max_bytes
+        ));
+    }
+    let bytes = fs::read(&p).map_err(|e| format!("read {path}: {e}"))?;
+    let mime = match p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("pdf") => "application/pdf",
+        _ => "application/octet-stream",
+    };
+    Ok(AttachmentData {
+        base64: base64_of(&bytes),
+        size_bytes: meta.len(),
+        mime: mime.to_string(),
+    })
+}
+
 fn base64_of(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)

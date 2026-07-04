@@ -15,7 +15,9 @@ skills, and pinned rules.
 **Documentation:**
 [SETUP.md](docs/SETUP.md) — install & use the app (Linux/Windows installers, nvim, API keys) ·
 [BUILDING.md](docs/BUILDING.md) — build executables & release pipeline ·
-[SANDBOX.md](docs/SANDBOX.md) — Podman agent-runtime sandbox.
+[SANDBOX.md](docs/SANDBOX.md) — Podman agent-runtime sandbox ·
+[PROMPTS.md](docs/PROMPTS.md) — editable prompt templates ·
+[HISTORY.md](docs/HISTORY.md) — how BranchVisualizer grew into this IDE.
 
 ## What it does
 
@@ -58,6 +60,15 @@ skills, and pinned rules.
 - **Docs tab** — walks the working tree, renders `.md` / `.rst` / `.txt` /
   `.org` / `.adoc` via `react-markdown`, `.pdf` via lazy-loaded `pdfjs-dist`,
   `.docx` via `mammoth`. Click a file → opens in the session's nvim.
+- **Cost controls** — per-task model routing with seamless fallback, editable
+  prompt templates (Settings → Prompts), history/tool-output/response budgets,
+  ≈$ per-session cost telemetry, Anthropic prompt-cache breakpoints.
+- **Attachments** — images + PDFs in chat, capability-gated per provider.
+- **Debug tooling** — unified log inspector (app + agent), error-triage cards
+  with one-click Diagnose, terminal→chat handoff, system status bar with a
+  process & port inspector.
+- **Click-to-nvim everywhere** — file mentions in chat cards, ref chips, diffs,
+  and commit details open in the session's Neovim (local projects).
 - **Podman runtime sandbox (opt-in per session)** — the agent's `run_command`
   executes inside an isolated rootless container (project bind-mounted at the
   same path, `--userns=keep-id`, resource limits, network toggle). Toggle in

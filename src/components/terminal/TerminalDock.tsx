@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from '@/services/toast';
+import { prefillChat } from '@/hooks/useSendToChat';
 import { swallow } from '@/lib/log';
-import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp, Stethoscope } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import Terminal from './Terminal';
@@ -64,6 +66,7 @@ export default memo(function TerminalDock({
   // Registered per-terminal writers so we can send ex-commands (`:e path\r`)
   // to the running nvim without a round-trip through Tauri events.
   const writersRef = useRef<Record<string, (data: string) => Promise<void>>>({});
+  const readersRef = useRef<Record<string, (lines: number) => string>>({});
 
   useEffect(() => {
     if (renamingId) renameInputRef.current?.select();
@@ -135,6 +138,22 @@ export default memo(function TerminalDock({
       await writer(`\x1b:e ${escaped}\r`).catch(swallow('pty', 'nvim open-file escape'));
     });
   }, [sessionId, nvim.id]);
+
+  // Hand the active terminal's recent output to the agent (prefills the
+  // composer — the user reviews before sending). Per-command exit codes are
+  // not observable from a PTY without shell integration, so this manual
+  // handoff is the terminal-side error-triage affordance.
+  const diagnoseActive = () => {
+    const read = readersRef.current[activeId];
+    const tail = read ? read(50) : '';
+    if (!tail.trim()) {
+      toast.info('Terminal buffer is empty');
+      return;
+    }
+    const ok = prefillChat(sessionId, 'Please diagnose this terminal output:\n```\n' + tail + '\n```');
+    if (ok) toast.success('Terminal output added to the chat composer');
+    else toast.error('Chat composer unavailable');
+  };
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
@@ -225,6 +244,13 @@ export default memo(function TerminalDock({
         {/* Right-side panel controls: maximize + collapse. Static so they never
             overlap the tab strip on the left. */}
         <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={diagnoseActive}
+            className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-accent/40 transition-colors"
+            title="Diagnose in chat — send the last 50 terminal lines to the agent composer"
+          >
+            <Stethoscope className="w-3.5 h-3.5" />
+          </button>
           <PanelMaximizeButton id="terminal" />
           {onToggleCollapsed && (
             <button
@@ -250,6 +276,7 @@ export default memo(function TerminalDock({
             fontScale={fontScale}
             onExit={handleNvimExit}
             registerWriter={(w) => { writersRef.current[nvim.id] = w; }}
+            registerReader={(r) => { readersRef.current[nvim.id] = r; }}
           />
         </div>
         {shells.map((t) => (
@@ -262,6 +289,7 @@ export default memo(function TerminalDock({
               active={t.id === activeId}
               fontScale={fontScale}
               registerWriter={(w) => { writersRef.current[t.id] = w; }}
+              registerReader={(r) => { readersRef.current[t.id] = r; }}
             />
           </div>
         ))}

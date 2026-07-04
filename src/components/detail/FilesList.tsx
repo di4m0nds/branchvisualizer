@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { CommitFile } from '@/lib/github';
+import FileLink from '@/components/FileLink';
 
 // ─── File status icon ─────────────────────────────────────────────────────────
 
@@ -30,27 +31,19 @@ export default function FilesList({ files, repoUrl, sha }: { files: CommitFile[]
         const displayName = f.status === 'renamed' && f.previousFilename
           ? `${f.previousFilename} → ${f.filename.split('/').pop()}`
           : f.filename;
-        const fileUrl = repoUrl ? `${repoUrl}/blob/${sha}/${f.filename}` : null;
 
         return (
           <div key={f.filename} className="flex items-center gap-1.5 min-w-0 group">
             <FileStatusDot status={f.status} />
-            {fileUrl ? (
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-1 min-w-0 text-[11px] font-mono text-muted-foreground
-                           truncate hover:text-foreground transition-colors"
-                title={f.filename}
-              >
-                {displayName}
-              </a>
-            ) : (
-              <span className="flex-1 min-w-0 text-[11px] font-mono text-muted-foreground truncate" title={f.filename}>
-                {displayName}
-              </span>
-            )}
+            {/* Local session → nvim; GitHub repo → blob link; else plain. */}
+            <FileLink
+              path={f.filename}
+              repoUrl={repoUrl}
+              sha={sha}
+              className="flex-1 min-w-0 text-[11px] text-muted-foreground truncate hover:text-foreground transition-colors"
+            >
+              {displayName}
+            </FileLink>
             {(f.additions > 0 || f.deletions > 0) && (
               <span className="flex-shrink-0 text-[10px] font-mono tabular-nums flex items-center gap-0.5">
                 {f.additions > 0 && <span className="text-green-400">+{f.additions}</span>}

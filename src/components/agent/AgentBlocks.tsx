@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
+import FileLink from '@/components/FileLink';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown, Brain, FileEdit, FileText as FileTextIcon, Wrench,
@@ -36,7 +37,7 @@ function ToolRowBlock({ block, streaming, defaultOpen }: {
 }) {
   const data = block.data ?? {};
   let title = block.type.replace(/_/g, ' ');
-  let subtitle = '';
+  let subtitle: React.ReactNode = '';
   let status: 'ok' | 'error' | 'running' = 'ok';
   let Icon: React.ComponentType<{ className?: string }> = Wrench;
   let body: React.ReactNode;
@@ -44,7 +45,14 @@ function ToolRowBlock({ block, streaming, defaultOpen }: {
     const tool = String(data.tool ?? 'tool');
     const output = String(data.output ?? '');
     title = tool;
-    subtitle = String(data.description ?? '');
+    const desc = String(data.description ?? '');
+    // Prefer the structured path (loop attaches it for file tools); fall back
+    // to parsing legacy "Read src/x.ts"-style descriptions.
+    const pathFromDesc = /^(Read|Write|Edit|List) (.+)$/.exec(desc)?.[2];
+    const toolPath = typeof data.path === 'string' && data.path ? data.path : pathFromDesc;
+    subtitle = toolPath
+      ? <FileLink path={toolPath} className="text-[11px] text-muted-foreground truncate">{desc}</FileLink>
+      : desc;
     status = String(data.status ?? '') === 'error' ? 'error' : 'ok';
     Icon = TOOL_ICON[tool] ?? Wrench;
     // Output only — the row header already carries tool + description, so the
@@ -59,7 +67,8 @@ function ToolRowBlock({ block, streaming, defaultOpen }: {
   } else {
     if (block.type === 'code_file' || block.type === 'code_diff') {
       title = block.type === 'code_file' ? 'file' : 'diff';
-      subtitle = extractAttr(String(data.attrs ?? ''), 'path') ?? '';
+      const codePath = extractAttr(String(data.attrs ?? ''), 'path') ?? '';
+      subtitle = codePath ? <FileLink path={codePath} className="text-[11px] text-muted-foreground truncate" /> : '';
       status = streaming ? 'running' : 'ok';
       Icon = block.type === 'code_file' ? FileCode : GitCompareArrows;
     } else if (block.type === 'file_changes') {

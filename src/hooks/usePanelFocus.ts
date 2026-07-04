@@ -6,7 +6,7 @@
 
 import { useSyncExternalStore } from 'react';
 
-export type PanelId = 'sidebar' | 'chat' | 'terminal' | 'workspace' | 'plan' | 'runtime' | 'docs';
+export type PanelId = 'sidebar' | 'chat' | 'terminal' | 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug';
 
 const PANELS: PanelId[] = ['sidebar', 'chat', 'terminal', 'workspace', 'plan', 'runtime', 'docs'];
 const ZOOM_KEY = 'code-agent:panel_zoom';

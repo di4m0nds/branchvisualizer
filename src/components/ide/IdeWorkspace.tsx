@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import StatusBar from './StatusBar';
+import DebugPanel from './debug/DebugPanel';
 import { Link } from 'react-router-dom';
 import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
 import type { AppState } from '@/types';
@@ -90,7 +92,7 @@ export default function IdeWorkspace() {
     return registerShowPanel((id) => {
       if (id === 'sidebar') setLayoutKey('sidebarCollapsed', false);
       else if (id === 'terminal') setLayoutKey('dockCollapsed', false);
-      else if (id === 'workspace' || id === 'plan' || id === 'runtime' || id === 'docs') setLayoutKey('rightView', id);
+      else if (id === 'workspace' || id === 'plan' || id === 'runtime' || id === 'docs' || id === 'debug') setLayoutKey('rightView', id);
       // 'chat' is always mounted → no-op.
     });
   }, []);
@@ -150,6 +152,7 @@ export default function IdeWorkspace() {
   }, [planKey]);
 
   return (
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
     <div ref={outerRowRef} className="flex flex-1 min-h-0 overflow-hidden">
       {/* Sidebar. Collapses to a fixed icon rail; otherwise resizable with hard
           px clamps so it stays usable at any drag width. */}
@@ -191,15 +194,19 @@ export default function IdeWorkspace() {
             className="flex flex-col min-w-0 min-h-0 bg-muted/5"
             style={{ flex: `0 0 ${midWidth}%` }}
           >
-            <ChatConfigStrip
-              session={active}
-              collapsed={cfgCollapsed}
-              onToggle={() => setLayoutKey('cfgCollapsed', !cfgCollapsed)}
-            />
             <div ref={agentStackRef} className="flex flex-col flex-1 min-h-0">
-              {/* Chat pane (remainder) */}
-              <FocusablePanel id="chat" className="flex-1 min-h-0 overflow-hidden">
-                <ChatPanel key={active.id} session={active} />
+              {/* Chat pane (remainder). The config strip lives INSIDE the
+                  focusable panel so a maximized chat keeps the model picker,
+                  branch indicator, and session controls reachable. */}
+              <FocusablePanel id="chat" className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                <ChatConfigStrip
+                  session={active}
+                  collapsed={cfgCollapsed}
+                  onToggle={() => setLayoutKey('cfgCollapsed', !cfgCollapsed)}
+                />
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <ChatPanel key={active.id} session={active} />
+                </div>
               </FocusablePanel>
 
               {!dockCollapsed && (
@@ -271,6 +278,17 @@ export default function IdeWorkspace() {
                 />
                 <RuntimePanel />
               </FocusablePanel>
+            ) : rightView === 'debug' ? (
+              <FocusablePanel id="debug" className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <DebugPanel />
+              </FocusablePanel>
             ) : rightView === 'docs' ? (
               <FocusablePanel id="docs" className="flex-1 min-h-0 overflow-hidden">
                 <BvConfigStrip
@@ -306,6 +324,9 @@ export default function IdeWorkspace() {
           </div>
         </div>
       )}
+    </div>
+    {/* Machine vitals — expandable to the full system panel. */}
+    <StatusBar />
     </div>
   );
 }

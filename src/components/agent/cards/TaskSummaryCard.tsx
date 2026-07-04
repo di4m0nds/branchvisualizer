@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import FileLink from '@/components/FileLink';
 import {
   Sparkles, FileEdit, FilePlus, FileMinus, FileText as FileTextIcon,
   Bug, ShieldCheck, ClipboardList, Copy,
@@ -69,7 +70,7 @@ export function TaskSummaryCard({ data }: { data: Record<string, unknown> }) {
                 return (
                   <li key={i} className="flex items-start gap-2 px-2.5 py-1.5 text-xs">
                     <Icon className="w-3 h-3 mt-0.5 text-muted-foreground flex-shrink-0" />
-                    <span className="font-mono text-foreground/90 truncate flex-shrink min-w-0">{f.path}</span>
+                    <FileLink path={f.path} className="text-foreground/90 truncate flex-shrink min-w-0" />
                     <span className={cn(
                       'px-1.5 py-[1px] rounded text-[10px] font-medium leading-none border flex-shrink-0',
                       chip,
