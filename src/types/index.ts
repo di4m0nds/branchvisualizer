@@ -1,5 +1,5 @@
 import type {
-  AccessLevel, BuildMode, PinnedRule, PlanComment, Project, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
+  AccessLevel, BuildMode, PinnedRule, PlanComment, Project, ReasoningBudget, Session, SessionContext, SessionModelConfig, SessionStatus, AgentMessage,
 } from './session';
 import type { ContextSizeId, ProbeResult } from '@/lib/agent/transport';
 
@@ -274,6 +274,11 @@ export type AppAction =
   | { type: 'REMOVE_PLAN_COMMENT'; sessionId: string; commentId: string }
   | { type: 'SET_PLAN_DRAFT'; sessionId: string; draft: Session['planDraft'] }
   // ── Model + provider status ──
+  /** Set one session's model (per-session config; never touches other sessions). */
+  | { type: 'SET_SESSION_MODEL'; sessionId: string; model: ModelRef }
+  /** Patch one session's model config (temperature, max output tokens, …). */
+  | { type: 'PATCH_SESSION_MODEL_CONFIG'; sessionId: string; patch: Partial<SessionModelConfig> }
+  /** Set the app-global default model (used to seed NEW sessions). */
   | { type: 'SET_MODEL'; model: ModelRef }
   | { type: 'SET_PROVIDER_STATUS'; providerId: string; status: ProbeResult }
   | { type: 'SET_SERVED_MODEL'; key: string; model: string }

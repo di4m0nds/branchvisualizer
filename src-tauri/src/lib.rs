@@ -1,6 +1,8 @@
 mod antigravity;
+mod assets;
 mod claude_code;
 mod docker;
+mod exec;
 mod fs;
 mod git;
 mod keys;
@@ -32,6 +34,7 @@ pub fn run() {
       pty::write_pty,
       pty::resize_pty,
       pty::kill_pty,
+      pty::list_shells,
       fs::agent_read_file,
       fs::agent_write_file,
       fs::agent_list_dir,
@@ -43,6 +46,16 @@ pub fn run() {
       fs::get_provider_key,
       fs::check_cli_provider,
       fs::provider_update,
+      assets::asset_root,
+      assets::asset_list,
+      assets::asset_read,
+      assets::asset_write,
+      assets::asset_delete,
+      assets::asset_rename,
+      assets::asset_import,
+      assets::write_export,
+      exec::exec_stream,
+      exec::exec_kill,
       antigravity::antigravity_run,
       antigravity::antigravity_kill,
       antigravity::antigravity_check,
@@ -81,6 +94,7 @@ pub fn run() {
         claude_code::kill_all_children();
         antigravity::kill_all_children();
         docker::kill_all_children();
+        exec::kill_all_children();
         sandbox::teardown_all();
       }
     });

@@ -10,6 +10,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 import type { Project, Session } from '@/types/session';
 import ThreadItem from './ThreadItem';
 
@@ -41,24 +44,13 @@ export default function ProjectGroup({
 }: Props) {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(project.name);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (renaming) inputRef.current?.select();
   }, [renaming]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [menuOpen]);
 
   function commitRename() {
     const trimmed = renameValue.trim();
@@ -139,33 +131,27 @@ export default function ProjectGroup({
           >
             <Plus className="w-3 h-3" />
           </button>
-          <div ref={menuRef} className="relative">
-            <button
-              onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}
-              className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-accent/40"
-              title="More"
-            >
-              <MoreHorizontal className="w-3 h-3" />
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-md border border-border bg-popover shadow-lg text-xs overflow-hidden">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchiveToggle(); }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-accent/40 text-foreground"
-                >
-                  {project.archived
-                    ? <><ArchiveRestore className="w-3 h-3" /> Unarchive</>
-                    : <><Archive className="w-3 h-3" /> Archive</>}
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setConfirmDelete(true); }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-destructive/20 text-destructive"
-                >
-                  <Trash2 className="w-3 h-3" /> Delete
-                </button>
-              </div>
-            )}
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-accent/40 data-[state=open]:opacity-100"
+                title="More"
+              >
+                <MoreHorizontal className="w-3 h-3" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-40" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem onSelect={() => onArchiveToggle()}>
+                {project.archived
+                  ? <><ArchiveRestore className="w-3 h-3" /> Unarchive</>
+                  : <><Archive className="w-3 h-3" /> Archive</>}
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
+                <Trash2 className="w-3 h-3" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

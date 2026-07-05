@@ -32,3 +32,6 @@ docs/
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/schemas/
+
+# code-agent app data (notes, diagrams, goal state)
+.code-agent/

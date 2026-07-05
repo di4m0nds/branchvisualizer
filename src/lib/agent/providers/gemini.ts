@@ -73,6 +73,7 @@ class GeminiTransport implements AgentTransport {
         systemInstruction,
         tools: functionDecls.length ? [{ functionDeclarations: functionDecls }] : undefined,
         maxOutputTokens: req.maxTokens,
+        temperature: req.temperature,
         thinkingConfig: req.thinking ? { thinkingBudget: budget, includeThoughts: true } : undefined,
         abortSignal: req.signal,
       },

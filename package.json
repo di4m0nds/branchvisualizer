@@ -1,6 +1,6 @@
 {
   "name": "di4m0nds-code-agent",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Multi-session, multi-provider AI code-agent IDE in a Tauri desktop shell (built on the BranchVisualizer commit-graph engine)",
@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",
+    "@excalidraw/excalidraw": "^0.18.1",
     "@fontsource-variable/geist": "^5.2.8",
     "@google/genai": "^2.10.0",
     "@tailwindcss/vite": "^4.2.2",

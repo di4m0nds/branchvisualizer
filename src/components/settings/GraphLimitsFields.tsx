@@ -4,6 +4,9 @@ import { useRepoData } from '@/hooks/useRepoData';
 import {
   DEFAULT_GRAPH_LIMITS, loadGraphLimits, saveGraphLimits, type GraphLimits,
 } from '@/lib/graphLimits';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/Select';
 
 // ─── Settings → General → graph fetch limits ─────────────────────────────────
 // How much history the visualizer loads for large repos. Applied on the next
@@ -80,13 +83,16 @@ function Row({ title, desc, value, options, onChange }: {
         <p className="text-sm font-medium text-foreground">{title}</p>
         <p className="text-[11px] text-muted-foreground/70 mt-0.5 leading-relaxed">{desc}</p>
       </div>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="flex-shrink-0 text-[11px] bg-muted/30 border border-border rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-ring"
-      >
-        {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-      </select>
+      <Select value={String(value)} onValueChange={(v) => onChange(Number(v))}>
+        <SelectTrigger className="flex-shrink-0 min-w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(([v, label]) => (
+            <SelectItem key={v} value={String(v)}>{label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

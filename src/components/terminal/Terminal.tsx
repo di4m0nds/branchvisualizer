@@ -166,6 +166,13 @@ export default function Terminal({
     })().catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       term.write(`\r\n\x1b[31m[failed to start: ${msg}]\x1b[0m\r\n`);
+      // Friendlier hint than a dead pane: the usual cause is a missing binary
+      // (e.g. nvim not installed, or a configured shell that isn't on PATH).
+      if (def.cmd) {
+        term.write(`\x1b[33m'${def.cmd}' could not be started — check it is installed and on PATH.`
+          + (def.role === 'nvim' ? ' Install Neovim or use a shell tab instead.' : ' Pick another shell from the + menu or Settings → Appearance.')
+          + '\x1b[0m\r\n');
+      }
     });
 
     // Coalesce resize bursts to one fit per frame — a dock drag fires many

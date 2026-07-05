@@ -14,8 +14,8 @@ const PROBE_MODEL = 'claude-haiku-4-5-20251001';
 // contextTokens is the STANDARD size; the 1M variant lives in contextOptions.
 const MODELS: ModelInfo[] = [
   { id: 'claude-fable-5',    label: 'Fable 5',    defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
-  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
-  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
+  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
   { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
 ];
@@ -117,6 +117,8 @@ class AnthropicTransport implements AgentTransport {
       tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })),
       output_config: { effort: req.effort },
       ...(req.thinking ? { thinking: { type: 'adaptive' } } : {}),
+      // Temperature can't be combined with extended thinking (API rejects it).
+      ...(req.temperature !== undefined && !req.thinking ? { temperature: req.temperature } : {}),
     };
 
     const stream = this.client.messages.stream(
@@ -161,10 +163,10 @@ export const anthropicProvider: Provider = {
   async createTransport(modelId: string, context: ContextSizeId = 'standard'): Promise<AgentTransport> {
     const key = await resolveKey();
     if (!key) throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY.');
-    // The 1M-context header is defensive/legacy: current models (Opus 4.8/4.7,
-    // Sonnet 4.6, Fable 5) serve 1M at standard pricing on the direct API, so
-    // this is effectively a no-op there. The context toggle here is mostly
-    // informational — the header just makes the intent explicit.
+    // 1M context on the direct API is a beta gated to Sonnet 4.x / Fable 5
+    // (see MODELS: only those expose STD_OR_1M). The header opts into the beta;
+    // for models that don't advertise 1M the picker never offers it, so this
+    // path is only reached for models that can serve it.
     const client = new Anthropic({
       apiKey: key,
       dangerouslyAllowBrowser: true,

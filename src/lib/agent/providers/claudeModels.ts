@@ -11,7 +11,7 @@ export const CTX_STD: ContextOption = { id: 'standard', label: 'Standard · 200K
 /** 1M window — usage-credit gated on Claude Code subscriptions. */
 export const CTX_1M: ContextOption = { id: '1m', label: '1M', tokens: 1_000_000 };
 
-/** Models that only serve 200K (e.g. Haiku). */
+/** Models that only serve 200K (e.g. Opus, Haiku). */
 export const STD_ONLY: ContextOption[] = [CTX_STD];
-/** Models that can serve 200K (default) or 1M (Opus / Sonnet / Fable). */
+/** Models that can serve 200K (default) or 1M (Sonnet 4.x, Fable 5). */
 export const STD_OR_1M: ContextOption[] = [CTX_STD, CTX_1M];

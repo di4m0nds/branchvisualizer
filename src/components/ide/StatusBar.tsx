@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import { usePageVisible } from '@/hooks/usePageVisible';
 import { fmtBytes, systemSnapshot, type SystemSnapshot } from '@/lib/system';
+import { pushSystemSnapshot } from '@/hooks/useSystemStatsHistory';
 import SystemPanel from './SystemPanel';
 
 // ─── IDE status bar ──────────────────────────────────────────────────────────
@@ -25,7 +26,11 @@ export default memo(function StatusBar() {
   useEffect(() => {
     if (!isTauri() || !pageVisible) return;
     let alive = true;
-    const tick = () => systemSnapshot().then((s) => { if (alive) setSnap(s); }).catch(() => {});
+    const tick = () => systemSnapshot().then((s) => {
+      if (!alive) return;
+      setSnap(s);
+      pushSystemSnapshot(s); // feed the shared trend buffer (SystemPanel sparklines)
+    }).catch(() => {});
     tick();
     const iv = setInterval(tick, POLL_MS);
     return () => { alive = false; clearInterval(iv); };

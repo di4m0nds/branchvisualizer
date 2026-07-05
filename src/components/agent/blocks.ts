@@ -5,12 +5,14 @@
 
 import type { AgentBlock, AgentMessage, AgentRole } from '@/types/session';
 import type { LogDensity } from '@/types';
+import { parseGoalPlan } from '@/lib/goals/parse';
 
 // Blocks the UI renders specially. Others render as text.
 export const KNOWN_BLOCK_TAGS = [
   'thinking',
   'agent_status',
   'plan',
+  'goal_plan',
   'questions_for_user',
   'pending_action',
   'action_log',
@@ -182,15 +184,49 @@ function hydratePlan(data: Record<string, unknown>): Record<string, unknown> {
       risks: extractTag(body, 'risks') || '',
     });
   }
+  let planTitle = extractTag(inner, 'title') || '';
+  let markdownFallback = '';
+  let derivedStepCount = 0;
+  // Preview titles for the collapsed card so a markdown-body plan never renders
+  // as an empty bar. Drawn from numbered list items, else ##/### headings.
+  let derivedStepTitles: string[] = [];
+  if (steps.length === 0) {
+    // Models often emit a markdown-body plan instead of the structured
+    // <title>/<step> schema. Derive a preview + keep the raw markdown so the
+    // card still renders something (the Plan tab already shows raw text).
+    markdownFallback = inner;
+    if (!planTitle) {
+      const heading = inner.match(/^#{1,6}\s+(.+)$/m)?.[1]
+        ?? inner.split('\n').map((l) => l.trim()).find((l) => l.length > 0)
+        ?? '';
+      planTitle = heading.replace(/[*_`#]/g, '').trim().slice(0, 80);
+    }
+    const clean = (s: string) => s.replace(/[*_`#]/g, '').trim().slice(0, 100);
+    const numbered = [...inner.matchAll(/^\s{0,3}\d+[.)]\s+(.+)$/gm)].map((m) => clean(m[1]));
+    const headings = [...inner.matchAll(/^#{2,3}\s+(.+)$/gm)].map((m) => clean(m[1]));
+    derivedStepTitles = (numbered.length > 0 ? numbered : headings).filter(Boolean).slice(0, 8);
+    derivedStepCount = numbered.length || headings.length;
+  }
   return {
     ...data,
-    planTitle: extractTag(inner, 'title') || '',
+    planTitle,
     objective: extractTag(inner, 'objective') || '',
     inScope: extractTag(inner, 'in_scope') || '',
     outOfScope: extractTag(inner, 'out_of_scope') || '',
     complexity: extractTag(inner, 'total_estimated_complexity') || '',
     steps,
+    markdownFallback,
+    derivedStepCount,
+    derivedStepTitles,
   };
+}
+
+/** Hydrate a `<goal_plan>` block (the goal executor's JSON task array) so the
+ *  transcript shows a task card instead of dumping raw JSON. Parsing is
+ *  delegated to the goals module's tolerant parser (safe import direction:
+ *  parse.ts depends only on @/types/goals). */
+function hydrateGoalPlan(data: Record<string, unknown>, raw: string): Record<string, unknown> {
+  return { ...data, tasks: parseGoalPlan(raw) };
 }
 
 export interface StatusFile { path: string; action: string }
@@ -266,6 +302,7 @@ export function parseAgentBlocks(text: string): AgentBlock[] {
     else if (type === 'cli_approval_needed') hydrated = hydrateApprovalCard(data);
     else if (type === 'task_summary') hydrated = hydrateTaskSummary(data);
     else if (type === 'plan') hydrated = hydratePlan(data);
+    else if (type === 'goal_plan') hydrated = hydrateGoalPlan(data, m[0]);
     else if (type === 'agent_status') hydrated = hydrateStatus(data);
     else if (type === 'session_state_change') hydrated = hydrateStateChange(data);
     blocks.push({

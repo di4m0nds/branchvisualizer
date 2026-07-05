@@ -81,6 +81,10 @@ export interface AgentRequest {
   effort: 'low' | 'medium' | 'high' | 'max';
   /** Enable adaptive/extended thinking for this turn. Provider-specific mapping. */
   thinking: boolean;
+  /** Sampling temperature (per-session model config). API providers map it to
+   *  their native param; CLI/subprocess providers ignore it. Undefined =
+   *  provider default. Anthropic: must be omitted when `thinking` is on. */
+  temperature?: number;
   /** Working directory for the turn. Used by subprocess providers (Claude Code)
    *  that run a real agent in the repo; ignored by API providers. */
   cwd?: string | null;

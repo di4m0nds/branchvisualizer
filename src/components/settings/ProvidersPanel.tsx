@@ -186,7 +186,7 @@ export default function ProvidersPanel() {
     <div className="space-y-3 pt-2">
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-muted-foreground">Active model</span>
-        <ModelPicker />
+        <ModelPicker scope="global" />
       </div>
       <div className="space-y-2">
         {PROVIDERS.map((p) => (

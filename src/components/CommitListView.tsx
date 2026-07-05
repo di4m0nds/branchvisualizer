@@ -124,8 +124,8 @@ function MergeIcon({ prNumber, repoUrl }: { prNumber: string | null; repoUrl: st
       <circle cx="1.8" cy="1.8" r="1.6" />
       <circle cx="8.2" cy="1.8" r="1.6" />
       <circle cx="1.8" cy="8.2" r="1.6" />
-      <path d="M1.8 3.4v.6C1.8 5.8 3.4 7.2 5.2 7.2h3" stroke="currentColor" strokeWidth="1.1" fill="none" strokeLinecap="round"/>
-      <line x1="8.2" y1="3.4" x2="1.8" y2="3.4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/>
+      <path d="M1.8 3.4v.6C1.8 5.8 3.4 7.2 5.2 7.2h3" stroke="currentColor" strokeWidth="1.1" fill="none" strokeLinecap="round" />
+      <line x1="8.2" y1="3.4" x2="1.8" y2="3.4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
     </svg>
   );
 
@@ -301,7 +301,7 @@ interface PaginationProps {
 function Pagination({ page, pageSize, total, onPage, onPageSize }: PaginationProps) {
   const totalPages = Math.ceil(total / pageSize);
   const start = page * pageSize + 1;
-  const end   = Math.min((page + 1) * pageSize, total);
+  const end = Math.min((page + 1) * pageSize, total);
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 border-t border-border bg-muted/20 flex-shrink-0 flex-wrap">
@@ -373,9 +373,9 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
   const repoInfo = useAppSelector((s) => s.repoInfo);
   const selectedShaSet = new Set(selectedNodes.map(n => n.commit.sha));
 
-  const [page, setPage]         = useState(0);
+  const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);
-  const listRef                 = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const filteredCommits = useMemo(() => {
     if (!graphData) return [];
@@ -420,7 +420,7 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
         el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.commit.sha]);
 
   // When this list tab becomes visible with a pre-selected node (e.g. user clicked a
@@ -450,7 +450,7 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
         el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
   const handleSelect = useCallback((node: GraphNode, shiftHeld: boolean) => {
@@ -552,11 +552,6 @@ export default function CommitListView({ isActive = true }: { isActive?: boolean
         <span className="hidden md:block w-32">Branches / Tags</span>
         <span className="hidden sm:block w-20 text-center">Author</span>
         <span className="hidden sm:block w-16 text-right">When</span>
-        {/* Shift hint */}
-        <span className="hidden lg:flex items-center gap-1 ml-2 flex-shrink-0 font-normal normal-case tracking-normal opacity-50">
-          <kbd className="px-1 py-0.5 rounded border border-border bg-card text-[9px] font-mono">⇧</kbd>
-          <span className="text-[9px]">multi-select</span>
-        </span>
       </div>
 
       {/* Scrollable list */}

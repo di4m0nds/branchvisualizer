@@ -15,12 +15,24 @@ export interface CostPrefs {
   toolResultCap: number;
   /** max_tokens for the model response. */
   maxOutputTokens: number;
+  /** Transient-error retries per model call (429/5xx/network). */
+  maxRetries: number;
+  /** Hard wall-clock cap for one model call, ms. 0 = no timeout. */
+  turnTimeoutMs: number;
+  /** ≈USD cap per session — turns stop (resumable) once exceeded. null = off. */
+  sessionCostLimitUSD: number | null;
+  /** ≈USD cap per calendar day across all sessions. null = off. */
+  dailyCostLimitUSD: number | null;
 }
 
 export const DEFAULT_COST_PREFS: CostPrefs = {
   historyWindow: 0,
   toolResultCap: MODEL_TOOL_RESULT_CAP,
   maxOutputTokens: 64000,
+  maxRetries: 2,
+  turnTimeoutMs: 0,
+  sessionCostLimitUSD: null,
+  dailyCostLimitUSD: null,
 };
 
 export function loadCostPrefs(): CostPrefs {

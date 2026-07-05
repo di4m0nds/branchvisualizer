@@ -98,6 +98,7 @@ class MiniMaxTransport implements AgentTransport {
         function: { name: t.name, description: t.description, parameters: t.inputSchema },
       })),
       max_tokens: req.maxTokens,
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       stream: true,
     };
 

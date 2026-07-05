@@ -11,6 +11,7 @@ import { CliApprovalCard } from './CliApprovalCard';
 import { PendingActionBlockCard } from './PendingActionBlockCard';
 import { TaskSummaryCard } from './TaskSummaryCard';
 import { PlanCard } from './PlanCard';
+import { GoalPlanCard } from './GoalPlanCard';
 import { StatusCard } from './StatusCard';
 import { StateChangeChip } from './StateChangeChip';
 import { AgentErrorCard } from './AgentErrorCard';
@@ -78,6 +79,7 @@ export const BLOCK_RENDERERS: Record<string, ComponentType<BlockRenderProps>> = 
   ),
   task_summary: ({ block }) => <TaskSummaryCard data={block.data ?? {}} />,
   plan: ({ block }) => <PlanCard data={block.data ?? {}} />,
+  goal_plan: ({ block }) => <GoalPlanCard data={block.data ?? {}} />,
   agent_status: ({ block }) => <StatusCard data={block.data ?? {}} />,
   session_state_change: ({ block }) => <StateChangeChip data={block.data ?? {}} />,
   error_triage: ({ block, interactive }) => (

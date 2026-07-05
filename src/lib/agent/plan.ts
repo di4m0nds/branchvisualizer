@@ -15,28 +15,41 @@ export interface PlanSource {
   pending: boolean;
 }
 
+/** Extract the markdown body of an assistant message's first `plan` block, or
+ *  '' when it has none. */
+function planTextOf(m: Session['messages'][number]): string {
+  if (m.role !== 'assistant') return '';
+  const planBlock = m.blocks.find((b) => b.type === 'plan');
+  if (!planBlock) return '';
+  const inner = planBlock.data?.inner;
+  return String(
+    (typeof inner === 'string' && inner) ||
+    extractTag(planBlock.raw, 'plan') ||
+    planBlock.raw ||
+    '',
+  ).trim();
+}
+
+/** Every plan emitted in the session, oldest → newest (one per message). A
+ *  session can produce several plans over its lifetime; the Plan view lists
+ *  them as sub-tabs. `pending` is set only on the last (current) plan. */
+export function allPlans(session: Session): PlanSource[] {
+  const pending =
+    session.context.buildMode === 'planning' ||
+    session.context.status === 'pending_plan_approval' ||
+    session.context.status === 'planning';
+  const out: PlanSource[] = [];
+  for (const m of session.messages) {
+    const text = planTextOf(m);
+    if (text) out.push({ messageId: m.id, text, pending: false });
+  }
+  if (out.length > 0 && pending) out[out.length - 1].pending = true;
+  return out;
+}
+
 /** The latest plan across the session, or null if none has been emitted. */
 export function latestPlanText(session: Session): PlanSource | null {
-  for (let i = session.messages.length - 1; i >= 0; i--) {
-    const m = session.messages[i];
-    if (m.role !== 'assistant') continue;
-    const planBlock = m.blocks.find((b) => b.type === 'plan');
-    if (!planBlock) continue;
-    const inner = planBlock.data?.inner;
-    const text = String(
-      (typeof inner === 'string' && inner) ||
-      extractTag(planBlock.raw, 'plan') ||
-      planBlock.raw ||
-      '',
-    ).trim();
-    if (!text) continue;
-    const pending =
-      session.context.buildMode === 'planning' ||
-      session.context.status === 'pending_plan_approval' ||
-      session.context.status === 'planning';
-    return { messageId: m.id, text, pending };
-  }
-  return null;
+  return allPlans(session).at(-1) ?? null;
 }
 
 export interface PlanSection {

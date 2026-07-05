@@ -5,7 +5,7 @@ import { attachmentSupportFor } from '@/lib/agent/providers';
 import { invoke, isTauri } from '@/lib/platform';
 import { maybeGenerateTitle } from '@/lib/agent/autoTitle';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowDownToLine, Check, ChevronDown, Loader2, PanelLeftClose, PanelLeftOpen, Paperclip, Square, X } from 'lucide-react';
+import { ArrowDownToLine, Check, ChevronDown, Goal, Loader2, PanelLeftClose, PanelLeftOpen, Paperclip, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMaximizedPanel, usePanelZoom } from '@/hooks/usePanelFocus';
 import { PanelMaximizeButton } from '@/components/ide/FocusablePanel';
@@ -16,18 +16,27 @@ import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
 import { buildChatFontFamily } from '@/lib/terminalFont';
 import { useRepoData } from '@/hooks/useRepoData';
 import AgentBlocks from './AgentBlocks';
+import GoalDriverChip from './cards/GoalDriverChip';
 import AtMentionMenu from './AtMentionMenu';
 import AttachedPlanStrip from './AttachedPlanStrip';
 import ChatTimeline from './ChatTimeline';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 import MessageActions from './MessageActions';
 import QuestionsDialog from './QuestionsDialog';
 import RefChips from './RefChips';
+import { useAutosizeTextarea } from '@/hooks/useAutosizeTextarea';
 import LogDensityToggle from '@/components/ide/LogDensityToggle';
 import { cachedTree, useWorkspaceTree, type TreeEntry } from '@/hooks/useWorkspaceTree';
 import { fuzzyFilter } from '@/lib/fuzzy';
 import {
-  formatReferencedFiles, indexTree, parseRefTokens, resolveRefs, toMessageRefs,
+  formatDiagrams, formatKbNotes, formatReferencedFiles, indexTree, parseDiagramTokens,
+  parseKbTokens, parseRefTokens, resolveDiagramRefs, resolveKbRefs, resolveRefs, toMessageRefs,
 } from '@/lib/agent/references';
+import { kbIndexText, loadKb, pinnedNotesBlock, useKbIndex } from '@/lib/kb/kbStore';
+import { loadDiagrams, useDiagramIndex } from '@/lib/diagrams/diagramStore';
+import { startGoal } from '@/lib/goals/executor';
+import { setRightView } from '@/hooks/useSetRightView';
+import { getPrompt } from '@/lib/agent/prompts';
 import {
   deriveSteps, filterBlocksByDensity, parseQuestions, extractTag, plainTextForCopy, composeStreamingBlocks, type AgentQuestion,
 } from './blocks';
@@ -42,6 +51,7 @@ import {
   type RunTurnOptions,
 } from '@/lib/agent/planActions';
 import { runAgentTurn, type PendingAction } from '@/lib/agent/loop';
+import { registerActiveTurn } from '@/lib/agent/activeTurns';
 import type { AgentMessage, MessageRef, Session } from '@/types/session';
 import type { LogDensity } from '@/types';
 
@@ -152,7 +162,7 @@ function PendingActionCard({
 // structured content. A hover toolbar (copy / revert) appears once settled.
 // `action_log` messages (the CLI's tool steps) drop the header for a tighter,
 // log-like rhythm.
-const MessageView = memo(function MessageView({ msg, density, interactive, busy, animateIn, cliApprovalHint, onOpenQuestions, onRevert, onApproveCliBypass, onPendingAction, onRetry, registerRef }: {
+const MessageView = memo(function MessageView({ msg, density, interactive, busy, animateIn, cliApprovalHint, onOpenQuestions, onRevert, onApproveCliBypass, onPendingAction, onRetry, onPreviewImage, registerRef }: {
   msg: AgentMessage;
   density: LogDensity;
   interactive: boolean;
@@ -168,9 +178,12 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
   onApproveCliBypass: () => void;
   onPendingAction: (decision: 'approve' | 'reject') => void;
   onRetry: () => void;
+  /** Open the hoisted lightbox seeded with this message's images. */
+  onPreviewImage: (images: LightboxImage[], index: number) => void;
   registerRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
   const isUser = msg.role === 'user';
+  const isDriver = isUser && !!msg.driver;
   const isActionLog = msg.blocks.length > 0 && msg.blocks.every((b) => b.type === 'action_log');
   const showActions = !isActionLog && !msg.streaming;
   // While streaming, `blocks` is intentionally empty (the loop defers parsing);
@@ -201,14 +214,14 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
       initial={animateIn ? { opacity: 0, y: 8 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
-      className={cn('group flex flex-col gap-1.5 scroll-mt-3', isUser ? 'items-end' : 'items-start')}
+      className={cn('group flex flex-col gap-1.5 scroll-mt-3', isUser && !isDriver ? 'items-end' : 'items-start')}
       // Offscreen messages skip layout/paint; the intrinsic-size hint keeps the
       // scrollbar stable. Streaming messages opt out so growth is measured live
       // (the stick-to-bottom ResizeObserver watches the content box).
       style={msg.streaming ? undefined : { contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
     >
       {/* Role header: dot + name + timestamp */}
-      {!isActionLog && (
+      {!isActionLog && !isDriver && (
         <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70">
           <span className={cn('w-1.5 h-1.5 rounded-full', isUser ? 'bg-primary/70' : 'bg-emerald-400/70')} />
           <span>{isUser ? 'You' : 'Agent'}</span>
@@ -222,25 +235,53 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
       {/* Bubble */}
       <div className={cn(
         'max-w-full min-w-0 text-sm',
-        isUser
-          ? 'rounded-2xl rounded-tr-sm bg-primary/5 border border-primary/10 px-3.5 py-2.5'
-          : isActionLog
-            ? 'w-full'
+        isDriver
+          ? 'w-full'
+          : isUser
+            ? 'rounded-2xl rounded-tr-sm bg-primary/5 border border-primary/10 px-3.5 py-2.5'
             : 'w-full',
       )}>
-        {isUser
+        {isDriver
+          ? <GoalDriverChip driver={msg.driver!} text={msg.text} />
+          : isUser
           ? (
             <div className="min-w-0">
               {msg.refs && msg.refs.length > 0 && <RefChips refs={msg.refs} />}
-              {msg.attachments && msg.attachments.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1 justify-end">
-                  {msg.attachments.map((a, i) => (
-                    <span key={i} className="px-1.5 py-0.5 rounded-full border border-border/60 bg-muted/30 text-[9px] font-mono text-muted-foreground" title={a.path ?? a.name}>
-                      📎 {a.name}
-                    </span>
-                  ))}
-                </div>
-              )}
+              {msg.attachments && msg.attachments.length > 0 && (() => {
+                // Thumbnails for images whose base64 is still in memory (the
+                // payload is stripped at persistence — after a reload they
+                // fall back to name chips). Clicking opens the lightbox
+                // seeded with every previewable image of this message.
+                const previewable: LightboxImage[] = msg.attachments
+                  .filter((a) => a.kind === 'image' && a.base64)
+                  .map((a) => ({ src: `data:${a.mime};base64,${a.base64}`, name: a.name }));
+                return (
+                  <div className="flex flex-wrap gap-1.5 mt-1 justify-end">
+                    {msg.attachments.map((a, i) => {
+                      const previewIdx = previewable.findIndex((p) => p.name === a.name);
+                      return a.kind === 'image' && a.base64 ? (
+                        <button
+                          key={i}
+                          onClick={() => onPreviewImage(previewable, Math.max(0, previewIdx))}
+                          title={`${a.name} — click to preview`}
+                          className="rounded-md border border-border/60 overflow-hidden hover:ring-2 hover:ring-primary/40 transition-shadow"
+                        >
+                          <img
+                            src={`data:${a.mime};base64,${a.base64}`}
+                            alt={a.name}
+                            className="w-16 h-16 object-cover"
+                            draggable={false}
+                          />
+                        </button>
+                      ) : (
+                        <span key={i} className="px-1.5 py-0.5 rounded-full border border-border/60 bg-muted/30 text-[9px] font-mono text-muted-foreground self-center" title={a.path ?? a.name}>
+                          📎 {a.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               <p className="whitespace-pre-wrap break-words text-foreground/90 leading-relaxed">
                 {renderUserText(msg.text, msg.refs)}
               </p>
@@ -321,6 +362,8 @@ export default function ChatPanel({ session }: { session: Session }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Grow the composer with its content up to ~4 lines, then scroll.
+  useAutosizeTextarea(composerRef, input, { minPx: 56, maxPx: 112 });
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [atBottom, setAtBottom] = useState(true);
   const [unread, setUnread] = useState(0);
@@ -341,20 +384,49 @@ export default function ChatPanel({ session }: { session: Session }) {
   // fires once per question message via autoOpenedRef.
   const [activeQuestions, setActiveQuestions] = useState<{ messageId: string; list: AgentQuestion[] } | null>(null);
   const autoOpenedRef = useRef<string | null>(null);
+  // Single hoisted image lightbox — composer thumbnails and sent-message
+  // thumbnails both open it, seeded with their image set.
+  const [lightbox, setLightbox] = useState<{ images: LightboxImage[]; index: number } | null>(null);
+  const openImagePreview = useCallback(
+    (images: LightboxImage[], index: number) => setLightbox({ images, index }),
+    [],
+  );
 
   // Always read the freshest session from state (props may be a stale snapshot).
   const live = useAppSelector((s) => s.sessions.find((x) => x.id === session.id)) ?? session;
   const turns = useMemo(() => deriveSteps(live.messages), [live.messages]);
 
+  // Owning project: enables the knowledge base (pinned-note injection, @kb:
+  // mentions, knowledge tools) — all project-level, shared across sessions.
+  const project = useAppSelector(
+    (s) => s.projects.find((p) => p.id === session.projectId) ?? null,
+  );
+  const kbIndex = useKbIndex(project);
+  const diagramIndex = useDiagramIndex(project);
+  useEffect(() => {
+    if (!project) return;
+    void loadKb(project);
+    void loadDiagrams(project);
+  }, [project]);
+
   // ── @-mention wiring: lazy workspace tree + fuzzy matches for the menu ──
   const { entries: treeEntries, loading: treeLoading } = useWorkspaceTree(live.cwd, atToken !== null);
   const atMatches = useMemo(() => {
     if (!atToken) return [];
-    const byPath = new Map(treeEntries.map((e) => [e.path, e]));
-    return fuzzyFilter(atToken.query, treeEntries.map((e) => e.path), 12)
+    // Knowledge-base notes and diagrams join the menu as synthetic
+    // `kb:<slug>` / `diagram:<kebab-name>` entries.
+    const kbEntries: TreeEntry[] = kbIndex.map((n) => ({
+      path: `kb:${n.slug}`, name: n.title, isDir: false, sizeBytes: 0, depth: 0,
+    }));
+    const diagramEntries: TreeEntry[] = diagramIndex.map((d) => ({
+      path: `diagram:${d.name.toLowerCase().replace(/\s+/g, '-')}`, name: d.name, isDir: false, sizeBytes: 0, depth: 0,
+    }));
+    const all = [...treeEntries, ...kbEntries, ...diagramEntries];
+    const byPath = new Map(all.map((e) => [e.path, e]));
+    return fuzzyFilter(atToken.query, all.map((e) => e.path), 12)
       .map((p) => byPath.get(p))
       .filter((e): e is TreeEntry => !!e);
-  }, [atToken, treeEntries]);
+  }, [atToken, treeEntries, kbIndex, diagramIndex]);
   useEffect(() => { setAtIndex(0); }, [atToken?.query]);
 
   // The @-token under the caret: `@` at start-of-text or after whitespace,
@@ -365,7 +437,8 @@ export default function ChatPanel({ session }: { session: Session }) {
     if (at < 0) return null;
     if (at > 0 && !/\s/.test(before[at - 1])) return null;
     const query = before.slice(at + 1);
-    if (!/^[A-Za-z0-9_./\\-]*$/.test(query)) return null;
+    // ':' admitted for the `kb:`/`diagram:` namespaces.
+    if (!/^[A-Za-z0-9_./\\:-]*$/.test(query)) return null;
     return { start: at, query };
   }, []);
 
@@ -570,22 +643,32 @@ export default function ChatPanel({ session }: { session: Session }) {
     setBusy(true);
     // Fresh abort controller per turn — Stop button aborts this one.
     abortRef.current = new AbortController();
+    // Surface this turn in the Monitor panel's live list (with a Stop handle).
+    const unregisterTurn = registerActiveTurn({
+      sessionId: session.id,
+      projectId: live.projectId,
+      title: live.title,
+      startedAt: Date.now(),
+      source: 'chat',
+      stop: () => abortRef.current?.abort(),
+    });
     try {
-      // Per-task model routing: planning turns may use a routed (cheaper)
-      // model; resolution falls back to the session model when the routed
-      // provider isn't connected. Context patches apply before resolution so
-      // an approval that flips planning→direct routes the SAME turn correctly.
-      const { currentModel, providerStatus } = getAppState();
-      const liveMode = opts?.contextPatch?.buildMode
-        ?? getAppState().sessions.find((s) => s.id === session.id)?.context.buildMode
-        ?? live.context.buildMode;
-      const { model } = resolveTaskModel(liveMode === 'planning' ? 'planning' : 'main', currentModel, providerStatus);
-      const transport = await getTransport(model.providerId, model.modelId, model.context);
-      const ts = new Date().toISOString();
       // Re-read the freshest session at call time (build mode may have flipped).
       // A `contextPatch` lets a just-dispatched change (e.g. cliBypass) apply to
       // THIS turn before the store re-render lands.
+      const { currentModel, providerStatus } = getAppState();
       let base = getAppState().sessions.find((s) => s.id === session.id) ?? live;
+      // Per-session model: each session owns its provider/model selection
+      // (falling back to the global default for un-migrated state). Per-task
+      // routing may still redirect planning turns to a cheaper model; it falls
+      // back to THIS session's model when the routed provider isn't connected.
+      const sessionModel = base.modelConfig?.model ?? currentModel;
+      const liveMode = opts?.contextPatch?.buildMode
+        ?? base.context.buildMode
+        ?? live.context.buildMode;
+      const { model } = resolveTaskModel(liveMode === 'planning' ? 'planning' : 'main', sessionModel, providerStatus);
+      const transport = await getTransport(model.providerId, model.modelId, model.context);
+      const ts = new Date().toISOString();
       if (opts?.messagesUpTo) {
         const idx = base.messages.findIndex((m) => m.id === opts.messagesUpTo);
         if (idx >= 0) base = { ...base, messages: base.messages.slice(0, idx) };
@@ -593,13 +676,36 @@ export default function ChatPanel({ session }: { session: Session }) {
       const current = opts?.contextPatch
         ? { ...base, context: { ...base.context, ...opts.contextPatch } }
         : base;
+      // Knowledge-base injection: pinned notes + a one-line index prepended to
+      // the turn's hiddenText (in-band, so CLI providers see it too; stripped
+      // at persistence). Toggle lives in the Agent Settings drawer.
+      let hiddenText = opts?.hiddenText;
+      if (project && (current.context.kb?.autoInject ?? true)) {
+        try {
+          const [pinnedBlock, indexText] = await Promise.all([
+            pinnedNotesBlock(project),
+            kbIndexText(project),
+          ]);
+          if (pinnedBlock || indexText) {
+            const kbBlock = [
+              getPrompt('kb_injection_header'),
+              '<project_knowledge>',
+              ...(pinnedBlock ? [pinnedBlock] : []),
+              ...(indexText ? [`<note_index>\n${indexText}\n</note_index>`] : []),
+              '</project_knowledge>',
+            ].join('\n');
+            hiddenText = hiddenText ? `${kbBlock}\n\n${hiddenText}` : kbBlock;
+          }
+        } catch { /* KB must never block a turn */ }
+      }
       await runAgentTurn(current, text, {
         transport,
         dispatch,
+        project: project ?? undefined,
         requestApproval,
         onSideEffect,
         signal: abortRef.current.signal,
-      }, ts, { display: opts?.display, hiddenText: opts?.hiddenText, refs: opts?.refs, attachments: opts?.attachments });
+      }, ts, { display: opts?.display, hiddenText, refs: opts?.refs, attachments: opts?.attachments });
     } catch (e) {
       // Aborts flow through the loop's clean-stop path; anything reaching here
       // is a real error.
@@ -608,6 +714,7 @@ export default function ChatPanel({ session }: { session: Session }) {
         toast.error('Agent error', { description: e instanceof Error ? e.message : String(e) });
       }
     } finally {
+      unregisterTurn();
       abortRef.current = null;
       setBusy(false);
     }
@@ -635,7 +742,11 @@ export default function ChatPanel({ session }: { session: Session }) {
   }, [busy, live.messages, dispatch, session.id]);
 
   // ── Attachments (images + PDF; provider-capability gated) ────────────────
-  const attachSupport = attachmentSupportFor(useAppSelector((sel) => sel.currentModel.providerId));
+  // Capability follows the SESSION's provider (per-session model config).
+  const attachSupport = attachmentSupportFor(useAppSelector(
+    (sel) => sel.sessions.find((s) => s.id === session.id)?.modelConfig?.model.providerId
+      ?? sel.currentModel.providerId,
+  ));
   const canAttach = isTauri() && (attachSupport.image || attachSupport.pdf || attachSupport.pathPassthrough);
 
   async function pickAttachments() {
@@ -704,12 +815,36 @@ export default function ChatPanel({ session }: { session: Session }) {
         setResolvingRefs(0);
       }
     }
+    // @kb:<slug> notes and @diagram:<name> diagrams — separate namespaces
+    // resolved against the project stores; travel via the same hiddenText
+    // channel (which is what reaches CLI providers too).
+    if (project) {
+      const kbParsed = parseKbTokens(text);
+      if (kbParsed.length > 0) {
+        try {
+          const kbResolved = await resolveKbRefs(project, kbParsed);
+          const block = formatKbNotes(kbResolved);
+          if (block) hiddenText = hiddenText ? `${hiddenText}\n\n${block}` : block;
+          refs = [...(refs ?? []), ...toMessageRefs(kbResolved)];
+        } catch { /* never block sending */ }
+      }
+      const diagramParsed = parseDiagramTokens(text);
+      if (diagramParsed.length > 0) {
+        try {
+          const diagramResolved = await resolveDiagramRefs(project, diagramParsed);
+          const block = formatDiagrams(diagramResolved);
+          if (block) hiddenText = hiddenText ? `${hiddenText}\n\n${block}` : block;
+          refs = [...(refs ?? []), ...toMessageRefs(diagramResolved)];
+        } catch { /* never block sending */ }
+      }
+    }
     // First user message of the session → optionally generate a better title
     // with the routed `title` model (fire-and-forget; heuristic title already
     // applied by the reducer, so failures cost nothing).
     if (!live.messages.some((m) => m.role === 'user')) {
-      const { currentModel, providerStatus } = getAppState();
-      void maybeGenerateTitle(session.id, text, currentModel, providerStatus, dispatch);
+      const { currentModel, providerStatus, sessions } = getAppState();
+      const sessionModel = sessions.find((s) => s.id === session.id)?.modelConfig?.model ?? currentModel;
+      void maybeGenerateTitle(session.id, text, sessionModel, providerStatus, dispatch);
     }
     const outAttachments = attachments.length ? attachments : undefined;
     setAttachments([]);
@@ -719,6 +854,21 @@ export default function ChatPanel({ session }: { session: Session }) {
   // Plan-approval driver + derivations live in planActions (pure, testable).
   function approvePlan() {
     approvePlanAction(live.id, dispatch, runTurn);
+  }
+
+  // Autonomous goal mode: the composer text becomes the goal; a dedicated
+  // session + executor take over (Monitor → Goals is the dashboard).
+  function runAsGoal() {
+    const goal = input.trim();
+    if (!goal || !project) return;
+    setInput('');
+    // Seed the goal with THIS session's model so the picker selection carries
+    // over (goals otherwise fell back to the global default).
+    const { currentModel, sessions } = getAppState();
+    const sessionModel = sessions.find((s) => s.id === session.id)?.modelConfig?.model ?? currentModel;
+    startGoal(project, goal, dispatch, { model: sessionModel });
+    setRightView('monitor');
+    toast.success('Goal started', { description: 'Planning… track it in Monitor → Goals.' });
   }
 
   const last = live.messages[live.messages.length - 1];
@@ -834,6 +984,7 @@ export default function ChatPanel({ session }: { session: Session }) {
                     onApproveCliBypass={approveCliBypass}
                     onPendingAction={handlePendingAction}
                     onRetry={retryLastTurn}
+                    onPreviewImage={openImagePreview}
                     registerRef={registerRef}
                   />
                 );
@@ -928,24 +1079,57 @@ export default function ChatPanel({ session }: { session: Session }) {
         <div className="pointer-events-none absolute -top-6 left-0 right-0 h-6 bg-gradient-to-t from-background to-transparent" />
         {attachments.length > 0 && (
           <div className={cn('flex flex-wrap items-center gap-1.5 pb-2', maximized && 'max-w-5xl mx-auto')}>
-            {attachments.map((a, i) => (
-              <span key={`${a.name}-${i}`} className="flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-muted/30 text-[10px] font-mono text-muted-foreground">
-                <Paperclip className="w-3 h-3" />
-                <span className="max-w-[160px] truncate" title={a.path ?? a.name}>{a.name}</span>
-                <span className="text-muted-foreground/60">{(a.sizeBytes / 1024 / 1024).toFixed(1)}MB</span>
-                <button
-                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                  className="hover:text-foreground"
-                  title="Remove attachment"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
+            {attachments.map((a, i) => {
+              if (a.kind === 'image' && a.base64) {
+                // Image attachments preview as thumbnails; click opens the
+                // lightbox seeded with every image currently attached.
+                const images: LightboxImage[] = attachments
+                  .filter((x) => x.kind === 'image' && x.base64)
+                  .map((x) => ({ src: `data:${x.mime};base64,${x.base64}`, name: x.name }));
+                const idx = images.findIndex((img) => img.name === a.name);
+                return (
+                  <span key={`${a.name}-${i}`} className="relative group/thumb">
+                    <button
+                      onClick={() => openImagePreview(images, Math.max(0, idx))}
+                      title={`${a.name} · ${(a.sizeBytes / 1024 / 1024).toFixed(1)}MB — click to preview`}
+                      className="block rounded-md border border-border overflow-hidden hover:ring-2 hover:ring-primary/40 transition-shadow"
+                    >
+                      <img
+                        src={`data:${a.mime};base64,${a.base64}`}
+                        alt={a.name}
+                        className="w-12 h-12 object-cover"
+                        draggable={false}
+                      />
+                    </button>
+                    <button
+                      onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full border border-border bg-background text-muted-foreground hover:text-foreground opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+                      title="Remove attachment"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              }
+              return (
+                <span key={`${a.name}-${i}`} className="flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-muted/30 text-[10px] font-mono text-muted-foreground">
+                  <Paperclip className="w-3 h-3" />
+                  <span className="max-w-[160px] truncate" title={a.path ?? a.name}>{a.name}</span>
+                  <span className="text-muted-foreground/60">{(a.sizeBytes / 1024 / 1024).toFixed(1)}MB</span>
+                  <button
+                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="hover:text-foreground"
+                    title="Remove attachment"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
         <div className={cn(
-          'relative flex items-stretch gap-2 rounded-xl border bg-muted/10 p-1.5 transition-colors',
+          'relative flex items-end gap-2 rounded-xl border bg-muted/10 p-1.5 transition-colors',
           'border-border/70 focus-within:border-primary/50 focus-within:bg-muted/20',
           maximized && 'max-w-5xl mx-auto',
         )}>
@@ -967,7 +1151,7 @@ export default function ChatPanel({ session }: { session: Session }) {
             title={canAttach
               ? 'Attach images or PDFs for the model'
               : 'The selected provider does not accept file attachments'}
-            className="self-end mb-1 p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-30 transition-colors"
+            className="self-end mb-2 p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-30 transition-colors"
           >
             {attaching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
           </button>
@@ -1005,7 +1189,8 @@ export default function ChatPanel({ session }: { session: Session }) {
               : showApprovePlan ? 'Approve the plan, or type feedback to revise it…'
                 : 'Message the agent…  (@ to attach files, Enter to send, Shift+Enter for newline)'}
             disabled={busy}
-            className="flex-1 h-14 resize-none rounded-lg bg-transparent px-2.5 py-2 text-sm
+            rows={1}
+            className="flex-1 min-h-[56px] max-h-[112px] resize-none rounded-lg bg-transparent px-2.5 py-2 text-sm
                        focus:outline-none disabled:opacity-60 placeholder:text-muted-foreground/50"
           />
           {busy ? (
@@ -1014,7 +1199,7 @@ export default function ChatPanel({ session }: { session: Session }) {
               variant="destructive"
               title="Stop the agent"
               aria-label="Stop"
-              className="h-14 rounded-lg px-5 flex items-center gap-1.5 self-stretch"
+              className="h-11 rounded-lg px-5 flex items-center gap-1.5 self-end mb-0.5"
             >
               <Square className="w-4 h-4 fill-current" />
               <span className="hidden sm:inline">Stop</span>
@@ -1023,20 +1208,31 @@ export default function ChatPanel({ session }: { session: Session }) {
             <Button
               onClick={approvePlan}
               title="Approve the plan and start implementing"
-              className="h-14 rounded-lg px-5 flex items-center gap-1.5 self-stretch bg-emerald-600 hover:bg-emerald-500 text-white"
+              className="h-11 rounded-lg px-5 flex items-center gap-1.5 self-end mb-0.5 bg-emerald-600 hover:bg-emerald-500 text-white"
             >
               <Check className="w-4 h-4" />
               <span className="hidden sm:inline">Approve implementation</span>
               <span className="sm:hidden">Approve</span>
             </Button>
           ) : (
-            <Button
-              onClick={send}
-              disabled={!input.trim()}
-              className="h-14 rounded-lg px-5 self-stretch"
-            >
-              Send
-            </Button>
+            <div className="flex items-center gap-1.5 self-end mb-0.5">
+              <Button
+                onClick={runAsGoal}
+                disabled={!input.trim() || !project}
+                variant="outline"
+                title="Run as goal: the agent plans this objective into tasks and executes them autonomously (Monitor → Goals tracks progress)"
+                className="h-11 rounded-lg px-3"
+              >
+                <Goal className="w-4 h-4" />
+              </Button>
+              <Button
+                onClick={send}
+                disabled={!input.trim()}
+                className="h-11 rounded-lg px-5"
+              >
+                Send
+              </Button>
+            </div>
           )}
         </div>
       </div>
@@ -1048,6 +1244,13 @@ export default function ChatPanel({ session }: { session: Session }) {
         onSubmit={(text) => { setActiveQuestions(null); runTurn(text); }}
         onDismiss={() => setActiveQuestions(null)}
       />
+      {lightbox && (
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

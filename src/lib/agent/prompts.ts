@@ -218,6 +218,85 @@ const CORE_TEMPLATES: PromptTemplate[] = [
     vars: ['message'],
   },
   {
+    id: 'kb_injection_header',
+    group: 'system',
+    label: 'Knowledge base injection header',
+    description: 'Precedes the <project_knowledge> block (pinned notes + note index) prepended to turns when KB injection is on.',
+    defaultText: 'The project has a persistent knowledge base (notes maintained by the user, shared across all sessions). Pinned notes follow — treat them as standing project context. The index lists every note; read others on demand (read_knowledge tool, or the files under .code-agent/kb/ in the repo).',
+  },
+  {
+    id: 'cc_kb_pointer',
+    group: 'claude_code',
+    label: 'Claude Code knowledge-base pointer',
+    description: 'One-liner appended to the CLI prompt pointing at the on-disk knowledge base ({path} is the kb directory).',
+    defaultText: '\n\n**Project knowledge base.** Persistent project notes live at `{path}` (index.json + notes/*.md). Consult them for project conventions, architecture decisions, and standing context; update them only when the user asks.',
+    vars: ['path'],
+  },
+  {
+    id: 'goal_plan',
+    group: 'drivers',
+    label: 'Goal planning prompt',
+    description: 'First turn of a goal run: decompose {goal} into an ordered task list the executor can drive.',
+    defaultText: `You are planning the autonomous execution of a high-level goal. Investigate the repository as needed (read-only), then decompose the goal into at least 3 (up to 10) concrete, independently-executable tasks.
+
+Goal: {goal}
+
+End your response with EXACTLY one <goal_plan> block containing a JSON array. Each task has this shape (angle-bracket parts are placeholders — replace them with real, goal-specific text; never copy the placeholder words):
+{"id":"t1","title":"<imperative action for THIS goal>","description":"<what to do and how to know it's done>","deps":["t0"],"needsApproval":false,"verify_command":"<optional shell command that exits 0 on success, else empty>"}
+
+Rules: produce 3+ tasks; ids t1..tN; each title is a real, specific action for this goal (not the placeholder text); deps only reference earlier ids; mark tasks that change infrastructure, delete data, or publish anything with "needsApproval": true; prefer a verify_command (tests, typecheck, build) wherever one exists. The <goal_plan> block is the last thing in your reply.`,
+    vars: ['goal'],
+  },
+  {
+    id: 'goal_plan_retry',
+    group: 'drivers',
+    label: 'Goal planning retry',
+    description: 'Corrective follow-up when the planning turn produced no parseable <goal_plan> block.',
+    defaultText: `Your previous reply contained no parseable <goal_plan> block. Do not investigate further and do not add prose. Reply with ONLY one <goal_plan> block — a compact JSON array (so it is not cut off) with at least 3 tasks, each title a real, specific action for the goal below (never the placeholder wording).
+
+Goal: {goal}
+
+The entire reply must be exactly:
+<goal_plan>
+[ … the JSON task array … ]
+</goal_plan>`,
+    vars: ['goal'],
+  },
+  {
+    id: 'goal_task_driver',
+    group: 'drivers',
+    label: 'Goal task driver',
+    description: 'Per-task execution prompt built from GoalRun state (goal, completed-task summaries, current task).',
+    defaultText: `You are executing one task of an autonomous goal run. Work until THIS task is complete, then stop.
+
+Goal: {goal}
+
+Completed so far:
+{completed}
+
+Current task ({task_id}): {task_title}
+{task_description}
+
+Do the work now using your tools. When finished, end your response with EXACTLY one tag:
+<task_result status="done" summary="1-3 sentences: what you did and anything the next task needs to know"/>
+Use status="failed" (with the reason in summary) if the task cannot be completed, or status="blocked" if it depends on something outside your control. Do not ask questions — decide and act; note assumptions in the summary.`,
+    vars: ['goal', 'completed', 'task_id', 'task_title', 'task_description'],
+  },
+  {
+    id: 'goal_verify_fix',
+    group: 'drivers',
+    label: 'Goal verification fix',
+    description: 'Sent when a task\'s verify command fails: {command} and {output} are from the failed run.',
+    defaultText: `The verification command for the task you just completed failed. Fix the problem, then end with a <task_result> tag as before.
+
+Command: \`{command}\`
+Output:
+\`\`\`
+{output}
+\`\`\``,
+    vars: ['command', 'output'],
+  },
+  {
     id: 'triage_diagnose',
     group: 'drivers',
     label: 'Error triage diagnose',

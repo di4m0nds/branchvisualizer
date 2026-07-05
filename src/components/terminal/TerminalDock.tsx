@@ -9,8 +9,13 @@ import Terminal from './Terminal';
 import { nextId } from '@/types/session';
 import type { TerminalDef } from '@/types/terminal';
 import { subscribeOpenInNvim } from '@/hooks/useOpenInNvim';
+import { subscribeRunInTerminal } from '@/hooks/useRunInTerminal';
 import { usePanelZoom } from '@/hooks/usePanelFocus';
 import { PanelMaximizeButton } from '@/components/ide/FocusablePanel';
+import { listShells, loadTerminalPrefs, type ShellInfo } from '@/lib/terminalPrefs';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 
 const MAX_SHELLS = 4;
 
@@ -20,10 +25,30 @@ function makeNvim(cwd: string): TerminalDef {
 
 // Shell titles are numbered off the live shell list ("Shell", "Shell 2", ...).
 // Renames replace the title but don't shift the numbering of future shells.
-function makeShell(cwd: string, existing: TerminalDef[]): TerminalDef {
+// `shell` (from the "+" menu) wins over the configured default; both fall back
+// to the platform default resolved Rust-side when unset.
+function makeShell(cwd: string, existing: TerminalDef[], shell?: ShellInfo): TerminalDef {
   const n = existing.length;
-  const title = n === 0 ? 'Shell' : `Shell ${n + 1}`;
-  return { id: nextId('term'), role: 'shell', title, cwd };
+  const base = shell && shell.id !== 'default' ? shell.label : 'Shell';
+  const title = n === 0 ? base : `${base} ${n + 1}`;
+  const cmd = shell && shell.id !== 'default' ? shell.path : loadTerminalPrefs().defaultShell;
+  return { id: nextId('term'), role: 'shell', title, cwd, ...(cmd ? { cmd } : {}) };
+}
+
+// A tab that runs a detected project command in an interactive PTY. `sh -c`
+// (`cmd /C` on Windows) starts deterministically — no race against a user
+// shell's rc/prompt readiness — while the PTY keeps it fully interactive
+// (Ctrl+C, stdin). The tab's process ends when the command exits.
+function makeCommandTab(cwd: string, command: string, title: string): TerminalDef {
+  const isWin = typeof navigator !== 'undefined' && /win/i.test(navigator.platform);
+  return {
+    id: nextId('term'),
+    role: 'shell',
+    title,
+    cwd,
+    cmd: isWin ? 'cmd' : 'sh',
+    args: isWin ? ['/C', command] : ['-c', command],
+  };
 }
 
 /**
@@ -79,13 +104,33 @@ export default memo(function TerminalDock({
     if (collapsed) onToggleCollapsed?.();
   }, [collapsed, onToggleCollapsed]);
 
-  const addShell = useCallback(() => {
+  const addShell = useCallback((shell?: ShellInfo) => {
     if (shellsRef.current.length >= MAX_SHELLS) return;
-    const t = makeShell(cwd, shellsRef.current);
+    const t = makeShell(cwd, shellsRef.current, shell);
     setShells((prev) => [...prev, t]);
     setActiveId(t.id);
     if (collapsed) onToggleCollapsed?.();
   }, [cwd, collapsed, onToggleCollapsed]);
+
+  // Open an interactive tab running a detected project command (Commands panel).
+  const addCommandTab = useCallback((command: string, title: string) => {
+    if (shellsRef.current.length >= MAX_SHELLS) {
+      toast.error(`Close a terminal first — up to ${MAX_SHELLS} open at once.`);
+      return;
+    }
+    const t = makeCommandTab(cwd, command, title);
+    setShells((prev) => [...prev, t]);
+    setActiveId(t.id);
+    if (collapsed) onToggleCollapsed?.();
+  }, [cwd, collapsed, onToggleCollapsed]);
+
+  // Detected shells for the "+" menu (existence-checked Rust-side).
+  const [availableShells, setAvailableShells] = useState<ShellInfo[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void listShells().then((s) => { if (alive) setAvailableShells(s); });
+    return () => { alive = false; };
+  }, []);
 
   const closeShell = useCallback((id: string) => {
     delete writersRef.current[id];
@@ -126,6 +171,14 @@ export default memo(function TerminalDock({
   const handleNvimExit = useCallback(() => {
     setNvimBootId((x) => x + 1);
   }, []);
+
+  // Run-in-terminal bus: the Commands panel opens a detected command as a new
+  // interactive dock tab (replaces the old non-interactive side drawer).
+  useEffect(() => {
+    return subscribeRunInTerminal(sessionId, ({ command, title }) => {
+      addCommandTab(command, title);
+    });
+  }, [sessionId, addCommandTab]);
 
   // Open-in-nvim bus: send `:e <path>` to the singleton nvim.
   useEffect(() => {
@@ -228,16 +281,45 @@ export default memo(function TerminalDock({
             );
           })}
 
-          {/* Add-shell button — hides when at cap */}
+          {/* Add-shell button — hides when at cap. With detected shells it
+              becomes a menu (default + one entry per shell); otherwise a plain
+              "new default shell" button. */}
           {shells.length < MAX_SHELLS && (
-            <button
-              onClick={addShell}
-              className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
-              title="New shell"
-            >
-              <Plus className="w-3 h-3" />
-              <TerminalSquare className="w-3 h-3" />
-            </button>
+            availableShells.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
+                    title="New shell — click to pick which shell"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <TerminalSquare className="w-3 h-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52">
+                  <DropdownMenuItem onSelect={() => addShell()}>
+                    <TerminalSquare className="w-3 h-3" /> New shell (default)
+                  </DropdownMenuItem>
+                  <DropdownMenuLabel>Open with…</DropdownMenuLabel>
+                  {availableShells.filter((s) => s.id !== 'default').map((s) => (
+                    <DropdownMenuItem key={s.path} onSelect={() => addShell(s)}>
+                      <TerminalSquare className="w-3 h-3" />
+                      <span className="flex-1 truncate">{s.label}</span>
+                      <span className="text-[9px] text-muted-foreground/50 font-mono truncate max-w-24" title={s.path}>{s.path}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <button
+                onClick={() => addShell()}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
+                title="New shell"
+              >
+                <Plus className="w-3 h-3" />
+                <TerminalSquare className="w-3 h-3" />
+              </button>
+            )
           )}
         </div>
 

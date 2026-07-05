@@ -146,6 +146,25 @@ export function sessionsReducer(state: AppState, action: AppAction): AppState | 
     case 'SET_SESSION_CLI_BYPASS':
       return patchContext(state, action.sessionId, { cliBypass: action.bypass });
 
+    // ── Per-session model config ──
+    case 'SET_SESSION_MODEL':
+      return mapSession(state, action.sessionId, (s) => ({
+        ...s,
+        modelConfig: { ...s.modelConfig, model: action.model },
+      }));
+
+    case 'PATCH_SESSION_MODEL_CONFIG':
+      return mapSession(state, action.sessionId, (s) => ({
+        ...s,
+        modelConfig: {
+          // Healed at load time, but defend against a session that somehow
+          // lacks a config: fall back to the global model.
+          model: s.modelConfig?.model ?? state.currentModel,
+          ...s.modelConfig,
+          ...action.patch,
+        },
+      }));
+
     // ── Plan view ──
     case 'ADD_PLAN_COMMENT':
       return mapSession(state, action.sessionId, (s) => ({

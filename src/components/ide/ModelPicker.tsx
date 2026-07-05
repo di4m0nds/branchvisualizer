@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, RotateCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppSelector, useAppDispatch } from '@/store/store';
-import { PROVIDERS } from '@/lib/agent/providers';
+import { useSessionModel } from '@/hooks/useSessionModel';
+import { PROVIDERS, findProvider } from '@/lib/agent/providers';
+import { probeAllProviders } from '@/lib/agent/providers/probe';
 import { setProviderKey } from '@/lib/providerKeys';
 import type { ContextSizeId, ProbeResult, ProbeState, Provider } from '@/lib/agent/transport';
 import { AUTH_KIND, stateColor, tierColor, stateLabel, shortModel } from '@/lib/agent/providerPresentation';
@@ -15,6 +17,9 @@ const KEY_PROVIDER_ID: Record<string, string> = {
   gemini: 'gemini',
   antigravity: 'antigravity',
   minimax: 'minimax',
+  openrouter: 'openrouter',
+  xai: 'xai',
+  deepseek: 'deepseek',
 };
 
 // Model picker + probe status panel — the "easy way to verify the IDE is
@@ -29,7 +34,7 @@ function ProviderRow({
   provider: Provider;
   status: ProbeResult | null;
   selected: { providerId: string; modelId: string; context?: ContextSizeId };
-  onSelectModel: (providerId: string, modelId: string, context?: ContextSizeId) => void;
+  onSelectModel: (providerId: string, modelId: string) => void;
   onSaveKey: (providerId: string, key: string) => Promise<void>;
   onRetry: (providerId: string) => Promise<void>;
 }) {
@@ -128,48 +133,19 @@ function ProviderRow({
       <div className="flex flex-col gap-1 p-1.5">
         {provider.models().map((m) => {
           const isSelected = selected.providerId === provider.id && selected.modelId === m.id;
-          const opts = m.contextOptions ?? [];
-          const hasChoice = opts.length > 1;
-          const activeCtx: ContextSizeId = isSelected ? (selected.context ?? 'standard') : 'standard';
           return (
-            <div key={m.id} className="flex flex-col gap-1">
-              <button
-                onClick={() => onSelectModel(provider.id, m.id, isSelected ? activeCtx : 'standard')}
-                className={cn(
-                  'flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-mono transition-colors text-left',
-                  isSelected ? 'bg-primary/15 text-primary border border-primary/40'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/30 border border-transparent',
-                )}
-                title={`${m.id} · ${(m.contextTokens ?? 0).toLocaleString()} tok standard context`}
-              >
-                {m.label}
-              </button>
-              {isSelected && hasChoice && (
-                <div className="flex items-center gap-1 pl-2">
-                  <span className="text-[9px] uppercase tracking-wider text-muted-foreground/50">context</span>
-                  {opts.map((opt) => {
-                    const active = activeCtx === opt.id;
-                    const oneM = opt.id === '1m';
-                    return (
-                      <button
-                        key={opt.id}
-                        onClick={() => onSelectModel(provider.id, m.id, opt.id)}
-                        className={cn(
-                          'px-1.5 py-0.5 rounded text-[9px] font-mono border transition-colors',
-                          active ? 'border-primary/40 text-primary bg-primary/10'
-                            : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent/30',
-                        )}
-                        title={oneM && provider.id === 'claude_code'
-                          ? `${opt.tokens.toLocaleString()} tok · 1M requires usage credits on a Claude Code plan`
-                          : `${opt.tokens.toLocaleString()} tok context`}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
+            <button
+              key={m.id}
+              onClick={() => onSelectModel(provider.id, m.id)}
+              className={cn(
+                'flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-mono transition-colors text-left',
+                isSelected ? 'bg-primary/15 text-primary border border-primary/40'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/30 border border-transparent',
               )}
-            </div>
+              title={`${m.id} · ${(m.contextTokens ?? 0).toLocaleString()} tok standard context`}
+            >
+              {m.label}
+            </button>
           );
         })}
       </div>
@@ -179,15 +155,16 @@ function ProviderRow({
 
 // ─── Main picker ─────────────────────────────────────────────────────────────
 
-export default function ModelPicker() {
+export default function ModelPicker({ scope = 'auto' }: { scope?: 'auto' | 'global' } = {}) {
   const dispatch = useAppDispatch();
-  const currentModel = useAppSelector((s) => s.currentModel);
+  // Session-scoped by default: with an active session this reads/writes THAT
+  // session's model config; other sessions are untouched. Settings surfaces
+  // pass scope="global" to edit the new-session default instead.
+  const { selected, setModel } = useSessionModel(scope);
   const providerStatus = useAppSelector((s) => s.providerStatus);
   const servedModels = useAppSelector((s) => s.servedModels);
   const [open, setOpen] = useState(false);
   const [probing, setProbing] = useState(false);
-
-  const selected = currentModel;
   const activeProvider = useMemo(() => PROVIDERS.find((p) => p.id === selected.providerId), [selected.providerId]);
   const activeModel = activeProvider?.models().find((m) => m.id === selected.modelId);
   const activeStatus = providerStatus[selected.providerId] as ProbeResult | undefined;
@@ -210,15 +187,7 @@ export default function ModelPicker() {
   const runProbes = async () => {
     setProbing(true);
     try {
-      const results = await Promise.all(
-        PROVIDERS.map(async (p) => [p.id, await p.probe().catch((e: unknown) => ({
-          state: 'not_detected' as ProbeState, tier: 'unknown' as const,
-          label: e instanceof Error ? e.message : 'probe failed',
-        }))] as const),
-      );
-      for (const [id, status] of results) {
-        dispatch({ type: 'SET_PROVIDER_STATUS', providerId: id, status });
-      }
+      await probeAllProviders();
     } finally {
       setProbing(false);
     }
@@ -288,12 +257,13 @@ export default function ModelPicker() {
                   selected={selected}
                   onSaveKey={saveKey}
                   onRetry={probeOne}
-                  onSelectModel={(providerId, modelId, context) => {
-                    const sameModel = selected.providerId === providerId && selected.modelId === modelId;
-                    dispatch({ type: 'SET_MODEL', model: { providerId, modelId, context: context ?? 'standard' } });
-                    // Keep the popover open on a context-only toggle so the user
-                    // sees it change; close when they pick a different model.
-                    if (!sameModel) setOpen(false);
+                  onSelectModel={(providerId, modelId) => {
+                    // Context size is chosen via the dedicated ContextSelect;
+                    // keep the current context only when the new model offers it.
+                    const opts = findProvider(providerId)?.models().find((mm) => mm.id === modelId)?.contextOptions ?? [];
+                    const keep = selected.context && opts.some((o) => o.id === selected.context);
+                    setModel({ providerId, modelId, context: keep ? selected.context : 'standard' });
+                    setOpen(false);
                   }}
                 />
               ))}

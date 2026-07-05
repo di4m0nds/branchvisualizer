@@ -13,7 +13,9 @@ use serde::Serialize;
 
 /// Resolve `target` against `root` and reject anything that escapes the jail.
 /// `target` may be absolute (must still be inside root) or relative to root.
-fn jail(root: &str, target: &str) -> Result<PathBuf, String> {
+/// Shared with assets.rs / exec.rs so every project-scoped surface enforces
+/// the same boundary.
+pub(crate) fn jail(root: &str, target: &str) -> Result<PathBuf, String> {
     let root_path = Path::new(root);
     let canon_root = root_path
         .canonicalize()
@@ -176,6 +178,9 @@ pub fn get_provider_key(name: String) -> Option<String> {
         "gemini" | "antigravity" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
         "minimax" => &["MINIMAX_API_KEY"],
         "opencode" => &["OPENCODE_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "xai" => &["XAI_API_KEY", "GROK_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
         _ => &[],
     };
     for v in vars {

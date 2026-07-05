@@ -23,13 +23,20 @@ export interface IdeLayout {
   /** Terminal dock collapsed to a thin bottom bar (chat gets the space). */
   dockCollapsed: boolean;
   /** Right column view: repo workspace (canvas/tabs), plan review, the
-   *  container runtime panel, or the repository docs viewer. */
-  rightView: 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug';
+   *  container runtime panel, the repository docs viewer, the project
+   *  knowledge base, the Excalidraw canvas, or the monitor dashboard. */
+  rightView: 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug' | 'knowledge' | 'canvas' | 'monitor';
   /** LocalDocsTab: doc-list rail width as % of the docs container. Persisted
    *  once and shared by both mount points (right-column view + canvas
    *  sub-tab) so the drag position feels consistent regardless of where the
    *  user opened Docs. */
   docsSidebarWidth: number;
+  /** KnowledgePanel: note-list rail width as % of the panel. */
+  kbSidebarWidth: number;
+  /** CommandPanel (left column, below ProjectsSidebar): height %. */
+  cmdHeight: number;
+  /** CommandPanel collapsed to a thin bar. */
+  cmdCollapsed: boolean;
 }
 
 export const DEFAULT_IDE_LAYOUT: IdeLayout = {
@@ -42,6 +49,9 @@ export const DEFAULT_IDE_LAYOUT: IdeLayout = {
   dockCollapsed: false,
   rightView: 'workspace',
   docsSidebarWidth: 20,
+  kbSidebarWidth: 26,
+  cmdHeight: 35,
+  cmdCollapsed: true,
 };
 
 export function loadIdeLayout(): IdeLayout {

@@ -8,7 +8,7 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
-  useIsFocused, useMaximizedPanel, usePanelZoom,
+  CSS_ZOOM_EXEMPT, useIsFocused, useMaximizedPanel, usePanelZoom,
   setFocusedPanel, toggleMaximizedPanel, type PanelId,
 } from '@/hooks/usePanelFocus';
 
@@ -46,7 +46,9 @@ export default function FocusablePanel({
         className,
       )}
     >
-      {applyScale && scale !== 1 ? (
+      {/* Hard guard: canvas-backed panels must never get CSS zoom, even if a
+          future call site passes applyScale. */}
+      {applyScale && scale !== 1 && !CSS_ZOOM_EXEMPT.has(id) ? (
         <div
           className="flex flex-col flex-1 min-h-0 min-w-0"
           style={{ zoom: scale } as React.CSSProperties}

@@ -22,34 +22,58 @@ export function PlanCard({ data }: { data: Record<string, unknown> }) {
   const outOfScope = String(data.outOfScope ?? '');
   const complexity = String(data.complexity ?? '');
   const steps = (data.steps as PlanStep[] | undefined) ?? [];
+  // Markdown-body plans (no <step> schema) fall back to raw markdown + a
+  // derived step count/titles so the card is never blank.
+  const markdownFallback = String(data.markdownFallback ?? '');
+  const derivedStepTitles = (data.derivedStepTitles as string[] | undefined) ?? [];
+  // A markdown plan with no numbered list / headings still counts as "long"
+  // enough to collapse — but the label + summary below keep it non-empty.
+  const stepCount = steps.length || Number(data.derivedStepCount ?? 0) || (markdownFallback ? 7 : 0);
+
+  // First objective line, used as a title fallback so a collapsed card without
+  // an explicit <title> still reads as something.
+  const objectiveLine = objective.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  const stepTitles = steps.length > 0 ? steps.map((s) => s.title).filter(Boolean) : derivedStepTitles;
+  const headerLabel = title
+    || objectiveLine.replace(/[*_`#]/g, '').slice(0, 80)
+    || stepTitles[0]
+    || 'Implementation plan';
+  const summaryLine = stepTitles.length > 0
+    ? stepTitles.slice(0, 3).join(' · ') + (stepTitles.length > 3 ? ` +${stepTitles.length - 3} more` : '')
+    : '';
 
   // Long plans dominate the transcript — collapse them by default with a
   // one-line summary; short plans stay open so nothing hides.
-  const [open, setOpen] = useState(() => steps.length <= 6);
+  const [open, setOpen] = useState(() => stepCount <= 6);
 
   return (
     <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 w-full px-2.5 py-1 border-b border-primary/20 text-left hover:bg-primary/10 transition-colors"
+        className="flex flex-col w-full px-2.5 py-1 border-b border-primary/20 text-left hover:bg-primary/10 transition-colors"
         aria-expanded={open}
       >
-        <ClipboardList className="w-3 h-3 text-primary flex-shrink-0" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary flex-shrink-0">Plan</span>
-        {!open && title && (
-          <span className="text-[11px] text-foreground/80 truncate min-w-0">{title}</span>
+        <div className="flex items-center gap-2 w-full">
+          <ClipboardList className="w-3 h-3 text-primary flex-shrink-0" />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-primary flex-shrink-0">Plan</span>
+          {!open && (
+            <span className="text-[11px] text-foreground/80 truncate min-w-0">{headerLabel}</span>
+          )}
+          {!open && stepCount > 0 && (
+            <span className="text-[10px] font-mono text-muted-foreground/70 flex-shrink-0">
+              · {stepCount} step{stepCount === 1 ? '' : 's'}
+            </span>
+          )}
+          {complexity && (
+            <span className={cn('ml-auto text-[10px] font-medium flex-shrink-0', COMPLEXITY_TONE[complexity.toLowerCase()] ?? 'text-muted-foreground')}>
+              {complexity}
+            </span>
+          )}
+          <ChevronDown className={cn('w-3 h-3 flex-shrink-0 text-muted-foreground transition-transform', open ? 'rotate-180' : '', !complexity && 'ml-auto')} />
+        </div>
+        {!open && summaryLine && (
+          <span className="text-[10px] text-muted-foreground/70 truncate min-w-0 pl-5 mt-0.5">{summaryLine}</span>
         )}
-        {!open && steps.length > 0 && (
-          <span className="text-[10px] font-mono text-muted-foreground/70 flex-shrink-0">
-            · {steps.length} step{steps.length === 1 ? '' : 's'}
-          </span>
-        )}
-        {complexity && (
-          <span className={cn('ml-auto text-[10px] font-medium flex-shrink-0', COMPLEXITY_TONE[complexity.toLowerCase()] ?? 'text-muted-foreground')}>
-            {complexity}
-          </span>
-        )}
-        <ChevronDown className={cn('w-3 h-3 flex-shrink-0 text-muted-foreground transition-transform', open ? 'rotate-180' : '', !complexity && 'ml-auto')} />
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -69,6 +93,11 @@ export function PlanCard({ data }: { data: Record<string, unknown> }) {
                 <div className="grid sm:grid-cols-2 gap-2 text-[11px]">
                   {inScope && <ScopeBox label="In scope" tone="text-green-400" body={inScope} />}
                   {outOfScope && <ScopeBox label="Out of scope" tone="text-muted-foreground" body={outOfScope} />}
+                </div>
+              )}
+              {steps.length === 0 && markdownFallback && (
+                <div className="text-[12px] text-foreground/85 leading-relaxed max-h-[70vh] overflow-auto pr-1">
+                  <Markdown text={markdownFallback} />
                 </div>
               )}
               {steps.length > 0 && (

@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import SessionContextBar from './SessionContextBar';
 import ModelSelect from './ModelSelect';
+import ContextSelect from './ContextSelect';
 import BranchIndicator from './BranchIndicator';
 import type { Session } from '@/types/session';
 
@@ -36,6 +37,7 @@ export default function ChatConfigStrip({
         <div className="ml-auto flex items-center gap-1.5">
           <BranchIndicator session={session} />
           <ModelSelect />
+          <ContextSelect />
         </div>
       </div>
       <div className={cn('overflow-hidden transition-[max-height] duration-200', collapsed ? 'max-h-0' : 'max-h-96')}>

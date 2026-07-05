@@ -1,5 +1,5 @@
 import { invoke, isTauri, listen } from '../../platform';
-import { getPrompt } from '../prompts';
+import { getPrompt, renderPrompt } from '../prompts';
 import { getProviderKey } from '../../providerKeys';
 import type { SkillFlag } from '@/types/session';
 import type {
@@ -28,12 +28,15 @@ import { STD_ONLY, STD_OR_1M } from './claudeModels';
 // contextTokens is the STANDARD size; 1M lives in contextOptions and is opted
 // into via the `[1m]` model-string suffix (see ClaudeCodeTransport.cliModel).
 // On a subscription plan, 1M requires usage credits — standard always works.
+// Only Sonnet 4.x exposes the 1M-context beta; Opus and Haiku serve 200K only.
+// Offering 1M where the model can't serve it produced the "Usage credits
+// required for 1M context" CLI error, so the option is gated to Sonnet here.
 const MODELS: ModelInfo[] = [
-  { id: 'opus',              label: 'Opus (latest)',   defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'opus',              label: 'Opus (latest)',   defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
   { id: 'sonnet',            label: 'Sonnet (latest)', defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
   { id: 'haiku',             label: 'Haiku (latest)',  defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
-  { id: 'claude-opus-4-8',   label: 'Opus 4.8',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
-  { id: 'claude-opus-4-7',   label: 'Opus 4.7',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-opus-4-8',   label: 'Opus 4.8',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
+  { id: 'claude-opus-4-7',   label: 'Opus 4.7',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6',      defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
   { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',       defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
 ];
@@ -88,7 +91,7 @@ export function claudeCodeAppendPrompt(): string {
 /** Build the CLI-appended prompt with the session's enabled skill flags and
  *  access-level guidance mixed in. Called per turn so toggling a skill or
  *  access level in the config strip takes effect on the very next request. */
-export function buildAppendPrompt(skills: SkillFlag[] = [], accessLevel?: string, buildMode?: string): string {
+export function buildAppendPrompt(skills: SkillFlag[] = [], accessLevel?: string, buildMode?: string, kbPath?: string): string {
   const enabled = skills
     .filter((s) => s.enabled)
     .map((s) => getPrompt(`cc_skill.${s.id}`))
@@ -104,6 +107,11 @@ export function buildAppendPrompt(skills: SkillFlag[] = [], accessLevel?: string
     prompt += getPrompt('cc_planning_clause');
   } else if (accessLevel === 'supervised') {
     prompt += getPrompt('cc_supervised_clause');
+  }
+  // Local projects: the knowledge base is real files in the working tree — the
+  // CLI's own Read/Grep tools can consult it directly.
+  if (kbPath) {
+    prompt += renderPrompt('cc_kb_pointer', { path: kbPath });
   }
   return prompt;
 }
@@ -277,6 +285,26 @@ function synthToolResultXml(name: string, output: string, isError: boolean): str
 
 interface ExitPayload { id: string; code: number | null; error: string | null }
 
+/** The CLI's error when a subscription plan can't serve a 1M-context request.
+ *  Loose match: catches both the "Usage credits required for 1M context" and
+ *  the "--model to switch to standard context" phrasings. */
+export function is1mCreditError(text: string): boolean {
+  if (!text) return false;
+  return /usage credits required for 1m context/i.test(text)
+    || /--model to switch to standard context/i.test(text);
+}
+
+/** Thrown when a 1M-context turn fails purely because the plan lacks the
+ *  credits to serve it. The loop catches this (by `code`) and transparently
+ *  retries the same turn on the standard 200K window. */
+export class Context1mUnavailableError extends Error {
+  readonly code = 'context_1m_unavailable';
+  constructor(message = '1M context is not available on this plan') {
+    super(message);
+    this.name = 'Context1mUnavailableError';
+  }
+}
+
 class ClaudeCodeTransport implements AgentTransport {
   readonly id = 'claude_code';
   constructor(readonly modelId: string, readonly contextSize: ContextSizeId = 'standard') {}
@@ -313,6 +341,10 @@ class ClaudeCodeTransport implements AgentTransport {
     // Set once we kill the subprocess to freeze the turn for approval, so we
     // don't fire the kill repeatedly for each subsequent denied command.
     let killedForApproval = false;
+    // Set when the CLI reports it can't serve the requested 1M context on this
+    // plan. onExit turns this into a typed rejection the loop retries on 200K,
+    // instead of dumping the raw credit error into the transcript.
+    let creditError1m = false;
     // Fired the FIRST time an approval failure is detected so the card is
     // visible while the CLI is still running (in case the user hits Stop) as
     // well as when the CLI exits normally. Later approval failures are still
@@ -436,6 +468,9 @@ class ClaudeCodeTransport implements AgentTransport {
           }
         } else if (ev.type === 'result') {
           if (typeof ev.result === 'string') resultText = ev.result;
+          if (this.contextSize === '1m' && ev.is_error && is1mCreditError(ev.result ?? '')) {
+            creditError1m = true;
+          }
           if (ev.usage) {
             const u = ev.usage;
             usage = {
@@ -453,6 +488,14 @@ class ClaudeCodeTransport implements AgentTransport {
       const onExit = (p: ExitPayload) => {
         if (p.id !== runId) return;
         cleanup();
+        // 1M-context credit failure: reject with a typed error so the loop can
+        // transparently retry on the standard window. Keep the raw CLI credit
+        // message out of the transcript entirely.
+        if (this.contextSize === '1m'
+            && (creditError1m || is1mCreditError(resultText || streamed || p.error || ''))) {
+          reject(new Context1mUnavailableError());
+          return;
+        }
         const text = (streamed || resultText).trim();
         if (p.code !== 0 && !text) {
           reject(new Error(p.error?.trim() || `claude exited with code ${p.code ?? 'unknown'}`));

@@ -152,6 +152,12 @@ function loadSessions(projects?: Project[]): Session[] {
       terminals: [],
       messages: dedupeMessageIds(Array.isArray(s.messages) ? s.messages : []),
       context: { ...createDefaultContext(), ...s.context, status: 'idle' },
+      // Per-session model migration: sessions persisted before modelConfig
+      // existed adopt the global model as of THIS load; the global selection
+      // becomes "default for new sessions" and never mutates them again.
+      modelConfig: s.modelConfig
+        ? { ...s.modelConfig, model: normalizeModelRef(s.modelConfig.model) }
+        : { model: loadCurrentModel() },
     };
   });
 }
@@ -219,7 +225,7 @@ const DEFAULT_MODEL: ModelRef = { providerId: 'claude_code', modelId: 'sonnet', 
 /** Normalize a persisted (or default) model ref: default context to 'standard'
  *  and heal the Haiku id drift (`claude-haiku-4-5-20251001` → `claude-haiku-4-5`)
  *  so old blobs keep working with the deduped model lists. */
-function normalizeModelRef(raw: unknown): ModelRef {
+export function normalizeModelRef(raw: unknown): ModelRef {
   const r = (raw ?? {}) as Partial<ModelRef>;
   const providerId = r.providerId ?? DEFAULT_MODEL.providerId;
   let modelId = r.modelId ?? DEFAULT_MODEL.modelId;

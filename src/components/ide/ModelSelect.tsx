@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
+import { getAppState, useAppSelector } from '@/store/store';
+import { useSessionModel } from '@/hooks/useSessionModel';
 import { PROVIDERS, findProvider } from '@/lib/agent/providers';
+import { probeAllProviders } from '@/lib/agent/providers/probe';
 import type { ContextSizeId, ProbeResult, Provider } from '@/lib/agent/transport';
 
 // ─── Compact model selector ──────────────────────────────────────────────────
@@ -26,8 +28,9 @@ function Pip({ status }: { status?: ProbeResult }) {
 }
 
 export default function ModelSelect() {
-  const dispatch = useAppDispatch();
-  const current = useAppSelector((s) => s.currentModel);
+  // Session-scoped: with an active session this reads/writes THAT session's
+  // model config; other sessions are untouched.
+  const { selected: current, setModel } = useSessionModel();
   const providerStatus = useAppSelector((s) => s.providerStatus);
   const servedModels = useAppSelector((s) => s.servedModels);
 
@@ -47,17 +50,11 @@ export default function ModelSelect() {
   useEffect(() => {
     if (!open || Object.keys(getAppState().providerStatus).length > 0) return;
     void probeAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   async function probeAll() {
     setProbing(true);
-    await Promise.allSettled(PROVIDERS.map(async (p) => {
-      const status = await p.probe().catch((e): ProbeResult => ({
-        state: 'not_detected', tier: 'unknown', label: 'probe failed', error: String(e),
-      }));
-      dispatch({ type: 'SET_PROVIDER_STATUS', providerId: p.id, status });
-    }));
+    await probeAllProviders();
     setProbing(false);
   }
 
@@ -89,8 +86,12 @@ export default function ModelSelect() {
     };
   }, [providerStatus]);
 
-  const pick = (p: Provider, modelId: string, context: ContextSizeId = 'standard') => {
-    dispatch({ type: 'SET_MODEL', model: { providerId: p.id, modelId, context } });
+  // Context size is chosen separately (ContextSelect). Picking a model keeps
+  // the current context only when the new model still offers it, else standard.
+  const pick = (p: Provider, modelId: string) => {
+    const opts = p.models().find((m) => m.id === modelId)?.contextOptions ?? [];
+    const keep = current.context && opts.some((o) => o.id === current.context);
+    setModel({ providerId: p.id, modelId, context: keep ? current.context : 'standard' });
     setOpen(false);
   };
 
@@ -183,7 +184,7 @@ function ProviderGroup({ provider, status, expanded, onToggle, current, onPick }
   expanded: boolean;
   onToggle: () => void;
   current: { providerId: string; modelId: string; context?: ContextSizeId };
-  onPick: (p: Provider, modelId: string, context?: ContextSizeId) => void;
+  onPick: (p: Provider, modelId: string) => void;
 }) {
   return (
     <div className="border-b border-border/40 last:border-b-0">
@@ -204,33 +205,17 @@ function ProviderGroup({ provider, status, expanded, onToggle, current, onPick }
         <div className="pb-1">
           {provider.models().map((m) => {
             const active = current.providerId === provider.id && current.modelId === m.id;
-            const has1m = m.contextOptions?.some((o) => o.id === '1m');
             return (
-              <div key={m.id} className="flex items-center">
-                <button
-                  onClick={() => onPick(provider, m.id, active && current.context === '1m' ? '1m' : 'standard')}
-                  className={cn(
-                    'flex-1 text-left px-2.5 py-1 pl-6 text-[11px] transition-colors',
-                    active ? 'text-primary bg-primary/10' : 'text-foreground/80 hover:bg-accent/30',
-                  )}
-                >
-                  {m.label}
-                </button>
-                {has1m && (
-                  <button
-                    onClick={() => onPick(provider, m.id, active && current.context === '1m' ? 'standard' : '1m')}
-                    title="Toggle 1M-token context window"
-                    className={cn(
-                      'px-1.5 py-0.5 mr-2 rounded text-[8px] font-semibold border transition-colors',
-                      active && current.context === '1m'
-                        ? 'border-primary/40 bg-primary/15 text-primary'
-                        : 'border-border text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    1M
-                  </button>
+              <button
+                key={m.id}
+                onClick={() => onPick(provider, m.id)}
+                className={cn(
+                  'w-full text-left px-2.5 py-1 pl-6 text-[11px] transition-colors',
+                  active ? 'text-primary bg-primary/10' : 'text-foreground/80 hover:bg-accent/30',
                 )}
-              </div>
+              >
+                {m.label}
+              </button>
             );
           })}
         </div>

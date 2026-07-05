@@ -8,7 +8,7 @@
 
 import type { Dispatch } from 'react';
 import type { AppAction } from '@/types';
-import type { AccessLevel, AgentMessage, MessageRef, Session } from '@/types/session';
+import type { AccessLevel, AgentMessage, MessageRef, Project, Session } from '@/types/session';
 import { nextId } from '@/types/session';
 import { parseAgentBlocks, composeStreamingBlocks } from '@/components/agent/blocks';
 import { truncateForModel, isRetryableError, isAbortError } from './agentUtils';
@@ -16,10 +16,11 @@ import { applyHistoryWindow, loadCostPrefs } from './costPrefs';
 import { baseSystemPrompt, renderSessionContext, type ModelIdentity } from './systemPrompt';
 import { getPrompt, renderPrompt } from './prompts';
 import { detectFailure, failureTail } from './triage';
+import { recordUsage, sessionCostUSD, todayCostUSD, type UsageTask } from './usageLog';
 import { buildAppendPrompt } from './providers/claude_code';
-import { findProvider } from './providers';
+import { findProvider, createTransportFor } from './providers';
 import {
-  TOOLS, checkPinnedRules, executeTool, describeTool, toolCategory, type ToolCategory,
+  TOOLS, KNOWLEDGE_TOOLS, checkPinnedRules, executeTool, describeTool, toolCategory, type ToolCategory,
 } from './tools';
 import type {
   AgentRequest, AgentTransport, NeutralContent, NeutralMessage, NeutralResponse,
@@ -29,8 +30,8 @@ import type {
 const MAX_ITERATIONS = 12;
 
 // Transient-error retry policy for the model call. Only 429/5xx and network
-// blips are retried; AbortError (Stop button) is never retried.
-const MAX_RETRIES = 2;
+// blips are retried; AbortError (Stop button) is never retried. The retry
+// COUNT comes from cost prefs (Settings → Execution); this is the backoff base.
 const RETRY_BASE_MS = 600;
 
 /** Sleep that rejects immediately with an AbortError if the signal fires. */
@@ -54,17 +55,44 @@ async function createMessageWithRetry(
   req: AgentRequest,
   cbs: StreamCallbacks,
   signal?: AbortSignal,
+  policy?: { maxRetries?: number; timeoutMs?: number },
 ): Promise<NeutralResponse> {
+  const maxRetries = policy?.maxRetries ?? 2;
+  const timeoutMs = policy?.timeoutMs ?? 0;
   let attempt = 0;
   for (;;) {
+    // Per-call timeout: a composite signal that mirrors the caller's Stop
+    // signal AND fires after the deadline. Transports see one AbortSignal.
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let callSignal = signal;
+    let cleanup = () => {};
+    if (timeoutMs > 0) {
+      const ctrl = new AbortController();
+      const onAbort = () => ctrl.abort();
+      signal?.addEventListener('abort', onAbort, { once: true });
+      timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
+      callSignal = ctrl.signal;
+      cleanup = () => {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      };
+    }
     try {
-      return await transport.createMessage(req, cbs);
+      return await transport.createMessage({ ...req, signal: callSignal }, cbs);
     } catch (e) {
-      if (attempt >= MAX_RETRIES || !isRetryableError(e)) throw e;
+      // A timeout abort surfaces from SDKs as an AbortError — re-throw it as a
+      // real error so it renders as an agent_error card, not a clean stop.
+      if (timedOut && !signal?.aborted) {
+        throw new Error(`Turn timed out after ${Math.round(timeoutMs / 1000)}s (Settings → Execution → turn timeout).`);
+      }
+      if (attempt >= maxRetries || !isRetryableError(e)) throw e;
       // Exponential backoff with jitter; abortable so Stop still fires promptly.
       const delay = RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 250);
       await abortableDelay(delay, signal);
       attempt += 1;
+    } finally {
+      cleanup();
     }
   }
 }
@@ -81,6 +109,9 @@ export interface PendingAction {
 export interface AgentLoopDeps {
   transport: AgentTransport;
   dispatch: Dispatch<AppAction>;
+  /** Owning project — enables knowledge-base/diagram tools and the CLI KB
+   *  pointer. Optional so bare harnesses (tests) stay simple. */
+  project?: Project;
   /** Ask the user to approve a gated/supervised action. Resolves true to run. */
   requestApproval: (pending: PendingAction) => Promise<boolean>;
   /** Called after file writes / commits so the caller can refresh the graph. */
@@ -123,9 +154,22 @@ export async function runAgentTurn(
   userText: string,
   deps: AgentLoopDeps,
   ts: string,
-  opts?: { display?: boolean; hiddenText?: string; refs?: MessageRef[]; attachments?: AgentMessage['attachments'] },
+  opts?: {
+    display?: boolean; hiddenText?: string; refs?: MessageRef[];
+    attachments?: AgentMessage['attachments'];
+    /** Usage-log task tag ('goal' for executor-driven turns). Defaults to
+     *  'planning'/'main' from the session's build mode. */
+    usageTask?: UsageTask;
+    /** Tags this turn's user message as a goal-run driver prompt (compact chip). */
+    driver?: AgentMessage['driver'];
+  },
 ): Promise<void> {
   const { transport, dispatch, requestApproval } = deps;
+  // Swapped out under us if a 1M-context turn is downgraded to standard.
+  let activeTransport = transport;
+  // Fires at most once per turn — guards the 1M→standard downgrade so a
+  // still-credit-less plan can't loop.
+  let downgraded1m = false;
   const sessionId = session.id;
   const ctx = session.context;
   const root = session.cwd ?? '.';
@@ -142,6 +186,7 @@ export async function runAgentTurn(
         id: nextId('msg'), role: 'user', text: userText, blocks: [], ts,
         ...(opts?.hiddenText ? { hiddenText: opts.hiddenText } : {}),
         ...(opts?.refs?.length ? { refs: opts.refs } : {}),
+        ...(opts?.driver ? { driver: opts.driver } : {}),
         ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
       },
     });
@@ -159,11 +204,13 @@ export async function runAgentTurn(
   // through the sanctioned `--append-system-prompt` channel (see
   // `buildAppendPrompt` in providers/claude_code.ts).
   const costPrefs = loadCostPrefs();
+  // Per-session overrides (model config) win over the global cost prefs.
+  const sessionCfg = session.modelConfig;
   // History window (Settings → Models & Cost): bound per-turn input cost by
   // sending only the last N prior messages. 0 = full history.
   const apiMessages: NeutralMessage[] = applyHistoryWindow(
     session.messages.filter((m) => m.text.trim().length > 0),
-    costPrefs.historyWindow,
+    sessionCfg?.historyWindow ?? costPrefs.historyWindow,
   )
     .map((m) => ({
       role: m.role,
@@ -209,6 +256,35 @@ export async function runAgentTurn(
 
   try {
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+      // ── Cost-limit gate (Settings → Execution / per-session override) ────
+      // Checked before EVERY model call so a runaway tool loop can't sail past
+      // the cap mid-turn. Hard stop, resumable once the user raises the limit.
+      const sessionCap = sessionCfg?.costLimitUSD ?? costPrefs.sessionCostLimitUSD;
+      const dailyCap = costPrefs.dailyCostLimitUSD;
+      const capHit = (sessionCap != null && sessionCostUSD(sessionId) >= sessionCap)
+        ? { kind: 'session', cap: sessionCap }
+        : (dailyCap != null && todayCostUSD() >= dailyCap)
+          ? { kind: 'daily', cap: dailyCap }
+          : null;
+      if (capHit) {
+        const msg = `${capHit.kind === 'session' ? 'Session' : 'Daily'} cost limit reached (≈$${capHit.cap.toFixed(2)}). Raise it in Settings → Execution to continue.`;
+        dispatch({
+          type: 'ADD_AGENT_MESSAGE',
+          sessionId,
+          message: {
+            id: nextId('msg'), role: 'assistant', text: '',
+            blocks: [{
+              type: 'agent_error',
+              raw: `<agent_error kind="cost_limit">${msg}</agent_error>`,
+              data: { attrs: 'kind="cost_limit"', inner: msg },
+            }],
+            ts: nowIso(ts),
+          },
+        });
+        dispatch({ type: 'SET_SESSION_STATUS', sessionId, status: 'error' });
+        return;
+      }
+
       const asstId = nextId('msg');
       currentAsstId = asstId;
       // Real wall-clock start for this message so the footer can show how long
@@ -278,13 +354,23 @@ export async function runAgentTurn(
           ? 'bypassPermissions'
           : 'acceptEdits';
 
+      // Knowledge tools need a bound project; save_knowledge additionally
+      // honours the session's Memory toggle (Agent Settings drawer).
+      const turnTools = TOOLS.filter((t) => {
+        if (!KNOWLEDGE_TOOLS.has(t.name)) return true;
+        if (!deps.project) return false;
+        if (t.name === 'save_knowledge') return ctx.kb?.agentWrites ?? true;
+        return true;
+      });
+
       const req: AgentRequest = {
         system: baseSystemPrompt(),
         messages: apiMessages,
-        tools: TOOLS,
-        maxTokens: costPrefs.maxOutputTokens,
+        tools: turnTools,
+        maxTokens: sessionCfg?.maxOutputTokens ?? costPrefs.maxOutputTokens,
         effort: ctx.reasoningBudget,
         thinking: ctx.deepThinking || ctx.reasoningBudget !== 'low',
+        temperature: sessionCfg?.temperature,
         cwd: session.cwd,
         signal: deps.signal,
         permissionMode,
@@ -292,25 +378,83 @@ export async function runAgentTurn(
         // sanctioned `--append-system-prompt` channel so enabled skill flags
         // (minimal_diff, test_first, etc.) actually shape the CLI's behavior.
         // Non-CLI providers ignore this field.
-        appendSystem: buildAppendPrompt(ctx.skills, ctx.accessLevel, ctx.buildMode),
+        appendSystem: buildAppendPrompt(
+          ctx.skills, ctx.accessLevel, ctx.buildMode,
+          // Local projects: point the CLI at the on-disk knowledge base so its
+          // own tools can read the notes as ordinary files.
+          deps.project?.source === 'local' ? `${deps.project.path}/.code-agent/kb` : undefined,
+        ),
       };
 
-      const final = await createMessageWithRetry(transport, req, {
-        onText: (delta) => {
-          acc += delta;
-          scheduleFlush();
-        },
-        onThinking: (delta) => {
-          thinkingAcc += delta;
-          scheduleFlush();
-        },
-      }, deps.signal);
+      let final: NeutralResponse;
+      try {
+        final = await createMessageWithRetry(activeTransport, req, {
+          onText: (delta) => {
+            acc += delta;
+            scheduleFlush();
+          },
+          onThinking: (delta) => {
+            thinkingAcc += delta;
+            scheduleFlush();
+          },
+        }, deps.signal, {
+          maxRetries: sessionCfg?.maxRetries ?? costPrefs.maxRetries,
+          timeoutMs: sessionCfg?.turnTimeoutMs ?? costPrefs.turnTimeoutMs,
+        });
+      } catch (e) {
+        // 1M context isn't serviceable on this plan → transparently retry the
+        // SAME turn on the standard 200K window instead of failing. String-
+        // match the code to avoid importing the provider (cycle-free).
+        if (!downgraded1m && (e as { code?: string })?.code === 'context_1m_unavailable') {
+          downgraded1m = true;
+          cancelStreamFlush();
+          // Reuse this iteration's streaming placeholder as the amber notice.
+          const notice = '1M context is not available on this plan — continuing with the standard 200K window.';
+          dispatch({
+            type: 'UPDATE_AGENT_MESSAGE',
+            sessionId,
+            messageId: asstId,
+            patch: {
+              text: '', thinking: '', streaming: false,
+              blocks: [{
+                type: 'context_warning',
+                raw: `<context_warning>${notice}</context_warning>`,
+                data: { inner: notice },
+              }],
+            },
+          });
+          // Persist the downgrade so subsequent turns don't re-attempt 1M.
+          const prevModel = session.modelConfig?.model
+            ?? { providerId: activeTransport.id, modelId: activeTransport.modelId };
+          dispatch({
+            type: 'SET_SESSION_MODEL',
+            sessionId,
+            model: { ...prevModel, context: 'standard' },
+          });
+          activeTransport = await createTransportFor(activeTransport.id, activeTransport.modelId, 'standard');
+          iter--; // don't consume an iteration — retry with the new transport
+          continue;
+        }
+        throw e;
+      }
 
       // Drop any pending throttled flush; the finalize dispatch below carries
       // the freshest text plus the one-time block parse.
       cancelStreamFlush();
       turnUsage.input += final.usage.inputTokens;
       turnUsage.output += final.usage.outputTokens;
+      // Telemetry: one usage-log entry per model call (tool-loop iterations
+      // included) — feeds the Usage dashboard and cost-limit enforcement.
+      recordUsage({
+        ts: new Date().toISOString(),
+        sessionId,
+        projectId: session.projectId,
+        providerId: transport.id,
+        modelId: final.providerModel || transport.modelId,
+        input: final.usage.inputTokens,
+        output: final.usage.outputTokens,
+        task: opts?.usageTask ?? (ctx.buildMode === 'planning' ? 'planning' : 'main'),
+      });
       dispatch({
         type: 'UPDATE_AGENT_MESSAGE',
         sessionId,
@@ -385,7 +529,7 @@ export async function runAgentTurn(
             isError = true;
           } else {
             try {
-              content = await executeTool(tu.name, input, { root, sandbox: ctx.sandbox });
+              content = await executeTool(tu.name, input, { root, sandbox: ctx.sandbox, project: deps.project });
             } catch (e) {
               content = e instanceof Error ? e.message : String(e);
               isError = true;

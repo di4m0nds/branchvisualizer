@@ -8,27 +8,37 @@ import { useCallback, useRef } from 'react';
 import type { AgentTransport, ContextSizeId } from '@/lib/agent/transport';
 import { createTransportFor } from '@/lib/agent/providers';
 
+/** With per-session models, panels alternate between sessions on different
+ *  provider/model triples — a single-slot cache would rebuild the transport on
+ *  every switch. Keep a small LRU keyed by the triple instead (transports are
+ *  stateless per-request, so sharing an identical triple across sessions is
+ *  safe). */
+const CACHE_MAX = 8;
+
 export function useAgentTransport() {
-  const transportRef = useRef<AgentTransport | null>(null);
+  const cacheRef = useRef<Map<string, AgentTransport>>(new Map());
 
   // Stable identity (empty deps) so callers can hold it across renders without
   // re-wiring streaming callbacks. Cache key: provider id + model id +
-  // context-size variant (absent contextSize on a cached transport counts as
-  // 'standard', matching the pre-extraction semantics).
+  // context-size variant.
   const getTransport = useCallback(
     async (providerId: string, modelId: string, context?: ContextSizeId): Promise<AgentTransport> => {
       const ctx = context ?? 'standard';
-      const cached = transportRef.current;
-      if (
-        cached
-        && cached.id === providerId
-        && cached.modelId === modelId
-        && (cached.contextSize ?? 'standard') === ctx
-      ) {
+      const key = `${providerId}:${modelId}:${ctx}`;
+      const cache = cacheRef.current;
+      const cached = cache.get(key);
+      if (cached) {
+        // LRU touch: re-insert so eviction drops the coldest entry.
+        cache.delete(key);
+        cache.set(key, cached);
         return cached;
       }
       const fresh = await createTransportFor(providerId, modelId, ctx);
-      transportRef.current = fresh;
+      cache.set(key, fresh);
+      if (cache.size > CACHE_MAX) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
       return fresh;
     },
     [],

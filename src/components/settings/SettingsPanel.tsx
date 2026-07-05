@@ -4,11 +4,12 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Sun, Moon, ZoomIn, ZoomOut, RotateCcw, Trash2, X,
   SlidersHorizontal, Palette, KeyRound, Bot, ShieldCheck, FolderGit2, Keyboard, ScrollText, Coins,
+  Timer, BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppDispatch, useAppSelector } from '@/store/store';
 import { useShowCheckpoints } from '@/hooks/useShowCheckpoints';
-import { useAppZoom, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from '@/hooks/useAppZoom';
+import { useAppZoomControls, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from '@/hooks/useAppZoom';
 import { resetIdeLayout } from '@/lib/ideLayout';
 import { loadAgentDefaults, saveAgentDefaults, type AgentDefaults } from '@/lib/agentDefaults';
 import ProvidersPanel from '@/components/settings/ProvidersPanel';
@@ -17,8 +18,17 @@ import PinnedRulesEditor from '@/components/ide/PinnedRulesEditor';
 import ArchiveSection from '@/components/settings/ArchiveSection';
 import PromptsSection from '@/components/settings/PromptsSection';
 import ModelsCostSection from '@/components/settings/ModelsCostSection';
+import ExecutionSection from '@/components/settings/ExecutionSection';
+import UsageSection from '@/components/settings/UsageSection';
 import GraphLimitsFields from '@/components/settings/GraphLimitsFields';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/Select';
+import {
+  listShells, loadTerminalPrefs, saveTerminalPrefs,
+  type ShellInfo, type TerminalPrefs,
+} from '@/lib/terminalPrefs';
 import { buildTerminalFontFamily, buildChatFontFamily } from '@/lib/terminalFont';
 import type { AccessLevel, BuildMode } from '@/types/session';
 import type { ChatBackground, LogDensity } from '@/types';
@@ -26,7 +36,7 @@ import type { ChatBackground, LogDensity } from '@/types';
 // ─── Category registry ───────────────────────────────────────────────────────
 
 type CategoryId =
-  | 'general' | 'appearance' | 'providers' | 'agent' | 'prompts' | 'cost' | 'rules' | 'sessions' | 'keybindings';
+  | 'general' | 'appearance' | 'providers' | 'agent' | 'prompts' | 'cost' | 'execution' | 'usage' | 'rules' | 'sessions' | 'keybindings';
 
 const CATEGORIES: { id: CategoryId; label: string; icon: React.ReactNode }[] = [
   { id: 'general', label: 'General', icon: <SlidersHorizontal className="w-4 h-4" /> },
@@ -35,6 +45,8 @@ const CATEGORIES: { id: CategoryId; label: string; icon: React.ReactNode }[] = [
   { id: 'agent', label: 'Agent', icon: <Bot className="w-4 h-4" /> },
   { id: 'prompts', label: 'Prompts', icon: <ScrollText className="w-4 h-4" /> },
   { id: 'cost', label: 'Models & Cost', icon: <Coins className="w-4 h-4" /> },
+  { id: 'execution', label: 'Execution', icon: <Timer className="w-4 h-4" /> },
+  { id: 'usage', label: 'Usage', icon: <BarChart3 className="w-4 h-4" /> },
   { id: 'rules', label: 'Rules', icon: <ShieldCheck className="w-4 h-4" /> },
   { id: 'sessions', label: 'Sessions', icon: <FolderGit2 className="w-4 h-4" /> },
   { id: 'keybindings', label: 'Keybindings', icon: <Keyboard className="w-4 h-4" /> },
@@ -84,7 +96,9 @@ export default function SettingsPanel({ open, onOpenChange }: {
   const logDensity = useAppSelector((s) => s.logDensity);
   const { showCheckpoints, setShowCheckpoints } = useShowCheckpoints();
   const pinnedRules = useAppSelector((s) => s.pinnedRules);
-  const { zoom, zoomIn, zoomOut, reset, setZoom } = useAppZoom();
+  // Controls-only variant: mounting `useAppZoom()` here would re-enable body
+  // zoom on /ide (the settings overlay renders inside the IDE route).
+  const { zoom, zoomIn, zoomOut, reset, setZoom } = useAppZoomControls();
   const isDark = theme === 'dark';
   const [defaults, setDefaults] = useState<AgentDefaults>(loadAgentDefaults);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -223,6 +237,7 @@ export default function SettingsPanel({ open, onOpenChange }: {
                           Shortcuts scale the whole window and persist.
                         </p>
                       </div>
+                      <DefaultShellField />
                       <TerminalFontField />
                       <ChatFontField />
                       <ChatBackgroundField />
@@ -257,6 +272,10 @@ export default function SettingsPanel({ open, onOpenChange }: {
                   {category === 'prompts' && <PromptsSection />}
 
                   {category === 'cost' && <ModelsCostSection />}
+
+                  {category === 'execution' && <ExecutionSection />}
+
+                  {category === 'usage' && <UsageSection />}
 
                   {category === 'rules' && (
                     <Section title="Pinned rules" desc="App-global rules new sessions inherit (inviolable during a turn).">
@@ -326,6 +345,52 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
   );
 }
 
+// ─── Default shell picker ────────────────────────────────────────────────────
+// Which shell new terminal tabs spawn. Options come from the Rust-side
+// `list_shells` (existence-checked per OS: $SHELL/bash/zsh/fish on Unix,
+// PowerShell/pwsh/cmd/WSL/Git Bash on Windows). Applies to tabs opened after
+// the change; per-tab overrides live in the terminal dock's "+" menu.
+function DefaultShellField() {
+  const [shells, setShells] = useState<ShellInfo[]>([]);
+  const [prefs, setPrefs] = useState<TerminalPrefs>(loadTerminalPrefs);
+
+  useEffect(() => {
+    let alive = true;
+    void listShells().then((s) => { if (alive) setShells(s); });
+    return () => { alive = false; };
+  }, []);
+
+  if (shells.length === 0) return null; // browser mode / detection failed
+
+  const setShell = (path: string | undefined) => {
+    const next: TerminalPrefs = path ? { defaultShell: path } : {};
+    setPrefs(next);
+    saveTerminalPrefs(next);
+  };
+
+  return (
+    <Field
+      title="Default shell"
+      desc="New terminal tabs spawn this shell. The + menu in the dock can still open any detected shell per tab. Applies to tabs opened after the change."
+    >
+      <Select
+        value={prefs.defaultShell ?? '__default__'}
+        onValueChange={(v) => setShell(v === '__default__' ? undefined : v)}
+      >
+        <SelectTrigger className="w-56">
+          <span className="truncate"><SelectValue /></span>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__default__">System default</SelectItem>
+          {shells.filter((s) => s.id !== 'default').map((s) => (
+            <SelectItem key={s.path} value={s.path}>{s.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
+  );
+}
+
 // ─── Terminal font picker ────────────────────────────────────────────────────
 // Splits off from SettingsPanel because it owns its own hook state (font
 // enumeration is async) and would otherwise clutter the outer render.
@@ -354,17 +419,21 @@ function TerminalFontField() {
             className="w-56 px-2 py-1 rounded border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
           />
         ) : (
-          <select
-            value={selected}
+          <Select
+            value={selected || '__default__'}
             disabled={loading}
-            onChange={(e) => setFont(e.target.value || null)}
-            className="w-56 px-2 py-1 rounded border border-border bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+            onValueChange={(v) => setFont(v === '__default__' ? null : v)}
           >
-            <option value="">System default</option>
-            {fonts.map((f) => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </select>
+            <SelectTrigger className="w-56">
+              <span className="truncate"><SelectValue /></span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__default__">System default</SelectItem>
+              {fonts.map((f) => (
+                <SelectItem key={f} value={f}>{f}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </Field>
       <div className="pt-3 space-y-2">

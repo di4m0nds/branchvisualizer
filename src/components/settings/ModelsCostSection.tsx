@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Info } from 'lucide-react';
 import { useAppSelector } from '@/store/store';
 import { PROVIDERS } from '@/lib/agent/providers';
 import {
@@ -8,6 +9,9 @@ import {
   DEFAULT_COST_PREFS, loadCostPrefs, saveCostPrefs, type CostPrefs,
 } from '@/lib/agent/costPrefs';
 import { estimateTotalCost, formatCost, priceFor } from '@/lib/agent/pricing';
+import {
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
+} from '@/components/ui/Select';
 
 // ─── Settings → Models & Cost ────────────────────────────────────────────────
 // Per-task model routing (cheap models for cheap tasks, seamless fallback when
@@ -80,6 +84,26 @@ export default function ModelsCostSection() {
         </p>
       </div>
 
+      {/* How costs work — the estimates are informational unless caps are set. */}
+      <div className="flex gap-2.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2.5 mb-6">
+        <Info className="w-3.5 h-3.5 text-primary/70 flex-shrink-0 mt-0.5" />
+        <div className="text-[11px] text-muted-foreground leading-relaxed">
+          <p>
+            <span className="text-foreground font-medium">How costs are calculated:</span>{' '}
+            every model call records its input/output token counts; the ≈USD figure multiplies
+            them by a <span className="text-foreground">built-in static price table</span> (per-MTok
+            rates per model — not live billing data). Models missing from the table show no cost,
+            and subscription CLIs (e.g. Claude Code) may not bill per token at all.
+          </p>
+          <p className="mt-1">
+            Estimates are <span className="text-foreground">informational only</span> — they never
+            change which model runs or how the agent behaves. The one exception: if you set a
+            per-session or daily cap (Settings → Execution), the agent loop hard-stops a turn when
+            the estimated spend crosses the cap, resumable after raising it.
+          </p>
+        </div>
+      </div>
+
       {/* Task routing */}
       <h3 className="text-sm font-semibold text-foreground mb-2">Task routing</h3>
       <div className="rounded-lg border border-border divide-y divide-border/60 mb-6">
@@ -98,25 +122,27 @@ export default function ModelsCostSection() {
                   </p>
                 )}
               </div>
-              <select
-                value={routeKey(current)}
-                onChange={(e) => setRoute(task, e.target.value)}
-                className="text-[11px] bg-muted/30 border border-border rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-ring max-w-[240px]"
-              >
-                <option value="session">Session model (default)</option>
-                {options.map(({ provider, connected, models }) => (
-                  <optgroup key={provider.id} label={`${provider.label}${connected ? '' : ' (not connected)'}`}>
-                    {models.map((m) => {
-                      const price = priceFor(m.id);
-                      return (
-                        <option key={`${provider.id}::${m.id}`} value={`${provider.id}::${m.id}`}>
-                          {m.label}{price ? ` · ≈$${price.inPerM}/$${price.outPerM} per MTok` : ''}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
-                ))}
-              </select>
+              <Select value={routeKey(current)} onValueChange={(key) => setRoute(task, key)}>
+                <SelectTrigger className="max-w-[240px]">
+                  <span className="truncate"><SelectValue /></span>
+                </SelectTrigger>
+                <SelectContent className="max-w-[320px]">
+                  <SelectItem value="session">Session model (default)</SelectItem>
+                  {options.map(({ provider, connected, models }) => (
+                    <SelectGroup key={provider.id}>
+                      <SelectLabel>{provider.label}{connected ? '' : ' (not connected)'}</SelectLabel>
+                      {models.map((m) => {
+                        const price = priceFor(m.id);
+                        return (
+                          <SelectItem key={`${provider.id}::${m.id}`} value={`${provider.id}::${m.id}`}>
+                            {m.label}{price ? ` · ≈$${price.inPerM}/$${price.outPerM} per MTok` : ''}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           );
         })}
@@ -190,15 +216,16 @@ function BudgetRow({ title, desc, value, options, onChange }: {
         <p className="text-xs font-medium text-foreground">{title}</p>
         <p className="text-[10px] text-muted-foreground/60">{desc}</p>
       </div>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="text-[11px] bg-muted/30 border border-border rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-ring"
-      >
-        {options.map(([v, label]) => (
-          <option key={v} value={v}>{label}</option>
-        ))}
-      </select>
+      <Select value={String(value)} onValueChange={(v) => onChange(Number(v))}>
+        <SelectTrigger className="min-w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(([v, label]) => (
+            <SelectItem key={v} value={String(v)}>{label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

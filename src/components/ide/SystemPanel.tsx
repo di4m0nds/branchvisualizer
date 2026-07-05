@@ -9,6 +9,8 @@ import {
   fmtBytes, systemKill, systemPorts, systemProcesses,
   type PortInfo, type ProcInfo, type SystemSnapshot,
 } from '@/lib/system';
+import { useSystemStatsHistory } from '@/hooks/useSystemStatsHistory';
+import { StatTile } from '@/components/ui/charts/StatTile';
 
 // ─── System panel (expanded from the status bar) ─────────────────────────────
 // Bottom sheet: sortable process table with guarded kill, listening TCP ports,
@@ -24,6 +26,7 @@ export default function SystemPanel({ onClose, snapshot }: {
   snapshot: SystemSnapshot | null;
 }) {
   const pageVisible = usePageVisible();
+  const statsHistory = useSystemStatsHistory();
   const [sort, setSort] = useState<'cpu' | 'mem'>('cpu');
   const [procs, setProcs] = useState<ProcInfo[]>([]);
   const [ports, setPorts] = useState<PortInfo[]>([]);
@@ -84,6 +87,40 @@ export default function SystemPanel({ onClose, snapshot }: {
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* Vitals: current value + recent trend from the shared 2s-poll buffer. */}
+      {snapshot && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 px-3 py-2 border-b border-border/60 flex-shrink-0">
+          <StatTile
+            label="CPU"
+            value={`${snapshot.cpuPct.toFixed(0)}%`}
+            sub={`${snapshot.cpuCount} cores · load ${snapshot.loadAvgOne.toFixed(2)}`}
+            trend={statsHistory.map((s) => s.cpuPct)}
+            tone={snapshot.cpuPct >= 90 ? 'text-red-400' : snapshot.cpuPct >= 70 ? 'text-amber-400' : 'text-primary/80'}
+          />
+          <StatTile
+            label="Memory"
+            value={fmtBytes(snapshot.memUsed)}
+            sub={`of ${fmtBytes(snapshot.memTotal)}`}
+            trend={statsHistory.map((s) => s.memUsed)}
+            tone="text-primary/80"
+          />
+          <StatTile
+            label="IDE memory"
+            value={fmtBytes(snapshot.appMem)}
+            sub={`app CPU ${snapshot.appCpuPct.toFixed(0)}%`}
+            trend={statsHistory.map((s) => s.appMem)}
+            tone="text-primary/80"
+          />
+          <StatTile
+            label="Swap"
+            value={fmtBytes(snapshot.swapUsed)}
+            sub={`of ${fmtBytes(snapshot.swapTotal)}`}
+            trend={statsHistory.map((s) => s.swapUsed)}
+            tone="text-primary/80"
+          />
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 flex">
         {/* Processes */}

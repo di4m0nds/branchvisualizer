@@ -10,7 +10,9 @@ import { useEffect } from 'react';
 import { getFocusedPanel, setFocusedPanel, toggleMaximizedPanel, type PanelId } from './usePanelFocus';
 import { showPanel } from './usePanelVisibility';
 
-/** Digit key ('1'..'7') → panel id in fixed IDE reading order. */
+/** Digit key ('1'..'9', '0') → panel id in fixed IDE reading order. Digits are
+ *  saturated: knowledge=8, canvas=9, commands=0; the monitor view has no digit
+ *  (reachable from the view strip). */
 const DIGIT_TO_PANEL: Record<string, PanelId> = {
   '1': 'sidebar',
   '2': 'chat',
@@ -19,6 +21,9 @@ const DIGIT_TO_PANEL: Record<string, PanelId> = {
   '5': 'plan',
   '6': 'runtime',
   '7': 'docs',
+  '8': 'knowledge',
+  '9': 'canvas',
+  '0': 'commands',
 };
 
 export function usePanelShortcuts(): void {

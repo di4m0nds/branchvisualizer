@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppDispatch } from '@/store/store';
 import PinnedRulesEditor from './PinnedRulesEditor';
 import SandboxToggle from './SandboxToggle';
+import AgentSettingsDrawer from '@/components/agent/AgentSettingsDrawer';
 import { estimateTotalCost, formatCost } from '@/lib/agent/pricing';
 import { loadCostPrefs } from '@/lib/agent/costPrefs';
 import type {
@@ -50,6 +52,7 @@ function Segmented<T extends string>({
 export default function SessionContextBar({ session }: { session: Session }) {
   const dispatch = useAppDispatch();
   const [editorOpen, setEditorOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const { context: ctx } = session;
   const id = session.id;
 
@@ -156,6 +159,17 @@ export default function SessionContextBar({ session }: { session: Session }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* Per-session agent settings drawer (model, execution, memory) */}
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="flex items-center gap-1 px-1.5 py-1 rounded border border-border text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+          title="Agent settings (this session): model, temperature, execution limits, memory"
+        >
+          <SlidersHorizontal className="h-3 w-3" />
+          <span className="hidden lg:inline">agent</span>
+        </button>
+        <AgentSettingsDrawer session={session} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+
         {/* Pinned rules — click to edit (app-global CRUD; new sessions inherit) */}
         <button
           onClick={() => setEditorOpen(true)}

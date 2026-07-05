@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
-import { useAppSelector, useAppDispatch } from '@/store/store';
+import { getAppState, useAppSelector, useAppDispatch } from '@/store/store';
 import { useRepoData } from '@/hooks/useRepoData';
 import { toast } from '@/services/toast';
 import { isTauri } from '@/lib/platform';
@@ -168,7 +168,7 @@ export default function ProjectsSidebar({
 
   function handleNewThread(project: Project) {
     const defaults = loadAgentDefaults();
-    const session = createSession(project, defaults);
+    const session = createSession(project, defaults, getAppState().currentModel);
     dispatch({ type: 'CREATE_SESSION', session });
     if (project.source === 'local' && session.cwd) {
       fetchStatus(session.cwd)
