@@ -1,13 +1,21 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { toast } from '@/services/toast';
+import { prefillChat } from '@/hooks/useSendToChat';
+import { swallow } from '@/lib/log';
+import { TerminalSquare, FileCode, Plus, X, ChevronDown, ChevronUp, Stethoscope } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTauri } from '@/lib/platform';
 import Terminal from './Terminal';
 import { nextId } from '@/types/session';
 import type { TerminalDef } from '@/types/terminal';
 import { subscribeOpenInNvim } from '@/hooks/useOpenInNvim';
+import { subscribeRunInTerminal } from '@/hooks/useRunInTerminal';
 import { usePanelZoom } from '@/hooks/usePanelFocus';
 import { PanelMaximizeButton } from '@/components/ide/FocusablePanel';
+import { listShells, loadTerminalPrefs, type ShellInfo } from '@/lib/terminalPrefs';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 
 const MAX_SHELLS = 4;
 
@@ -17,10 +25,30 @@ function makeNvim(cwd: string): TerminalDef {
 
 // Shell titles are numbered off the live shell list ("Shell", "Shell 2", ...).
 // Renames replace the title but don't shift the numbering of future shells.
-function makeShell(cwd: string, existing: TerminalDef[]): TerminalDef {
+// `shell` (from the "+" menu) wins over the configured default; both fall back
+// to the platform default resolved Rust-side when unset.
+function makeShell(cwd: string, existing: TerminalDef[], shell?: ShellInfo): TerminalDef {
   const n = existing.length;
-  const title = n === 0 ? 'Shell' : `Shell ${n + 1}`;
-  return { id: nextId('term'), role: 'shell', title, cwd };
+  const base = shell && shell.id !== 'default' ? shell.label : 'Shell';
+  const title = n === 0 ? base : `${base} ${n + 1}`;
+  const cmd = shell && shell.id !== 'default' ? shell.path : loadTerminalPrefs().defaultShell;
+  return { id: nextId('term'), role: 'shell', title, cwd, ...(cmd ? { cmd } : {}) };
+}
+
+// A tab that runs a detected project command in an interactive PTY. `sh -c`
+// (`cmd /C` on Windows) starts deterministically — no race against a user
+// shell's rc/prompt readiness — while the PTY keeps it fully interactive
+// (Ctrl+C, stdin). The tab's process ends when the command exits.
+function makeCommandTab(cwd: string, command: string, title: string): TerminalDef {
+  const isWin = typeof navigator !== 'undefined' && /win/i.test(navigator.platform);
+  return {
+    id: nextId('term'),
+    role: 'shell',
+    title,
+    cwd,
+    cmd: isWin ? 'cmd' : 'sh',
+    args: isWin ? ['/C', command] : ['-c', command],
+  };
 }
 
 /**
@@ -63,6 +91,7 @@ export default memo(function TerminalDock({
   // Registered per-terminal writers so we can send ex-commands (`:e path\r`)
   // to the running nvim without a round-trip through Tauri events.
   const writersRef = useRef<Record<string, (data: string) => Promise<void>>>({});
+  const readersRef = useRef<Record<string, (lines: number) => string>>({});
 
   useEffect(() => {
     if (renamingId) renameInputRef.current?.select();
@@ -75,13 +104,33 @@ export default memo(function TerminalDock({
     if (collapsed) onToggleCollapsed?.();
   }, [collapsed, onToggleCollapsed]);
 
-  const addShell = useCallback(() => {
+  const addShell = useCallback((shell?: ShellInfo) => {
     if (shellsRef.current.length >= MAX_SHELLS) return;
-    const t = makeShell(cwd, shellsRef.current);
+    const t = makeShell(cwd, shellsRef.current, shell);
     setShells((prev) => [...prev, t]);
     setActiveId(t.id);
     if (collapsed) onToggleCollapsed?.();
   }, [cwd, collapsed, onToggleCollapsed]);
+
+  // Open an interactive tab running a detected project command (Commands panel).
+  const addCommandTab = useCallback((command: string, title: string) => {
+    if (shellsRef.current.length >= MAX_SHELLS) {
+      toast.error(`Close a terminal first — up to ${MAX_SHELLS} open at once.`);
+      return;
+    }
+    const t = makeCommandTab(cwd, command, title);
+    setShells((prev) => [...prev, t]);
+    setActiveId(t.id);
+    if (collapsed) onToggleCollapsed?.();
+  }, [cwd, collapsed, onToggleCollapsed]);
+
+  // Detected shells for the "+" menu (existence-checked Rust-side).
+  const [availableShells, setAvailableShells] = useState<ShellInfo[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void listShells().then((s) => { if (alive) setAvailableShells(s); });
+    return () => { alive = false; };
+  }, []);
 
   const closeShell = useCallback((id: string) => {
     delete writersRef.current[id];
@@ -123,6 +172,14 @@ export default memo(function TerminalDock({
     setNvimBootId((x) => x + 1);
   }, []);
 
+  // Run-in-terminal bus: the Commands panel opens a detected command as a new
+  // interactive dock tab (replaces the old non-interactive side drawer).
+  useEffect(() => {
+    return subscribeRunInTerminal(sessionId, ({ command, title }) => {
+      addCommandTab(command, title);
+    });
+  }, [sessionId, addCommandTab]);
+
   // Open-in-nvim bus: send `:e <path>` to the singleton nvim.
   useEffect(() => {
     if (!isTauri()) return;
@@ -131,9 +188,25 @@ export default memo(function TerminalDock({
       const writer = writersRef.current[nvim.id];
       if (!writer) return;
       const escaped = path.replace(/ /g, '\\ ');
-      await writer(`\x1b:e ${escaped}\r`).catch(() => {});
+      await writer(`\x1b:e ${escaped}\r`).catch(swallow('pty', 'nvim open-file escape'));
     });
   }, [sessionId, nvim.id]);
+
+  // Hand the active terminal's recent output to the agent (prefills the
+  // composer — the user reviews before sending). Per-command exit codes are
+  // not observable from a PTY without shell integration, so this manual
+  // handoff is the terminal-side error-triage affordance.
+  const diagnoseActive = () => {
+    const read = readersRef.current[activeId];
+    const tail = read ? read(50) : '';
+    if (!tail.trim()) {
+      toast.info('Terminal buffer is empty');
+      return;
+    }
+    const ok = prefillChat(sessionId, 'Please diagnose this terminal output:\n```\n' + tail + '\n```');
+    if (ok) toast.success('Terminal output added to the chat composer');
+    else toast.error('Chat composer unavailable');
+  };
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
@@ -208,22 +281,58 @@ export default memo(function TerminalDock({
             );
           })}
 
-          {/* Add-shell button — hides when at cap */}
+          {/* Add-shell button — hides when at cap. With detected shells it
+              becomes a menu (default + one entry per shell); otherwise a plain
+              "new default shell" button. */}
           {shells.length < MAX_SHELLS && (
-            <button
-              onClick={addShell}
-              className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
-              title="New shell"
-            >
-              <Plus className="w-3 h-3" />
-              <TerminalSquare className="w-3 h-3" />
-            </button>
+            availableShells.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
+                    title="New shell — click to pick which shell"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <TerminalSquare className="w-3 h-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52">
+                  <DropdownMenuItem onSelect={() => addShell()}>
+                    <TerminalSquare className="w-3 h-3" /> New shell (default)
+                  </DropdownMenuItem>
+                  <DropdownMenuLabel>Open with…</DropdownMenuLabel>
+                  {availableShells.filter((s) => s.id !== 'default').map((s) => (
+                    <DropdownMenuItem key={s.path} onSelect={() => addShell(s)}>
+                      <TerminalSquare className="w-3 h-3" />
+                      <span className="flex-1 truncate">{s.label}</span>
+                      <span className="text-[9px] text-muted-foreground/50 font-mono truncate max-w-24" title={s.path}>{s.path}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <button
+                onClick={() => addShell()}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors font-mono flex-shrink-0"
+                title="New shell"
+              >
+                <Plus className="w-3 h-3" />
+                <TerminalSquare className="w-3 h-3" />
+              </button>
+            )
           )}
         </div>
 
         {/* Right-side panel controls: maximize + collapse. Static so they never
             overlap the tab strip on the left. */}
         <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={diagnoseActive}
+            className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-accent/40 transition-colors"
+            title="Diagnose in chat — send the last 50 terminal lines to the agent composer"
+          >
+            <Stethoscope className="w-3.5 h-3.5" />
+          </button>
           <PanelMaximizeButton id="terminal" />
           {onToggleCollapsed && (
             <button
@@ -249,6 +358,7 @@ export default memo(function TerminalDock({
             fontScale={fontScale}
             onExit={handleNvimExit}
             registerWriter={(w) => { writersRef.current[nvim.id] = w; }}
+            registerReader={(r) => { readersRef.current[nvim.id] = r; }}
           />
         </div>
         {shells.map((t) => (
@@ -261,6 +371,7 @@ export default memo(function TerminalDock({
               active={t.id === activeId}
               fontScale={fontScale}
               registerWriter={(w) => { writersRef.current[t.id] = w; }}
+              registerReader={(r) => { readersRef.current[t.id] = r; }}
             />
           </div>
         ))}

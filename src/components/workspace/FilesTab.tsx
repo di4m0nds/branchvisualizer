@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { useAppContext } from '@/store/AppContext';
-import { fetchFileTree, type FileNode } from '@/lib/github';
-import { setToken } from '@/lib/github';
+import { useState } from 'react';
+import { useAppSelector } from '@/store/store';
+import { fetchDefaultTreeSha, fetchFileTree, type FileNode } from '@/lib/github';
+import { useAsyncResource } from '@/hooks/useAsyncResource';
 
 // ─── File icon ────────────────────────────────────────────────────────────
 
@@ -123,42 +123,19 @@ function formatSize(bytes: number): string {
 // ─── Main component ────────────────────────────────────────────────────────
 
 export default function FilesTab() {
-  const { state } = useAppContext();
-  const { repoInfo, token } = state;
-
-  const [tree, setTree] = useState<FileNode[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const token = useAppSelector((s) => s.token);
   const [search, setSearch] = useState('');
-  const loadedForRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!repoInfo) return;
-    const key = `${repoInfo.owner}/${repoInfo.repo}`;
-    if (loadedForRef.current === key) return;
-    loadedForRef.current = key;
-
-    setToken(token);
-    setLoading(true);
-    setError(null);
-
-    // Fetch the default branch's tree SHA first, then the full tree
-    const run = async () => {
-      const res = await fetch(
-        `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/branches/${repoInfo.defaultBranch}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-      );
-      if (!res.ok) throw new Error(`Failed to fetch branch info (${res.status})`);
-      const data = await res.json();
-      const treeSha: string = data.commit.commit.tree.sha;
-      const nodes = await fetchFileTree(repoInfo.owner, repoInfo.repo, treeSha);
-      setTree(nodes);
-    };
-
-    run()
-      .catch(e => { setError(e.message); loadedForRef.current = null; })
-      .finally(() => setLoading(false));
-  }, [repoInfo, token]);
+  // Fetch the default branch's tree SHA first, then the full tree.
+  const { data: tree, loading, error } = useAsyncResource<FileNode[]>(
+    async () => {
+      const treeSha = await fetchDefaultTreeSha(repoInfo!.owner, repoInfo!.repo, repoInfo!.defaultBranch);
+      return fetchFileTree(repoInfo!.owner, repoInfo!.repo, treeSha);
+    },
+    [repoInfo?.owner, repoInfo?.repo],
+    { enabled: !!repoInfo, scope: 'files' },
+  );
 
   // Flat search results
   const searchResults = search.trim()

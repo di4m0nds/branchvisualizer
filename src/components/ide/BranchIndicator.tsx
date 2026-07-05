@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { GitBranch, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import { useRepoData } from '@/hooks/useRepoData';
 import { isTauri } from '@/lib/platform';
 import { checkoutBranch, fetchStatus } from '@/lib/localGit';
@@ -14,20 +14,22 @@ import type { Session } from '@/types/session';
 // (git.rs) + `fetchStatus` to refresh the session's git context after a swap.
 
 export default function BranchIndicator({ session }: { session: Session }) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const branches = useAppSelector((s) => s.branches);
   const { loadLocalRepo } = useRepoData();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const isLocal = session.repoSource === 'local' && !!session.cwd;
   const current =
-    session.context.gitBranch ?? state.repoInfo?.defaultBranch ?? (isLocal ? 'detached' : 'main');
+    session.context.gitBranch ?? repoInfo?.defaultBranch ?? (isLocal ? 'detached' : 'main');
 
   // De-duplicate branch names (local + remote can collide) for the menu.
   const branchNames = useMemo(() => {
-    const names = state.branches.map((b) => b.name);
+    const names = branches.map((b) => b.name);
     return Array.from(new Set(names));
-  }, [state.branches]);
+  }, [branches]);
 
   const canSwitch = isLocal && isTauri() && branchNames.length > 0;
 

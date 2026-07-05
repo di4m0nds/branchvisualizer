@@ -13,9 +13,26 @@ export type NeutralContent =
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean };
 
+/** A user-attached file travelling with a message. Images and PDFs only for
+ *  now (video is deferred). `base64` is present in-memory for the send; it is
+ *  stripped at persistence time (only metadata survives reloads). `path` (the
+ *  original absolute path) lets subprocess providers (Claude Code) read the
+ *  file themselves instead of receiving bytes. */
+export interface NeutralAttachment {
+  kind: 'image' | 'document';
+  mime: string;
+  name: string;
+  sizeBytes: number;
+  base64?: string;
+  path?: string;
+}
+
 export interface NeutralMessage {
   role: 'user' | 'assistant';
   content: NeutralContent[];
+  /** Files attached to a user message (images/PDFs). Providers map what they
+   *  accept and gracefully skip the rest. */
+  attachments?: NeutralAttachment[];
 }
 
 export type NeutralStopReason =
@@ -64,6 +81,10 @@ export interface AgentRequest {
   effort: 'low' | 'medium' | 'high' | 'max';
   /** Enable adaptive/extended thinking for this turn. Provider-specific mapping. */
   thinking: boolean;
+  /** Sampling temperature (per-session model config). API providers map it to
+   *  their native param; CLI/subprocess providers ignore it. Undefined =
+   *  provider default. Anthropic: must be omitted when `thinking` is on. */
+  temperature?: number;
   /** Working directory for the turn. Used by subprocess providers (Claude Code)
    *  that run a real agent in the repo; ignored by API providers. */
   cwd?: string | null;

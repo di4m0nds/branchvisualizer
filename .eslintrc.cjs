@@ -12,5 +12,14 @@ module.exports = {
   rules: {
     'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    // The subscribe-to-everything shim was removed (it re-rendered ~40
+    // components on every streamed token). Keep it from coming back.
+    'no-restricted-syntax': [
+      'error',
+      {
+        selector: "CallExpression[callee.name='useAppContext']",
+        message: 'useAppContext re-renders on every store change. Use useAppSelector (narrow slice) + getAppState() in handlers.',
+      },
+    ],
   },
 }

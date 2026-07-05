@@ -6,13 +6,28 @@
 
 import { useSyncExternalStore } from 'react';
 
-export type PanelId = 'sidebar' | 'chat' | 'terminal' | 'workspace' | 'plan' | 'runtime' | 'docs';
+export type PanelId =
+  | 'sidebar' | 'chat' | 'terminal' | 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug'
+  | 'knowledge' | 'canvas' | 'monitor' | 'commands';
 
-const PANELS: PanelId[] = ['sidebar', 'chat', 'terminal', 'workspace', 'plan', 'runtime', 'docs'];
+const PANELS: PanelId[] = [
+  'sidebar', 'chat', 'terminal', 'workspace', 'plan', 'runtime', 'docs', 'debug',
+  'knowledge', 'canvas', 'monitor', 'commands',
+];
 const ZOOM_KEY = 'code-agent:panel_zoom';
 export const PANEL_ZOOM_MIN = 0.5;
 export const PANEL_ZOOM_MAX = 2.0;
 export const PANEL_ZOOM_STEP = 0.1;
+
+// Panels whose content must NEVER receive CSS `zoom` — they render to canvas
+// or manage their own scale, and CSS zoom corrupts them:
+//  - workspace: the git graph zooms via its own viewport (SET_VIEWPORT)
+//  - canvas:    Excalidraw has native Ctrl+wheel/± zoom
+//  - terminal:  xterm scales via font size (TerminalDock treats the panel
+//               zoom value as a font scale, which is safe)
+// Overlays (dropdowns, selects, lightbox) portal to <body> — outside any
+// zoomed subtree — so they position correctly regardless.
+export const CSS_ZOOM_EXEMPT: ReadonlySet<PanelId> = new Set<PanelId>(['workspace', 'canvas']);
 
 function clampZoom(v: number): number {
   return Math.min(PANEL_ZOOM_MAX, Math.max(PANEL_ZOOM_MIN, Math.round(v * 10) / 10));

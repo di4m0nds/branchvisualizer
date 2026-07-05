@@ -3,7 +3,7 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAppContext } from '@/store/AppContext';
+import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
 import { useRepoData } from '@/hooks/useRepoData';
 import { validateRepoInput, parseRepoInput, tokenSchema } from '@/services/validation';
 import { toast } from '@/services/toast';
@@ -189,10 +189,14 @@ function SourceToggle({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RepoSearch({ compact = false }: RepoSearchProps) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const source = useAppSelector((s) => s.source);
+  const loadState = useAppSelector((s) => s.loadState);
+  const token = useAppSelector((s) => s.token);
+  const rateLimit = useAppSelector((s) => s.rateLimit);
   const { loadRepo, loadLocalRepo } = useRepoData();
   const navigate = useNavigate();
-  const isLocal = state.source === 'local';
+  const isLocal = source === 'local';
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -230,7 +234,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   }, [dispatch]);
 
   const isLoading = ['fetching-repo', 'fetching-branches', 'fetching-commits', 'building-graph', 'validating']
-    .includes(state.loadState.phase);
+    .includes(loadState.phase);
 
   useEffect(() => {
     if (!compact) inputRef.current?.focus();
@@ -297,7 +301,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   }
 
   function setSource(source: 'github' | 'local') {
-    if (source === state.source) return;
+    if (source === getAppState().source) return;
     dispatch({ type: 'SET_SOURCE', source });
     setValue('');
     setError('');
@@ -407,7 +411,6 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
   // ── Compact mode (repo page header) ───────────────────────────────────────
 
   if (compact) {
-    const { rateLimit } = state;
     const rateLimitLow  = rateLimit && rateLimit.remaining < 10;
     const rateLimitWarn = rateLimit && rateLimit.remaining < 30;
     const pct = rateLimit ? Math.round((rateLimit.remaining / rateLimit.limit) * 100) : 100;
@@ -415,7 +418,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
 
     return (
       <div className="flex items-center gap-2 w-full max-w-lg">
-        <SourceToggle source={state.source} onChange={setSource} />
+        <SourceToggle source={source} onChange={setSource} />
         {/* Rate limit indicator — compact pill to the left of the input */}
         {!isLocal && rateLimit && (
           <div className="relative group flex-shrink-0 select-none">
@@ -478,7 +481,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                     <span>Resets in</span>
                     <span className="font-mono text-foreground">{minsLeft}m</span>
                   </div>
-                  {!state.token && (
+                  {!token && (
                     <p className="text-[10px] pt-1 border-t border-border text-muted-foreground/70 leading-relaxed">
                       Add a GitHub token to raise the limit to 5,000 req/hr.
                     </p>
@@ -545,7 +548,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                        dark:hover:bg-green-300/20 dark:hover:border-green-300/50
                        font-mono tracking-wide transition-all"
           >
-            {isLoading ? state.loadState.message : 'Go →'}
+            {isLoading ? loadState.message : 'Go →'}
           </Button>
         </form>
 
@@ -570,20 +573,20 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
     <div className="w-full max-w-2xl mx-auto">
       {/* Source + token toggles */}
       <div className="flex items-center justify-between mb-3">
-        <SourceToggle source={state.source} onChange={setSource} />
+        <SourceToggle source={source} onChange={setSource} />
         {!isLocal && (
           <button
             type="button"
             onClick={() => setShowToken(v => !v)}
             className={cn(
               'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-all',
-              state.token || showToken
+              token || showToken
                 ? 'border-primary/40 text-primary bg-primary/5'
                 : 'border-border text-muted-fg hover:border-border hover:text-foreground',
             )}
           >
             <KeyIcon className="h-3 w-3" />
-            {state.token ? 'Token active' : 'Add token'}
+            {token ? 'Token active' : 'Add token'}
           </button>
         )}
       </div>
@@ -607,7 +610,7 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                 <div className="relative flex-1">
                   <input
                     type="password"
-                    value={state.token}
+                    value={token}
                     onChange={e => handleTokenChange(e.target.value)}
                     placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
                     autoComplete="off"
@@ -619,11 +622,11 @@ export default function RepoSearch({ compact = false }: RepoSearchProps) {
                     )}
                   />
                 </div>
-                {state.token && (
+                {token && (
                   <span className="text-xs text-success flex items-center gap-1 shrink-0">
                     <CheckIcon className="h-3 w-3" />
                     Active
-                    {state.rateLimit && ` · ${state.rateLimit.remaining} left`}
+                    {rateLimit && ` · ${rateLimit.remaining} left`}
                   </span>
                 )}
                 <a

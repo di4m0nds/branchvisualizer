@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter};
 
 /// Only these engines may be invoked. Everything the frontend passes as `bin`
 /// funnels through here so a bad value can never become an arbitrary binary.
-fn valid_bin(bin: &str) -> bool {
+pub(crate) fn valid_bin(bin: &str) -> bool {
     matches!(bin, "docker" | "podman")
 }
 
@@ -39,7 +39,7 @@ fn valid_action(action: &str) -> bool {
 
 /// Run a container-engine subcommand and return stdout on success (arg-vector,
 /// no shell). Modeled on `git.rs::run_git`.
-fn run_docker(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
+pub(crate) fn run_docker(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
     if !valid_bin(bin) {
         return Err(format!("unsupported container engine: {bin}"));
     }
@@ -70,7 +70,7 @@ pub struct CommandResult {
 
 /// Like `run_docker` but returns the full result (incl. stderr/code) even on
 /// failure, so the UI can surface what went wrong. Used for lifecycle actions.
-fn run_docker_capture(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<CommandResult, String> {
+pub(crate) fn run_docker_capture(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<CommandResult, String> {
     if !valid_bin(bin) {
         return Err(format!("unsupported container engine: {bin}"));
     }
@@ -93,10 +93,22 @@ fn run_docker_capture(bin: &str, args: &[&str], cwd: Option<&str>) -> Result<Com
 
 // ─── Detection ───────────────────────────────────────────────────────────────
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineProbe {
+    name: String,
+    version: Option<String>,
+    /// Daemon/service reachable (`<bin> info` succeeded). `docker --version`
+    /// succeeds with a dead daemon, so this is the real usability signal.
+    alive: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeInfo {
-    /// "docker" | "podman" | null when neither is on PATH.
+    /// Every installed engine with its liveness — the UI renders a switcher.
+    engines: Vec<EngineProbe>,
+    /// The chosen default engine ("docker" | "podman" | null when none installed).
     engine: Option<String>,
     version: Option<String>,
     /// Compose file name found in `cwd`, if any.
@@ -114,17 +126,47 @@ fn engine_version(bin: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// Detect the container engine and any compose/Dockerfile in the project root.
+/// Probe one engine: None when not installed; alive = `<bin> info` succeeds.
+fn probe_engine(bin: &str) -> Option<EngineProbe> {
+    let version = engine_version(bin)?;
+    let alive = Command::new(bin)
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    Some(EngineProbe { name: bin.to_string(), version: Some(version), alive })
+}
+
+/// Pure engine choice: preferred-if-alive → podman-if-alive → docker-if-alive →
+/// first installed (even dead, so the UI can show a daemon-down badge) → None.
+fn choose_engine(probes: &[EngineProbe], preferred: Option<&str>) -> Option<String> {
+    if let Some(p) = preferred {
+        if probes.iter().any(|e| e.name == p && e.alive) {
+            return Some(p.to_string());
+        }
+    }
+    for name in ["podman", "docker"] {
+        if probes.iter().any(|e| e.name == name && e.alive) {
+            return Some(name.to_string());
+        }
+    }
+    probes.first().map(|e| e.name.clone())
+}
+
+/// Detect the container engines and any compose/Dockerfile in the project root.
 #[tauri::command]
-pub fn runtime_detect(cwd: String) -> RuntimeInfo {
-    // Prefer docker, then podman.
-    let (engine, version) = if let Some(v) = engine_version("docker") {
-        (Some("docker".to_string()), Some(v))
-    } else if let Some(v) = engine_version("podman") {
-        (Some("podman".to_string()), Some(v))
-    } else {
-        (None, None)
-    };
+pub fn runtime_detect(cwd: String, preferred: Option<String>) -> RuntimeInfo {
+    let engines: Vec<EngineProbe> = ["docker", "podman"]
+        .iter()
+        .filter_map(|bin| probe_engine(bin))
+        .collect();
+    let engine = choose_engine(&engines, preferred.as_deref());
+    let version = engine
+        .as_deref()
+        .and_then(|name| engines.iter().find(|e| e.name == name))
+        .and_then(|e| e.version.clone());
 
     let mut compose_file = None;
     if !cwd.is_empty() {
@@ -144,12 +186,25 @@ pub fn runtime_detect(cwd: String) -> RuntimeInfo {
     let compose_command = engine.as_deref().map(|e| format!("{e} compose"));
 
     RuntimeInfo {
+        engines,
         engine,
         version,
         compose_file,
         has_dockerfile,
         compose_command,
     }
+}
+
+/// Raw `inspect` JSON for one container (array on both engines; frontend parses).
+#[tauri::command]
+pub fn docker_inspect(bin: String, target: String) -> Result<String, String> {
+    if !valid_bin(&bin) {
+        return Err(format!("unsupported container engine: {bin}"));
+    }
+    if target.is_empty() || target.starts_with('-') {
+        return Err(format!("invalid container: {target}"));
+    }
+    run_docker(&bin, &["inspect", &target], None)
 }
 
 // ─── Containers ──────────────────────────────────────────────────────────────
@@ -382,7 +437,7 @@ struct ExitPayload {
 
 /// Spawn a long-running engine command and stream its stdout lines to the
 /// webview on `runtime://data/<id>`, emitting `runtime://exit` when it ends.
-fn spawn_stream(
+pub(crate) fn spawn_stream(
     app: AppHandle,
     id: String,
     bin: &str,
@@ -589,6 +644,33 @@ pub fn docker_exec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn probe(name: &str, alive: bool) -> EngineProbe {
+        EngineProbe { name: name.into(), version: Some("v1".into()), alive }
+    }
+
+    #[test]
+    fn choose_prefers_alive_preferred() {
+        let probes = [probe("docker", true), probe("podman", true)];
+        assert_eq!(choose_engine(&probes, Some("docker")).as_deref(), Some("docker"));
+    }
+
+    #[test]
+    fn choose_falls_back_when_preferred_dead() {
+        let probes = [probe("docker", false), probe("podman", true)];
+        assert_eq!(choose_engine(&probes, Some("docker")).as_deref(), Some("podman"));
+    }
+
+    #[test]
+    fn choose_returns_dead_engine_when_only_option() {
+        let probes = [probe("docker", false)];
+        assert_eq!(choose_engine(&probes, None).as_deref(), Some("docker"));
+    }
+
+    #[test]
+    fn choose_none_when_no_engines() {
+        assert_eq!(choose_engine(&[], Some("podman")), None);
+    }
 
     #[test]
     fn bin_allow_list() {

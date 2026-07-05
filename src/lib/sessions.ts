@@ -4,10 +4,11 @@
 // where the "+" button would attach the new session to a different repo).
 
 import type { AgentDefaults } from './agentDefaults';
+import type { ModelRef } from '@/types';
 import type { Project, Session } from '@/types/session';
 import { createDefaultContext, nextId } from '@/types/session';
 
-export function createSession(project: Project, defaults: AgentDefaults): Session {
+export function createSession(project: Project, defaults: AgentDefaults, model?: ModelRef): Session {
   const context = createDefaultContext();
   return {
     id: nextId('session'),
@@ -19,6 +20,9 @@ export function createSession(project: Project, defaults: AgentDefaults): Sessio
     repoSource: project.source,
     repoRef: project.path,
     cwd: project.source === 'local' ? project.path : null,
+    // Seed from the app-global default model; the session owns its copy from
+    // here on (per-session model config).
+    ...(model ? { modelConfig: { model: { ...model } } } : {}),
     context: {
       ...context,
       accessLevel: defaults.accessLevel,

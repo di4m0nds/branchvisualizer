@@ -10,8 +10,13 @@ import type {
   CommandResult, ComposeConfig, Container, ContainerEngine, ContainerStats, RuntimeInfo,
 } from '@/types/runtime';
 
-export function runtimeDetect(cwd: string): Promise<RuntimeInfo> {
-  return invoke<RuntimeInfo>('runtime_detect', { cwd });
+export function runtimeDetect(cwd: string, preferred?: ContainerEngine | null): Promise<RuntimeInfo> {
+  return invoke<RuntimeInfo>('runtime_detect', { cwd, preferred: preferred ?? null });
+}
+
+/** Raw `inspect` JSON (array) for one container; caller parses defensively. */
+export function runtimeInspect(bin: ContainerEngine, target: string): Promise<string> {
+  return invoke<string>('docker_inspect', { bin, target });
 }
 
 export function dockerPs(bin: ContainerEngine): Promise<Container[]> {

@@ -1,4 +1,5 @@
 import { invoke, isTauri, listen } from '../../platform';
+import { getPrompt, renderPrompt } from '../prompts';
 import { getProviderKey } from '../../providerKeys';
 import type { SkillFlag } from '@/types/session';
 import type {
@@ -27,12 +28,15 @@ import { STD_ONLY, STD_OR_1M } from './claudeModels';
 // contextTokens is the STANDARD size; 1M lives in contextOptions and is opted
 // into via the `[1m]` model-string suffix (see ClaudeCodeTransport.cliModel).
 // On a subscription plan, 1M requires usage credits — standard always works.
+// Only Sonnet 4.x exposes the 1M-context beta; Opus and Haiku serve 200K only.
+// Offering 1M where the model can't serve it produced the "Usage credits
+// required for 1M context" CLI error, so the option is gated to Sonnet here.
 const MODELS: ModelInfo[] = [
-  { id: 'opus',              label: 'Opus (latest)',   defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'opus',              label: 'Opus (latest)',   defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
   { id: 'sonnet',            label: 'Sonnet (latest)', defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
   { id: 'haiku',             label: 'Haiku (latest)',  defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
-  { id: 'claude-opus-4-8',   label: 'Opus 4.8',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
-  { id: 'claude-opus-4-7',   label: 'Opus 4.7',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-opus-4-8',   label: 'Opus 4.8',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
+  { id: 'claude-opus-4-7',   label: 'Opus 4.7',        defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6',      defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_OR_1M },
   { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',       defaultTier: 'unknown', contextTokens: 200_000, contextOptions: STD_ONLY },
 ];
@@ -78,115 +82,36 @@ function newRunId(): string {
  *  framing. The `--append-system-prompt` channel is the sanctioned route.
  *  Trimmed intentionally: the CLI already knows how to be a code agent — we
  *  only teach it the extra XML blocks the IDE renders. */
-export const CLAUDE_CODE_APPEND_PROMPT = `You are running inside an IDE that renders your responses. Follow these output conventions in every turn — they are the IDE's contract for how it interprets your text.
-
-**Reasoning.** For any non-trivial decision, emit a \`<thinking>…</thinking>\` block with a concise walk-through of constraints, tradeoffs, and the choice. The IDE surfaces it as a collapsible "Thought process" step (visible to the user, not hidden).
-
-**Clarifying questions — MUST be XML.** When you need input from the user to proceed — including any request phrased as "multiple choice", "give me options", "which should I do first — A/B/C?", or any lettered/numbered pick-list — you MUST emit a \`<questions_for_user>\` XML block. NEVER write choices as a Markdown "A. …/B. …/C. …" list in prose. The IDE only renders the interactive popup for the XML form; a Markdown list will appear as inert chat text and defeat the entire flow. Format:
-
-\`\`\`
-<questions_for_user>
-  <question id="q1" multi="false">
-    <text>Which should I tackle first?</text>
-    <choice id="c1" description="1–2 sentence 'deep but short' explanation of what picking this means.">Option label</choice>
-    <choice id="c2" description="Similar explanation for this option.">Another option</choice>
-  </question>
-</questions_for_user>
-\`\`\`
-
-Every \`<choice>\` MUST include a \`description="…"\` attribute (1–2 sentences) — the popup has real room to render it and choices without a description look bare.
-
-**Hard stop after questions.** After emitting \`<questions_for_user>\`, STOP your response immediately. Do NOT run any tools, do NOT continue reasoning, do NOT emit any other content in the same turn. The user's answer will arrive as the next turn and you resume then. Continuing past the block wastes tokens and produces work the user has not yet approved.
-
-**Planning mode.** When the session is in planning mode, lead with a \`<plan>…</plan>\` block outlining the concrete steps, and, if any scope decision is the user's to make, ask via \`<questions_for_user>\` before touching any files. Do not edit or create files — read-only investigation only — until the user approves the plan (the IDE tells you when you are in planning mode; see the injected clause).
-
-**Prose formatting.** In conversational prose (outside structured XML blocks), lightweight Markdown is allowed: \`**bold**\`, \`*italic*\`, \`\`\`inline code\`\`\`, and fenced \`\`\`lang code blocks. NO headings, tables, images, or blockquotes. Structured blocks stay XML — never wrap them in Markdown.
-
-**Task summary footer.** For any **non-trivial turn** — a multi-file change, a bug fix, a new feature, a substantial refactor — end your response with a \`<task_summary>\` block using this schema:
-
-\`\`\`
-<task_summary>
-  <what_was_done>1–3 sentence overview of what you did.</what_was_done>
-  <files>
-    <file path="src/foo.ts" change="modified">One-line summary of the change.</file>
-    <file path="src/bar.ts" change="added">One-line summary.</file>
-  </files>
-  <root_cause>Only for bug fixes: what was wrong and why.</root_cause>
-  <features>Only for new features: brief bullets or prose.</features>
-  <verification>
-    <command>pnpm test</command>
-    <command>pnpm typecheck</command>
-  </verification>
-  <notes>Optional caveats or follow-ups.</notes>
-</task_summary>
-\`\`\`
-
-- \`change\` must be one of \`added\` / \`modified\` / \`deleted\`.
-- Only list \`<verification>\` commands you ran, or ones the user can trivially run to confirm your work (tests, typecheck, lint, build). Never fabricate output — only the command string.
-- All child tags except \`<what_was_done>\` are optional; omit sections that don't apply.
-- **Skip the block entirely** for one-line changes, Q&A responses, or turns that only asked \`<questions_for_user>\`. Don't emit a bare "I did nothing" summary.
-
-**Do not emit.** \`<agent_status>\`, \`<pending_action>\`, \`<session_context>\`, \`<action_log>\`, or \`<cli_approval_needed>\` are IDE-side concepts, not model output — the IDE generates them itself. Never emit them yourself.
-
-**Do not use the built-in \`Skill\` / skill-invocation tool.** This IDE does not register any Claude Code skills, so any \`Skill\` call will fail with "Execute skill: …". Use the direct \`Read\`, \`Write\`, \`Edit\`, and \`Bash\` tools instead — they do exactly what a skill would have wrapped, and their output is what the IDE renders.
-`;
-
-// ─── Skill-aware append-system-prompt factory ────────────────────────────────
-// The user's session-level skill flags (test_first, security_review,
-// explain_changes, minimal_diff, performance_notes, accessibility) need to
-// reach the CLI. `renderSessionContext` (which carries them in the base prompt
-// path) is refused as prompt injection by Claude Code, so instead we append the
-// enabled skills as extra behavioural rules through the sanctioned
-// `--append-system-prompt` channel — where the CLI treats them as legitimate.
-
-const SKILL_INSTRUCTIONS: Record<string, string> = {
-  test_first: '`test_first`: propose or write tests BEFORE the implementation. If asked to add a feature, sketch the test first, then implement.',
-  security_review: '`security_review`: after any code touching input parsing, auth, secrets, network, or filesystem, append a brief `<security_review>` block flagging risks and the mitigation you took.',
-  explain_changes: '`explain_changes`: after each file change, append a plain-English `<change_explanation>` block that says what changed and why in 1–3 sentences.',
-  minimal_diff: '`minimal_diff`: make the SMALLEST change that achieves the goal. Do not refactor unrelated code, do not reformat, do not touch files that don\'t need touching. If you must add a helper, add it near where it\'s used.',
-  performance_notes: '`performance_notes`: when you introduce a loop, allocation, blocking I/O, or non-trivial complexity, note it briefly in prose so the reviewer can catch regressions.',
-  accessibility: '`accessibility`: any UI code you produce must include ARIA labels, keyboard navigation, focus management, and colour-contrast considerations.',
-};
-
-// In supervised mode the IDE runs the CLI with `--permission-mode acceptEdits`,
-// which auto-approves edits but DENIES shell commands. A headless CLI can't
-// pause for interactive approval, so it would otherwise spam failing commands.
-// This clause tells the model to defer shell work instead of attempting it —
-// the true "freeze": it stops cleanly at the first shell need and the user
-// approves, after which the turn resumes with bypass permissions.
-const SUPERVISED_CLAUSE = `
-
-**Supervised mode — do not run shell commands.** The IDE will DENY every Bash/shell command in this session (builds, tests, dev servers, installs, git, package managers). Do NOT attempt them — they fail and waste the turn. Instead:
-- Do read-only investigation with Read / Grep / Glob, and make file edits (those are auto-approved).
-- When you would run a shell command, STOP: briefly state which commands you need and why, then end your turn. The user grants permission and you resume with full access — do not retry the command yourself first.`;
-
-// When the session build mode is `planning`, the IDE runs the CLI with
-// `--permission-mode plan`, so file tools are physically disabled this turn.
-// This clause makes the state explicit (the CLI can't otherwise know) and tells
-// the model to produce a plan and stop rather than fight the disabled tools.
-const PLANNING_CLAUSE = `
-
-**You ARE in planning mode right now.** Do not edit or create files — file-writing tools are disabled for this turn. Produce a \`<plan>…</plan>\` block outlining the concrete implementation steps, and, if any scope decision is the user's to make, a \`<questions_for_user>\` block. Then STOP. Read-only investigation (Read / Grep / Glob) is fine to inform the plan. The user reviews the plan and approves it; only then do you implement (the next turn runs with full permissions).`;
+/** The IDE rendering contract for the claude CLI, read through the prompt
+ *  registry (Settings → Prompts can override it). See prompts.ts for the text. */
+export function claudeCodeAppendPrompt(): string {
+  return getPrompt('cc_append_prompt');
+}
 
 /** Build the CLI-appended prompt with the session's enabled skill flags and
  *  access-level guidance mixed in. Called per turn so toggling a skill or
  *  access level in the config strip takes effect on the very next request. */
-export function buildAppendPrompt(skills: SkillFlag[] = [], accessLevel?: string, buildMode?: string): string {
+export function buildAppendPrompt(skills: SkillFlag[] = [], accessLevel?: string, buildMode?: string, kbPath?: string): string {
   const enabled = skills
     .filter((s) => s.enabled)
-    .map((s) => SKILL_INSTRUCTIONS[s.id])
+    .map((s) => getPrompt(`cc_skill.${s.id}`))
     .filter(Boolean);
 
-  let prompt = CLAUDE_CODE_APPEND_PROMPT;
+  let prompt = claudeCodeAppendPrompt();
   if (enabled.length > 0) {
     prompt += `\n\n**Session behaviors (enabled by the user — honour throughout the turn).**\n${enabled.map((line) => `- ${line}`).join('\n')}\n`;
   }
   // Planning gates edits regardless of access level, so its clause wins; the
   // supervised "no shell" guidance is redundant in a read-only planning turn.
   if (buildMode === 'planning') {
-    prompt += PLANNING_CLAUSE;
+    prompt += getPrompt('cc_planning_clause');
   } else if (accessLevel === 'supervised') {
-    prompt += SUPERVISED_CLAUSE;
+    prompt += getPrompt('cc_supervised_clause');
+  }
+  // Local projects: the knowledge base is real files in the working tree — the
+  // CLI's own Read/Grep tools can consult it directly.
+  if (kbPath) {
+    prompt += renderPrompt('cc_kb_pointer', { path: kbPath });
   }
   return prompt;
 }
@@ -198,13 +123,23 @@ export function buildAppendPrompt(skills: SkillFlag[] = [], accessLevel?: string
 function toPrompt(msgs: NeutralMessage[]): string {
   const textOf = (c: NeutralContent[]): string =>
     c.map((b) => (b.type === 'text' ? b.text : '')).filter(Boolean).join('\n').trim();
+  // The CLI runs locally and reads files itself — attachments travel as
+  // absolute paths appended to the turn, not as bytes.
+  const withAttachments = (m: NeutralMessage, t: string): string => {
+    const paths = (m.attachments ?? []).map((a) => a.path).filter(Boolean) as string[];
+    if (m.role !== 'user' || paths.length === 0) return t;
+    return `${t}\n\nAttached files (read them for context):\n${paths.map((p) => `- ${p}`).join('\n')}`;
+  };
 
-  if (msgs.length <= 1) return textOf(msgs[0]?.content ?? []);
+  if (msgs.length <= 1) {
+    const m = msgs[0];
+    return m ? withAttachments(m, textOf(m.content)) : '';
+  }
   return msgs
     .map((m) => {
       const t = textOf(m.content);
       if (!t) return '';
-      return `${m.role === 'user' ? 'User' : 'Assistant'}: ${t}`;
+      return `${m.role === 'user' ? 'User' : 'Assistant'}: ${withAttachments(m, t)}`;
     })
     .filter(Boolean)
     .join('\n\n');
@@ -350,6 +285,26 @@ function synthToolResultXml(name: string, output: string, isError: boolean): str
 
 interface ExitPayload { id: string; code: number | null; error: string | null }
 
+/** The CLI's error when a subscription plan can't serve a 1M-context request.
+ *  Loose match: catches both the "Usage credits required for 1M context" and
+ *  the "--model to switch to standard context" phrasings. */
+export function is1mCreditError(text: string): boolean {
+  if (!text) return false;
+  return /usage credits required for 1m context/i.test(text)
+    || /--model to switch to standard context/i.test(text);
+}
+
+/** Thrown when a 1M-context turn fails purely because the plan lacks the
+ *  credits to serve it. The loop catches this (by `code`) and transparently
+ *  retries the same turn on the standard 200K window. */
+export class Context1mUnavailableError extends Error {
+  readonly code = 'context_1m_unavailable';
+  constructor(message = '1M context is not available on this plan') {
+    super(message);
+    this.name = 'Context1mUnavailableError';
+  }
+}
+
 class ClaudeCodeTransport implements AgentTransport {
   readonly id = 'claude_code';
   constructor(readonly modelId: string, readonly contextSize: ContextSizeId = 'standard') {}
@@ -386,6 +341,10 @@ class ClaudeCodeTransport implements AgentTransport {
     // Set once we kill the subprocess to freeze the turn for approval, so we
     // don't fire the kill repeatedly for each subsequent denied command.
     let killedForApproval = false;
+    // Set when the CLI reports it can't serve the requested 1M context on this
+    // plan. onExit turns this into a typed rejection the loop retries on 200K,
+    // instead of dumping the raw credit error into the transcript.
+    let creditError1m = false;
     // Fired the FIRST time an approval failure is detected so the card is
     // visible while the CLI is still running (in case the user hits Stop) as
     // well as when the CLI exits normally. Later approval failures are still
@@ -509,6 +468,9 @@ class ClaudeCodeTransport implements AgentTransport {
           }
         } else if (ev.type === 'result') {
           if (typeof ev.result === 'string') resultText = ev.result;
+          if (this.contextSize === '1m' && ev.is_error && is1mCreditError(ev.result ?? '')) {
+            creditError1m = true;
+          }
           if (ev.usage) {
             const u = ev.usage;
             usage = {
@@ -526,6 +488,14 @@ class ClaudeCodeTransport implements AgentTransport {
       const onExit = (p: ExitPayload) => {
         if (p.id !== runId) return;
         cleanup();
+        // 1M-context credit failure: reject with a typed error so the loop can
+        // transparently retry on the standard window. Keep the raw CLI credit
+        // message out of the transcript entirely.
+        if (this.contextSize === '1m'
+            && (creditError1m || is1mCreditError(resultText || streamed || p.error || ''))) {
+          reject(new Context1mUnavailableError());
+          return;
+        }
         const text = (streamed || resultText).trim();
         if (p.code !== 0 && !text) {
           reject(new Error(p.error?.trim() || `claude exited with code ${p.code ?? 'unknown'}`));
@@ -558,7 +528,7 @@ class ClaudeCodeTransport implements AgentTransport {
             oauthToken: token,
             // Loop passes a skill-aware prompt via `req.appendSystem`; fall
             // back to the plain base if the field is unset (older callers).
-            appendSystem: req.appendSystem ?? CLAUDE_CODE_APPEND_PROMPT,
+            appendSystem: req.appendSystem ?? claudeCodeAppendPrompt(),
           });
         })
         .catch((e) => {

@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshCw, Play, Square, RotateCw, Trash2, Download, Hammer,
   Boxes, ScrollText, Network, AlertTriangle, ArrowUpCircle, ArrowDownCircle,
-  Cpu, MemoryStick, RotateCcw, CornerDownLeft,
+  Cpu, MemoryStick, RotateCcw, CornerDownLeft, SquareTerminal, Settings2, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -11,13 +11,18 @@ import { useActiveSession } from '@/hooks/useActiveSession';
 import { usePageVisible } from '@/hooks/usePageVisible';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ServiceGraph from './ServiceGraph';
+import InspectDrawer from './InspectDrawer';
+import {
+  isSandboxContainer, loadEngine, loadIntervals, saveEngine, saveIntervals,
+  type RuntimeIntervals,
+} from './runtimePrefs';
 import {
   runtimeDetect, dockerPs, dockerComposeServices, dockerAction, dockerKill, dockerExec,
   dockerStatsStream, dockerLogsStream, onRuntimeData, onRuntimeExit, parseStatsLine,
   type DockerAction,
 } from '@/lib/runtime';
 import type {
-  RuntimeInfo, Container, ComposeService, ContainerStats, Diagnostic,
+  RuntimeInfo, Container, ComposeService, ContainerEngine, ContainerStats, Diagnostic,
 } from '@/types/runtime';
 import type { Unlisten } from '@/lib/platform';
 
@@ -40,21 +45,32 @@ export default memo(function RuntimePanel() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [services, setServices] = useState<ComposeService[]>([]);
   const [stats, setStats] = useState<Record<string, ContainerStats>>({});
-  const [confirm, setConfirm] = useState<{ action: DockerAction; target: string | null; label: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ action: DockerAction; target: string | null; label: string; sandbox: boolean } | null>(null);
+  // User's preferred engine (persisted); honored even when its daemon is dead
+  // so failures surface visibly instead of silently switching.
+  const [preferred, setPreferred] = useState<ContainerEngine | null>(loadEngine);
+  const [intervals, setIntervals] = useState<RuntimeIntervals>(loadIntervals);
+  const [gearOpen, setGearOpen] = useState(false);
+  const [psError, setPsError] = useState<string | null>(null);
+  const [inspect, setInspect] = useState<Container | null>(null);
+  const [execRequest, setExecRequest] = useState<string | null>(null);
 
   // ── Detection (on project change) ─────────────────────────────────────
   useEffect(() => {
     if (!isTauri() || !cwd) { setInfo(null); return; }
     let cancelled = false;
     setDetecting(true);
-    runtimeDetect(cwd)
+    runtimeDetect(cwd, preferred)
       .then((i) => { if (!cancelled) setInfo(i); })
       .catch(() => { if (!cancelled) setInfo(null); })
       .finally(() => { if (!cancelled) setDetecting(false); });
     return () => { cancelled = true; };
-  }, [cwd]);
+  }, [cwd, preferred]);
 
-  const engine = info?.engine ?? null;
+  // Honor the user's switch even for a dead engine (errors then show in the banner).
+  const engine = (preferred && info?.engines.some((e) => e.name === preferred))
+    ? preferred
+    : info?.engine ?? null;
 
   // ── Load containers + services (poll ps every 3s) ─────────────────────
   const refresh = useCallback(async () => {
@@ -64,7 +80,8 @@ export default memo(function RuntimePanel() {
         dockerPs(engine),
         cwd && info?.composeFile ? dockerComposeServices(engine, cwd) : Promise.resolve({ services: [] }),
       ]);
-      if (ps.status === 'fulfilled') setContainers(ps.value);
+      if (ps.status === 'fulfilled') { setContainers(ps.value); setPsError(null); }
+      else setPsError(ps.reason instanceof Error ? ps.reason.message : String(ps.reason));
       if (comp.status === 'fulfilled') setServices(comp.value.services);
     } catch { /* transient */ }
   }, [engine, cwd, info?.composeFile]);
@@ -73,9 +90,9 @@ export default memo(function RuntimePanel() {
     if (!engine) { setContainers([]); setServices([]); return; }
     if (!pageVisible) return; // paused while hidden; re-arms (with refresh) on show
     void refresh();
-    const iv = setInterval(() => void refresh(), 3000);
+    const iv = setInterval(() => void refresh(), intervals.psMs);
     return () => clearInterval(iv);
-  }, [engine, refresh, pageVisible]);
+  }, [engine, refresh, pageVisible, intervals.psMs]);
 
   // ── Live stats stream (while on Containers tab) ───────────────────────
   const statsRef = useRef<Record<string, ContainerStats>>({});
@@ -95,7 +112,7 @@ export default memo(function RuntimePanel() {
       unlistenExit = await onRuntimeExit(id, () => { /* stream ended; will restart on re-enter */ });
       if (disposed) return;
       await dockerStatsStream(id, engine).catch(() => {});
-      flush = setInterval(() => setStats({ ...statsRef.current }), 1500);
+      flush = setInterval(() => setStats({ ...statsRef.current }), intervals.statsMs);
     })();
 
     return () => {
@@ -105,7 +122,7 @@ export default memo(function RuntimePanel() {
       unlistenExit?.();
       void dockerKill(id);
     };
-  }, [engine, tab, pageVisible]);
+  }, [engine, tab, pageVisible, intervals.statsMs]);
 
   // ── Diagnostics (derived) ─────────────────────────────────────────────
   const diagnostics = useMemo(
@@ -128,9 +145,28 @@ export default memo(function RuntimePanel() {
   }, [engine, cwd, refresh]);
 
   const requestAction = useCallback((action: DockerAction, target: string | null, label: string) => {
-    if (DESTRUCTIVE.has(action)) setConfirm({ action, target, label });
-    else void runAction(action, target);
-  }, [runAction]);
+    const sandbox = !!target && containers.some(
+      (c) => (c.id === target || c.name === target) && isSandboxContainer(c.name),
+    );
+    // Sandbox containers gate `stop` too — killing one interrupts the agent.
+    if (DESTRUCTIVE.has(action) || (sandbox && action === 'stop')) {
+      setConfirm({ action, target, label, sandbox });
+    } else void runAction(action, target);
+  }, [runAction, containers]);
+
+  const switchEngine = useCallback((name: ContainerEngine) => {
+    saveEngine(name);
+    setPreferred(name);
+    setPsError(null);
+  }, []);
+
+  const updateIntervals = useCallback((patch: Partial<RuntimeIntervals>) => {
+    setIntervals((prev) => {
+      const next = { ...prev, ...patch };
+      saveIntervals(next);
+      return next;
+    });
+  }, []);
 
   // ── Guards / empty states ─────────────────────────────────────────────
   if (!isTauri()) return <Empty icon={Boxes} msg="Runtime panel is available in the desktop app." />;
@@ -142,13 +178,35 @@ export default memo(function RuntimePanel() {
     return <Empty icon={Boxes} msg="No Docker or Podman found on PATH. Install one to use this panel." />;
   }
 
+  const engines = info?.engines ?? [];
+
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* Header: engine + tabs + refresh */}
+    <div className="relative flex flex-col h-full min-h-0">
+      {/* Header: engine switcher + tabs + refresh */}
       <div className="flex items-center gap-2 px-3 h-9 border-b border-border flex-shrink-0">
-        <span className="text-[11px] font-mono text-muted-foreground truncate" title={info?.version ?? ''}>
-          {engine}{info?.composeFile ? ` · ${info.composeFile}` : ''}
-        </span>
+        {engines.length > 1 ? (
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md border border-border bg-muted/30">
+            {engines.map((e) => (
+              <button
+                key={e.name}
+                onClick={() => switchEngine(e.name)}
+                title={e.alive ? (e.version ?? e.name) : `${e.name} installed but its daemon/service is not responding`}
+                className={cn('flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors',
+                  engine === e.name ? 'bg-accent text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+              >
+                {e.name}
+                {!e.alive && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="daemon down" />}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[11px] font-mono text-muted-foreground truncate" title={info?.version ?? ''}>
+            {engine}
+          </span>
+        )}
+        {info?.composeFile && (
+          <span className="text-[11px] font-mono text-muted-foreground truncate">{info.composeFile}</span>
+        )}
         <div className="ml-2 flex items-center gap-0.5">
           <TabBtn active={tab === 'containers'} onClick={() => setTab('containers')} icon={Boxes} label="Containers" />
           <TabBtn active={tab === 'services'} onClick={() => setTab('services')} icon={Network} label="Services" />
@@ -165,23 +223,76 @@ export default memo(function RuntimePanel() {
             </>
           )}
           <IconBtn title="Prune (system prune -f)" onClick={() => requestAction('prune', null, 'system prune')}><Trash2 className="w-3.5 h-3.5" /></IconBtn>
+          <IconBtn title="Poll intervals" onClick={() => setGearOpen((v) => !v)}><Settings2 className="w-3.5 h-3.5" /></IconBtn>
           <IconBtn title="Refresh" onClick={() => void refresh()}><RefreshCw className="w-3.5 h-3.5" /></IconBtn>
         </div>
       </div>
 
+      {/* Poll-interval settings */}
+      {gearOpen && (
+        <div className="absolute right-2 top-9 z-20 rounded-lg border border-border bg-popover shadow-xl p-3 space-y-2 text-[11px]">
+          <IntervalSelect label="Containers poll" value={intervals.psMs}
+            options={[[1000, '1s'], [3000, '3s'], [5000, '5s'], [10000, '10s']]}
+            onChange={(v) => updateIntervals({ psMs: v })} />
+          <IntervalSelect label="Stats flush" value={intervals.statsMs}
+            options={[[1000, '1s'], [1500, '1.5s'], [3000, '3s']]}
+            onChange={(v) => updateIntervals({ statsMs: v })} />
+          <IntervalSelect label="Logs flush" value={intervals.logsMs}
+            options={[[200, '200ms'], [400, '400ms'], [1000, '1s']]}
+            onChange={(v) => updateIntervals({ logsMs: v })} />
+        </div>
+      )}
+
+      {/* Engine error banner (e.g. dead daemon on the selected engine) */}
+      {psError && (
+        <div className="flex items-start gap-2 px-3 py-1.5 border-b border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-500 flex-shrink-0">
+          <AlertTriangle className="w-3.5 h-3.5 mt-px flex-shrink-0" />
+          <span className="min-w-0 break-all">{psError}</span>
+          <button onClick={() => setPsError(null)} className="ml-auto p-0.5 hover:text-foreground" title="Dismiss">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 overflow-auto">
-        {tab === 'containers' && <ContainersTab containers={containers} stats={stats} onAction={requestAction} />}
+        {tab === 'containers' && (
+          <ContainersTab
+            containers={containers}
+            stats={stats}
+            onAction={requestAction}
+            onInspect={setInspect}
+            onOpenShell={(id) => { setExecRequest(id); setTab('logs'); }}
+          />
+        )}
         {tab === 'services' && <ServicesTab services={services} />}
-        {tab === 'logs' && <LogsTab engine={engine} cwd={cwd} containers={containers} services={services} hasCompose={!!info?.composeFile} />}
+        {tab === 'logs' && (
+          <LogsTab
+            engine={engine}
+            cwd={cwd}
+            containers={containers}
+            services={services}
+            hasCompose={!!info?.composeFile}
+            logsFlushMs={intervals.logsMs}
+            execRequest={execRequest}
+            onExecHandled={() => setExecRequest(null)}
+          />
+        )}
         {tab === 'diagnostics' && <DiagnosticsTab diagnostics={diagnostics} />}
       </div>
+
+      {inspect && engine && (
+        <InspectDrawer engine={engine} container={inspect} onClose={() => setInspect(null)} />
+      )}
 
       <ConfirmDialog
         open={!!confirm}
         title={confirm ? `Run ${confirm.label || confirm.action}?` : ''}
-        description={confirm?.action === 'prune'
+        description={(confirm?.action === 'prune'
           ? 'This removes all stopped containers, dangling images, and unused networks.'
-          : 'This is a destructive action and cannot be undone.'}
+          : 'This is a destructive action and cannot be undone.')
+          + (confirm?.sandbox
+            ? " This is the agent's sandbox container — stopping it interrupts sandboxed agent commands."
+            : '')}
         confirmLabel={confirm?.action ?? 'Run'}
         variant="destructive"
         onConfirm={() => { if (confirm) void runAction(confirm.action, confirm.target); setConfirm(null); }}
@@ -199,10 +310,12 @@ function pctVal(s?: string): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
 }
 
-function ContainersTab({ containers, stats, onAction }: {
+function ContainersTab({ containers, stats, onAction, onInspect, onOpenShell }: {
   containers: Container[];
   stats: Record<string, ContainerStats>;
   onAction: (a: DockerAction, target: string | null, label: string) => void;
+  onInspect: (c: Container) => void;
+  onOpenShell: (id: string) => void;
 }) {
   if (containers.length === 0) return <Empty icon={Boxes} msg="No containers." />;
 
@@ -233,11 +346,22 @@ function ContainersTab({ containers, stats, onAction }: {
             const isRunning = c.state === 'running';
             const cpu = pctVal(s?.cpuPerc);
             const mem = pctVal(s?.memPerc);
+            const sandbox = isSandboxContainer(c.name);
             return (
-              <div key={c.id || c.name} className="group rounded-lg border border-border bg-card/40 p-2.5 flex flex-col gap-2">
+              <div
+                key={c.id || c.name}
+                className="group rounded-lg border border-border bg-card/40 p-2.5 flex flex-col gap-2 cursor-pointer"
+                onClick={() => onInspect(c)}
+                title="Click to inspect"
+              >
                 <div className="flex items-center gap-2 min-w-0">
                   <StatusDot state={c.state} health={c.health} />
                   <span className="font-medium text-xs truncate" title={c.name}>{c.name || c.id.slice(0, 12)}</span>
+                  {sandbox && (
+                    <span className="px-1 py-0.5 rounded text-[8px] font-semibold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 flex-shrink-0">
+                      agent sandbox
+                    </span>
+                  )}
                   <StatePill state={c.state} health={c.health} className="ml-auto" />
                 </div>
                 <div className="text-[10px] font-mono text-muted-foreground truncate" title={c.image}>{c.image || '—'}</div>
@@ -254,12 +378,22 @@ function ContainersTab({ containers, stats, onAction }: {
                   {c.ports && <span className="truncate max-w-[140px]" title={c.ports}>:{c.ports}</span>}
                 </div>
 
-                <div className="flex items-center gap-0.5 pt-0.5 border-t border-border/40 opacity-70 group-hover:opacity-100 transition-opacity">
+                <div
+                  className="flex items-center gap-0.5 pt-0.5 border-t border-border/40 opacity-70 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {isRunning
                     ? <IconBtn title="Stop" onClick={() => onAction('stop', c.id || c.name, `stop ${c.name}`)}><Square className="w-3 h-3" /></IconBtn>
                     : <IconBtn title="Start" onClick={() => onAction('start', c.id || c.name, `start ${c.name}`)}><Play className="w-3 h-3" /></IconBtn>}
                   <IconBtn title="Restart" onClick={() => onAction('restart', c.id || c.name, `restart ${c.name}`)}><RotateCw className="w-3 h-3" /></IconBtn>
                   <IconBtn title="Remove" onClick={() => onAction('rm', c.id || c.name, `remove ${c.name}`)}><Trash2 className="w-3 h-3" /></IconBtn>
+                  {isRunning && (
+                    // Prefills the Logs tab's exec box; a real PTY tab in the
+                    // TerminalDock is the noted follow-up.
+                    <IconBtn title="Run commands in container" onClick={() => onOpenShell(c.id || c.name)}>
+                      <SquareTerminal className="w-3 h-3" />
+                    </IconBtn>
+                  )}
                 </div>
               </div>
             );
@@ -356,12 +490,15 @@ function ServicesTab({ services }: { services: ComposeService[] }) {
 
 // ─── Logs tab (live stream + filter/search/highlight) ────────────────────────
 
-function LogsTab({ engine, cwd, containers, services, hasCompose }: {
+function LogsTab({ engine, cwd, containers, services, hasCompose, logsFlushMs, execRequest, onExecHandled }: {
   engine: NonNullable<RuntimeInfo['engine']>;
   cwd: string;
   containers: Container[];
   services: ComposeService[];
   hasCompose: boolean;
+  logsFlushMs: number;
+  execRequest: string | null;
+  onExecHandled: () => void;
 }) {
   const targets = useMemo(() => {
     const svc = services.map((s) => ({ target: s.name, compose: true, label: `svc: ${s.name}` }));
@@ -376,6 +513,17 @@ function LogsTab({ engine, cwd, containers, services, hasCompose }: {
   const [cmd, setCmd] = useState('');
   const [execBusy, setExecBusy] = useState(false);
   const linesRef = useRef<string[]>([]);
+  const cmdInputRef = useRef<HTMLInputElement>(null);
+
+  // "Open shell" from a container card: select that container and focus the
+  // exec input.
+  useEffect(() => {
+    if (!execRequest) return;
+    setSel(`false:${execRequest}`);
+    onExecHandled();
+    // Focus after the select re-render lands.
+    setTimeout(() => cmdInputRef.current?.focus(), 50);
+  }, [execRequest, onExecHandled]);
 
   const chosen = targets.find((t) => `${t.compose}:${t.target}` === sel) ?? targets[0];
 
@@ -424,7 +572,7 @@ function LogsTab({ engine, cwd, containers, services, hasCompose }: {
       unlistenExit = await onRuntimeExit(id, () => {});
       if (disposed) return;
       await dockerLogsStream(id, engine, chosen.target, chosen.compose ? cwd : null, chosen.compose).catch(() => {});
-      flush = setInterval(() => setLines([...linesRef.current]), 400);
+      flush = setInterval(() => setLines([...linesRef.current]), logsFlushMs);
     })();
 
     return () => {
@@ -434,7 +582,7 @@ function LogsTab({ engine, cwd, containers, services, hasCompose }: {
       unlistenExit?.();
       void dockerKill(id);
     };
-  }, [chosen?.target, chosen?.compose, engine, cwd]);
+  }, [chosen?.target, chosen?.compose, engine, cwd, logsFlushMs]);
 
   const shown = useMemo(() => {
     return lines.filter((l) => {
@@ -482,6 +630,7 @@ function LogsTab({ engine, cwd, containers, services, hasCompose }: {
       <div className="flex items-center gap-2 px-2 py-1.5 border-t border-border flex-shrink-0 bg-background">
         <span className="text-[11px] font-mono text-muted-foreground">$</span>
         <input
+          ref={cmdInputRef}
           className="flex-1 min-w-0 text-[11px] font-mono bg-background border border-border rounded px-2 py-0.5 disabled:opacity-50"
           placeholder={chosen?.compose ? 'Select a container (not a service) to run commands' : `Run in ${chosen?.label ?? '…'} — e.g. ls -la`}
           value={cmd}
@@ -576,6 +725,23 @@ function TabBtn({ active, onClick, icon: Icon, label, badge }: {
       <span className="hidden lg:inline">{label}</span>
       {badge ? <span className="ml-0.5 px-1 rounded-full bg-red-500/20 text-red-400 text-[9px]">{badge}</span> : null}
     </button>
+  );
+}
+
+function IntervalSelect({ label, value, options, onChange }: {
+  label: string; value: number; options: [number, string][]; onChange: (v: number) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <select
+        className="text-[11px] bg-background border border-border rounded px-1.5 py-0.5"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      >
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
   );
 }
 

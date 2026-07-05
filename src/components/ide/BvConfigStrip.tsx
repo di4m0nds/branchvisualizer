@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes, BookOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, GitGraph, ClipboardList, Boxes, BookOpen, Bug, NotebookPen, PenTool, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
 import { PanelMaximizeButton } from './FocusablePanel';
 import type { PanelId } from '@/hooks/usePanelFocus';
 
@@ -10,7 +10,7 @@ import type { PanelId } from '@/hooks/usePanelFocus';
 // graph/split/direction toolbar; this strip owns repo identity + collapse, and
 // the Canvas ↔ Plan view switch for the right column.
 
-export type RightView = 'workspace' | 'plan' | 'runtime' | 'docs';
+export type RightView = 'workspace' | 'plan' | 'runtime' | 'docs' | 'debug' | 'knowledge' | 'canvas' | 'monitor';
 
 export default function BvConfigStrip({
   collapsed, onToggle, view, onViewChange, hasPlan,
@@ -22,8 +22,10 @@ export default function BvConfigStrip({
   /** Show a dot on the Plan tab when the session has a plan to review. */
   hasPlan?: boolean;
 }) {
-  const { state } = useAppContext();
-  const { repoInfo, branches, tags, allCommits } = state;
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const branches = useAppSelector((s) => s.branches);
+  const tags = useAppSelector((s) => s.tags);
+  const allCommits = useAppSelector((s) => s.allCommits);
 
   return (
     <div className="flex-shrink-0 border-b border-border bg-muted/10">
@@ -63,6 +65,22 @@ export default function BvConfigStrip({
           <SwitchButton active={view === 'docs'} onClick={() => onViewChange('docs')} title="Repository documentation">
             <BookOpen className="w-3 h-3" />
             <span className="hidden md:inline">Docs</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} title="Project knowledge base (notes shared across all sessions)">
+            <NotebookPen className="w-3 h-3" />
+            <span className="hidden md:inline">Notes</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'canvas'} onClick={() => onViewChange('canvas')} title="Excalidraw diagrams (project workspace)">
+            <PenTool className="w-3 h-3" />
+            <span className="hidden md:inline">Draw</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'monitor'} onClick={() => onViewChange('monitor')} title="Agent monitor: goals, running sessions, usage">
+            <Activity className="w-3 h-3" />
+            <span className="hidden md:inline">Monitor</span>
+          </SwitchButton>
+          <SwitchButton active={view === 'debug'} onClick={() => onViewChange('debug')} title="Unified log inspector (app + agent)">
+            <Bug className="w-3 h-3" />
+            <span className="hidden md:inline">Debug</span>
           </SwitchButton>
         </div>
 

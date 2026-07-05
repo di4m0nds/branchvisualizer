@@ -11,6 +11,11 @@ import {
   PANEL_ZOOM_STEP, type PanelId,
 } from './usePanelFocus';
 
+// Panels where Ctrl±/0 must not write a store zoom: the canvas (Excalidraw)
+// has its own native zoom — storing a scale here would double-zoom or mislead.
+// (The workspace is handled separately: it delegates to the graph viewport.)
+const NATIVE_ZOOM_PANELS: ReadonlySet<PanelId> = new Set<PanelId>(['canvas']);
+
 type ZoomCmd = 'in' | 'out' | 'reset';
 
 /** @param onWorkspaceZoom handles zoom when the workspace panel is focused
@@ -41,6 +46,8 @@ export function useFocusedPanelZoom(onWorkspaceZoom?: (cmd: ZoomCmd) => void): v
         onWorkspaceZoom?.(cmd);
         return;
       }
+      // Let panels with native zoom (Excalidraw) handle Ctrl± themselves.
+      if (NATIVE_ZOOM_PANELS.has(panel)) return;
       applyPanelZoom(panel, cmd);
     };
     window.addEventListener('keydown', handler);

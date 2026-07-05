@@ -7,6 +7,7 @@ import { CanvasAddon } from 'xterm-addon-canvas';
 import 'xterm/css/xterm.css';
 import { isTauri, type Unlisten } from '@/lib/platform';
 import { spawnPty, writePty, resizePty, killPty, onPtyData, onPtyExit } from '@/lib/pty';
+import { swallow } from '@/lib/log';
 import { useAppSelector } from '@/store/store';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 import { buildTerminalFontFamily } from '@/lib/terminalFont';
@@ -50,6 +51,7 @@ export default function Terminal({
   fontScale = 1,
   onExit,
   registerWriter,
+  registerReader,
 }: {
   def: TerminalDef;
   /** Whether this terminal's tab is currently visible. Drives refit-on-show. */
@@ -58,6 +60,8 @@ export default function Terminal({
   fontScale?: number;
   onExit?: (code: number | null) => void;
   registerWriter?: (write: (data: string) => Promise<void>) => void;
+  /** Expose a snapshot reader for the last N buffer lines (debug handoff). */
+  registerReader?: (read: (lines: number) => string) => void;
 }) {
   // Slice subscriptions — xterm must not re-render on chat/session churn.
   const terminalFont = useAppSelector((s) => s.terminalFont);
@@ -100,6 +104,16 @@ export default function Terminal({
       macOptionIsMeta: true, // Alt-based nvim mappings on macOS
     });
     termRef.current = term;
+    registerReader?.((lines: number) => {
+      const buf = term.buffer.active;
+      const end = buf.baseY + buf.cursorY;
+      const start = Math.max(0, end - lines);
+      const out: string[] = [];
+      for (let i = start; i <= end; i++) {
+        out.push(buf.getLine(i)?.translateToString(true) ?? '');
+      }
+      return out.join('\n').trimEnd();
+    });
     const fit = new FitAddon();
     fitRef.current = fit;
     term.loadAddon(fit);
@@ -132,7 +146,7 @@ export default function Terminal({
     let unlistenExit: Unlisten = () => {};
 
     const dataDisposable = term.onData((d) => {
-      writePty(id, d).catch(() => {});
+      writePty(id, d).catch(swallow('pty', 'write'));
     });
 
     registerWriterRef.current?.((data: string) => writePty(id, data));
@@ -152,6 +166,13 @@ export default function Terminal({
     })().catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       term.write(`\r\n\x1b[31m[failed to start: ${msg}]\x1b[0m\r\n`);
+      // Friendlier hint than a dead pane: the usual cause is a missing binary
+      // (e.g. nvim not installed, or a configured shell that isn't on PATH).
+      if (def.cmd) {
+        term.write(`\x1b[33m'${def.cmd}' could not be started — check it is installed and on PATH.`
+          + (def.role === 'nvim' ? ' Install Neovim or use a shell tab instead.' : ' Pick another shell from the + menu or Settings → Appearance.')
+          + '\x1b[0m\r\n');
+      }
     });
 
     // Coalesce resize bursts to one fit per frame — a dock drag fires many
@@ -163,7 +184,7 @@ export default function Terminal({
         fitRaf = 0;
         try {
           fit.fit();
-          resizePty(id, term.cols, term.rows).catch(() => {});
+          resizePty(id, term.cols, term.rows).catch(swallow('pty', 'resize'));
         } catch { /* noop */ }
       });
     });
@@ -176,7 +197,7 @@ export default function Terminal({
       dataDisposable.dispose();
       unlistenData();
       unlistenExit();
-      killPty(id).catch(() => {});
+      killPty(id).catch(swallow('pty', 'kill on unmount'));
       rendererAddon?.dispose();
       term.dispose();
       termRef.current = null;
@@ -194,7 +215,7 @@ export default function Terminal({
     try {
       fit.fit();
       if (activePtyIdRef.current) {
-        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(swallow('pty', 'resize'));
       }
     } catch { /* container not laid out yet */ }
   }, [fontFamily]);
@@ -208,7 +229,7 @@ export default function Terminal({
     try {
       fit.fit();
       if (activePtyIdRef.current) {
-        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(swallow('pty', 'resize'));
       }
     } catch { /* container not laid out yet */ }
   }, [fontScale]);
@@ -222,7 +243,7 @@ export default function Terminal({
       if (!term || !fit || !activePtyIdRef.current) return;
       try {
         fit.fit();
-        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(() => {});
+        resizePty(activePtyIdRef.current, term.cols, term.rows).catch(swallow('pty', 'resize'));
       } catch { /* not laid out yet */ }
     });
     return () => cancelAnimationFrame(raf);

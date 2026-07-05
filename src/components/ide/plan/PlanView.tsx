@@ -3,12 +3,13 @@
 // per-section comments, supports in-place editing (persisted as a draft), and
 // sends collected feedback back into the chat as a follow-up turn.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Pencil, Send, X, Check } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch } from '@/store/store';
 import { nextId, type Session, type PlanComment } from '@/types/session';
-import { latestPlanText, parsePlanSections } from '@/lib/agent/plan';
+import { allPlans, parsePlanSections } from '@/lib/agent/plan';
 import { sendToChat } from '@/hooks/useSendToChat';
 import { toast } from '@/services/toast';
 import PlanSectionCard from './PlanSectionCard';
@@ -33,12 +34,28 @@ function composeFeedback(comments: PlanComment[]): string {
 }
 
 export default function PlanView({ session }: { session: Session }) {
-  const { dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
 
-  const source = latestPlanText(session);
+  // A session can produce several plans over its lifetime — list them as
+  // sub-tabs, newest selected by default.
+  const plans = useMemo(
+    () => allPlans(session),
+    // allPlans reads messages + the pending-derived context fields; recompute
+    // only when those change, not on every unrelated session mutation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session.messages, session.context.buildMode, session.context.status],
+  );
+  const newestId = plans.at(-1)?.messageId ?? null;
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  // Follow the newest plan whenever one lands (or the selection goes stale).
+  useEffect(() => {
+    setSelectedPlanId((cur) => (cur && plans.some((p) => p.messageId === cur) ? cur : newestId));
+  }, [newestId, plans]);
+
+  const source = plans.find((p) => p.messageId === selectedPlanId) ?? plans.at(-1) ?? null;
   const draftMatches = source && session.planDraft && session.planDraft.messageId === source.messageId;
   const effectiveText = (draftMatches ? session.planDraft!.text : source?.text) ?? '';
 
@@ -120,6 +137,30 @@ export default function PlanView({ session }: { session: Session }) {
         onSendFeedback={sendFeedback}
         onSendRevised={sendRevisedPlan}
       />
+
+      {/* Sub-tabs — one per plan the session has produced (newest last). */}
+      {plans.length > 1 && !editing && (
+        <div className="flex-shrink-0 flex items-center gap-1 px-3 py-1 border-b border-border/50 bg-muted/5 overflow-x-auto">
+          {plans.map((p, i) => {
+            const active = p.messageId === source?.messageId;
+            const ts = session.messages.find((m) => m.id === p.messageId)?.ts;
+            return (
+              <button
+                key={p.messageId}
+                onClick={() => setSelectedPlanId(p.messageId)}
+                title={ts ? new Date(ts).toLocaleString() : undefined}
+                className={cn(
+                  'px-2 py-0.5 rounded text-[10px] font-medium whitespace-nowrap transition-colors',
+                  active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-accent/30',
+                )}
+              >
+                Plan {i + 1}
+                {i === plans.length - 1 && <span className="ml-1 text-[8px] uppercase opacity-70">latest</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* One-line explainer so the actions above (Edit / Send revised / Send N)
           and per-section comment buttons below are actually discovered. */}

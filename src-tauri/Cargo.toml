@@ -1,9 +1,9 @@
 [package]
 name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
+version = "1.1.0"
+description = "Multi-session, multi-provider AI code-agent IDE in a Tauri desktop shell"
+authors = ["di4m0nds"]
+license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
@@ -27,3 +27,13 @@ tauri-plugin-dialog = "2"
 portable-pty = "0.8"
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# Pure-Rust agent grep: gitignore-aware walk + regex (no external `grep`).
+ignore = "0.4"
+regex = "1"
+# System status bar / process inspector (CPU, memory, disks, processes).
+sysinfo = "0.33"
+
+# Unix process-group signalling so cancelling a streamed command kills the whole
+# tree (dev servers spawn grandchildren that a bare kill() would orphan).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

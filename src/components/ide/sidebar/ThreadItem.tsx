@@ -11,6 +11,9 @@ import {
 import { cn } from '@/lib/utils';
 import { lastActivity, statusMeta } from '@/lib/sessionStatus';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 import type { Session } from '@/types/session';
 
 interface Props {
@@ -23,21 +26,10 @@ interface Props {
 }
 
 export default function ThreadItem({ session, active, onSelect, onArchiveToggle, onDelete, onRename }: Props) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
-  const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [menuOpen]);
 
   useEffect(() => {
     if (renaming) inputRef.current?.select();
@@ -46,7 +38,6 @@ export default function ThreadItem({ session, active, onSelect, onArchiveToggle,
   function startRename() {
     setRenameValue(session.title);
     setRenaming(true);
-    setMenuOpen(false);
   }
   function commitRename() {
     const trimmed = renameValue.trim();
@@ -122,41 +113,35 @@ export default function ThreadItem({ session, active, onSelect, onArchiveToggle,
         <span className="text-[10px] text-muted-foreground/50 whitespace-nowrap flex-shrink-0">
           {lastActivity(session)}
         </span>
-        <div ref={menuRef} className="relative flex-shrink-0">
-          <button
-            onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}
-            className={cn(
-              'p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-accent/40 transition-opacity',
-              menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
-            )}
-            title="More"
-          >
-            <MoreHorizontal className="w-3 h-3" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-36 rounded-md border border-border bg-popover shadow-lg text-xs overflow-hidden">
+        <div className="relative flex-shrink-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <button
-                onClick={(e) => { e.stopPropagation(); startRename(); }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-accent/40 text-foreground"
+                onClick={(e) => e.stopPropagation()}
+                className={cn(
+                  'p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-accent/40 transition-opacity',
+                  'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100',
+                )}
+                title="More"
               >
-                <Pencil className="w-3 h-3" /> Rename
+                <MoreHorizontal className="w-3 h-3" />
               </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchiveToggle(); }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-accent/40 text-foreground"
-              >
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-36" onClick={(e) => e.stopPropagation()}>
+              {/* Defer past radix's close/focus-restore so the rename input keeps focus. */}
+              <DropdownMenuItem onSelect={() => setTimeout(startRename, 0)}>
+                <Pencil className="w-3 h-3" /> Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onArchiveToggle()}>
                 {isArchived
                   ? <><ArchiveRestore className="w-3 h-3" /> Unarchive</>
                   : <><Archive className="w-3 h-3" /> Archive</>}
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setConfirmOpen(true); }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-destructive/20 text-destructive"
-              >
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" onSelect={() => setConfirmOpen(true)}>
                 <Trash2 className="w-3 h-3" /> Delete
-              </button>
-            </div>
-          )}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       <ConfirmDialog

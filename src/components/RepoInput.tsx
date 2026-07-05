@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useAppContext } from '../store/AppContext';
+import { useAppDispatch, useAppSelector } from '../store/store';
 import { useRepoData } from '../hooks/useRepoData';
 import { parseGitHubURL } from '../lib/parser';
 
@@ -11,13 +11,17 @@ const EXAMPLE_REPOS = [
 ];
 
 export default function RepoInput() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const loadState = useAppSelector((s) => s.loadState);
+  const token = useAppSelector((s) => s.token);
+  const rateLimit = useAppSelector((s) => s.rateLimit);
+  const graphData = useAppSelector((s) => s.graphData);
   const { loadRepo } = useRepoData();
   const [url, setUrl] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [urlError, setUrlError] = useState('');
 
-  const isLoading = ['fetching-repo', 'fetching-branches', 'fetching-commits', 'building-graph', 'validating'].includes(state.loadState.phase);
+  const isLoading = ['fetching-repo', 'fetching-branches', 'fetching-commits', 'building-graph', 'validating'].includes(loadState.phase);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -81,7 +85,7 @@ export default function RepoInput() {
         {/* Token toggle */}
         <button
           type="button"
-          className={`token-toggle-btn${state.token ? ' token-toggle-btn--active' : ''}`}
+          className={`token-toggle-btn${token ? ' token-toggle-btn--active' : ''}`}
           onClick={() => setShowToken(v => !v)}
           title="GitHub Personal Access Token (raises API rate limit from 60 to 5000 req/hr)"
         >
@@ -96,12 +100,12 @@ export default function RepoInput() {
             type="password"
             className="token-input"
             placeholder="GitHub Personal Access Token (optional — raises rate limit)"
-            value={state.token}
+            value={token}
             onChange={e => dispatch({ type: 'SET_TOKEN', token: e.target.value })}
             autoComplete="off"
           />
-          {state.token && (
-            <span className="token-status">✓ Token set ({state.rateLimit ? `${state.rateLimit.remaining}/${state.rateLimit.limit} requests left` : 'not tested yet'})</span>
+          {token && (
+            <span className="token-status">✓ Token set ({rateLimit ? `${rateLimit.remaining}/${rateLimit.limit} requests left` : 'not tested yet'})</span>
           )}
           <a
             href="https://github.com/settings/tokens"
@@ -118,7 +122,7 @@ export default function RepoInput() {
       {urlError && <p className="repo-url-error">{urlError}</p>}
 
       {/* Examples */}
-      {!state.graphData && !isLoading && (
+      {!graphData && !isLoading && (
         <div className="repo-examples">
           <span className="repo-examples-label">Try:</span>
           {EXAMPLE_REPOS.map(r => (
@@ -134,10 +138,10 @@ export default function RepoInput() {
       )}
 
       {/* Rate limit info */}
-      {state.rateLimit && (
-        <div className={`rate-limit-info${state.rateLimit.remaining < 10 ? ' rate-limit-info--warn' : ''}`}>
-          API: {state.rateLimit.remaining}/{state.rateLimit.limit} requests remaining
-          {state.rateLimit.remaining < 10 && ` · resets ${state.rateLimit.resetAt.toLocaleTimeString()}`}
+      {rateLimit && (
+        <div className={`rate-limit-info${rateLimit.remaining < 10 ? ' rate-limit-info--warn' : ''}`}>
+          API: {rateLimit.remaining}/{rateLimit.limit} requests remaining
+          {rateLimit.remaining < 10 && ` · resets ${rateLimit.resetAt.toLocaleTimeString()}`}
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useAppContext } from '../store/AppContext';
+import { useAppSelector, useAppDispatch } from '../store/store';
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -11,10 +11,13 @@ function useDebounced<T>(value: T, delay: number): T {
 }
 
 export default function SearchFilter({ floating = false }: { floating?: boolean }) {
-  const { state, dispatch } = useAppContext();
-  const { filter, branches, allCommits } = state;
+  const dispatch = useAppDispatch();
+  const filter = useAppSelector((s) => s.filter);
+  const branches = useAppSelector((s) => s.branches);
+  const allCommits = useAppSelector((s) => s.allCommits);
+  const graphData = useAppSelector((s) => s.graphData);
 
-  const hasGraph = !!state.graphData;
+  const hasGraph = !!graphData;
 
   const [localSearch, setLocalSearch] = useState(filter.search);
   const debouncedSearch = useDebounced(localSearch, 200);
@@ -138,9 +141,9 @@ export default function SearchFilter({ floating = false }: { floating?: boolean 
       )}
 
       {/* Stats */}
-      {state.graphData && (
+      {graphData && (
         <span className="ml-auto text-xs text-muted-foreground tabular-nums hidden sm:block">
-          {state.graphData.rowCount.toLocaleString()} commit{state.graphData.rowCount !== 1 ? 's' : ''}
+          {graphData.rowCount.toLocaleString()} commit{graphData.rowCount !== 1 ? 's' : ''}
         </span>
       )}
     </div>

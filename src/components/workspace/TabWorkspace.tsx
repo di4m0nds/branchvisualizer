@@ -1,4 +1,5 @@
 import { useAppDispatch, useAppSelector } from '@/store/store';
+import { useShowCheckpoints } from '@/hooks/useShowCheckpoints';
 import { memo, useState, useRef } from 'react';
 import GraphCanvas from '@/components/GraphCanvas';
 import CommitListView from '@/components/CommitListView';
@@ -207,7 +208,7 @@ function WorkspaceToolbar() {
   const splitLayout = useAppSelector((s) => s.splitLayout);
   const graphDirection = useAppSelector((s) => s.graphDirection);
   const graphData = useAppSelector((s) => s.graphData);
-  const showCheckpoints = useAppSelector((s) => s.showCheckpoints);
+  const { showCheckpoints, setShowCheckpoints } = useShowCheckpoints();
 
   if (!graphData) return null;
 
@@ -263,7 +264,7 @@ function WorkspaceToolbar() {
 
       {/* Checkpoint visibility — t3 checkpoint commits are hidden by default. */}
       <button
-        onClick={() => dispatch({ type: 'SET_SHOW_CHECKPOINTS', show: !showCheckpoints })}
+        onClick={() => setShowCheckpoints(!showCheckpoints)}
         title={showCheckpoints ? 'Hide t3 checkpoint commits' : 'Show t3 checkpoint commits'}
         className={cn(
           'flex items-center gap-1.5 h-6 px-2 rounded border text-[10px] font-medium transition-colors',

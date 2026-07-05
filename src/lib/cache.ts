@@ -1,5 +1,7 @@
 // ─── localStorage cache with TTL ──────────────────────────────────────────
 
+import { swallow } from './log';
+
 const CACHE_VERSION = 'bv1';
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -21,8 +23,8 @@ export function cacheSet<T>(namespace: string, id: string, data: T, ttlMs = DEFA
       expiry: Date.now() + ttlMs,
     };
     localStorage.setItem(key(namespace, id), JSON.stringify(entry));
-  } catch {
-    // localStorage full or unavailable — ignore
+  } catch (e) {
+    swallow('cache', 'set (quota / unavailable)')(e);
   }
 }
 
@@ -37,7 +39,8 @@ export function cacheGet<T>(namespace: string, id: string): T | null {
       return null;
     }
     return entry.data;
-  } catch {
+  } catch (e) {
+    swallow('cache', 'get')(e);
     return null;
   }
 }
@@ -51,8 +54,8 @@ export function cacheClear(namespace?: string): void {
       if (k && k.startsWith(prefix)) toRemove.push(k);
     }
     toRemove.forEach(k => localStorage.removeItem(k));
-  } catch {
-    // ignore
+  } catch (e) {
+    swallow('cache', 'clear')(e);
   }
 }
 
@@ -74,7 +77,7 @@ export function cachePrune(): void {
       }
     }
     toRemove.forEach(k => localStorage.removeItem(k));
-  } catch {
-    // ignore
+  } catch (e) {
+    swallow('cache', 'prune')(e);
   }
 }

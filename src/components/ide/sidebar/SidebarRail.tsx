@@ -6,7 +6,7 @@
 import { useMemo } from 'react';
 import { FolderGit2, PanelLeftOpen, FolderPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import type { Session } from '@/types/session';
 
 interface Props {
@@ -16,27 +16,30 @@ interface Props {
 }
 
 export default function SidebarRail({ onExpand, onAddProject, isAdding }: Props) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const sessions = useAppSelector((s) => s.sessions);
+  const allProjects = useAppSelector((s) => s.projects);
+  const activeSessionId = useAppSelector((s) => s.activeSessionId);
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, Session[]>();
-    for (const s of state.sessions) {
+    for (const s of sessions) {
       if (!s.projectId) continue;
       const list = map.get(s.projectId);
       if (list) list.push(s); else map.set(s.projectId, [s]);
     }
     return map;
-  }, [state.sessions]);
+  }, [sessions]);
 
   const projects = useMemo(
-    () => state.projects.filter((p) => !p.archived),
-    [state.projects],
+    () => allProjects.filter((p) => !p.archived),
+    [allProjects],
   );
 
   const activeProjectId = useMemo(() => {
-    const active = state.sessions.find((s) => s.id === state.activeSessionId);
+    const active = sessions.find((s) => s.id === activeSessionId);
     return active?.projectId ?? null;
-  }, [state.sessions, state.activeSessionId]);
+  }, [sessions, activeSessionId]);
 
   function openProject(projectId: string) {
     const threads = sessionsByProject.get(projectId) ?? [];

@@ -1,8 +1,7 @@
-import { useAppContext } from '../store/AppContext';
+import { useAppSelector } from '../store/store';
 
 export default function LoadingOverlay() {
-  const { state } = useAppContext();
-  const { loadState } = state;
+  const loadState = useAppSelector((s) => s.loadState);
 
   if (loadState.phase === 'idle' || loadState.phase === 'done' || loadState.phase === 'error') {
     return null;

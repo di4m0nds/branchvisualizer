@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
 import { invoke, DesktopOnlyError } from '@/lib/platform';
 import { FileRow } from './FilesTabPrimitives';
 import { openInNvim } from '@/hooks/useOpenInNvim';
@@ -122,9 +122,10 @@ function PdfViewer({ base64 }: { base64: string }) {
 // ─── Docs tab ────────────────────────────────────────────────────────────────
 
 export default function LocalDocsTab() {
-  const { state } = useAppContext();
-  const root = state.localPath ?? '.';
-  const sessionId = state.activeSessionId ?? '__no_session';
+  const localPath = useAppSelector((s) => s.localPath);
+  const activeSessionId = useAppSelector((s) => s.activeSessionId);
+  const root = localPath ?? '.';
+  const sessionId = activeSessionId ?? '__no_session';
   const [entries, setEntries] = useState<TreeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

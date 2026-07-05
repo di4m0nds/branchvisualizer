@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
-import { useAppContext } from '@/store/AppContext';
+import { getAppState, useAppSelector } from '@/store/store';
 import { useRepoData } from '@/hooks/useRepoData';
 import Navbar from '@/components/layout/Navbar';
 import RepoSearch from '@/components/repo/RepoSearch';
@@ -22,7 +22,7 @@ const IdeWorkspace = lazy(() => import('@/components/ide/IdeWorkspace'));
 // ─── Home page (/) ─────────────────────────────────────────────────────────────
 
 function HomePage() {
-  const { state } = useAppContext();
+  const sessions = useAppSelector((s) => s.sessions);
   return (
     <div className="flex flex-col flex-1 overflow-y-auto">
       <main className="flex flex-col items-center justify-start sm:justify-center flex-1
@@ -50,11 +50,11 @@ function HomePage() {
         </div>
 
         {/* Recent sessions (persisted; jump straight back into the IDE) */}
-        {state.sessions.length > 0 && (
+        {sessions.length > 0 && (
           <div className="w-full max-w-2xl">
             <div className="flex items-center gap-2 mb-2 px-1">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent sessions</span>
-              <span className="text-[10px] text-muted-foreground/50">{state.sessions.length}</span>
+              <span className="text-[10px] text-muted-foreground/50">{sessions.length}</span>
             </div>
             <div className="rounded-xl border border-border bg-card p-1.5">
               <SessionsPanel variant="inline" />
@@ -87,15 +87,16 @@ function HomePage() {
 
 function RepoPage() {
   const { owner, repo } = useParams<{ owner: string; repo: string }>();
-  const { state } = useAppContext();
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const localPath = useAppSelector((s) => s.localPath);
+  const hasGraph = useAppSelector((s) => !!s.graphData);
   const { loadRepo } = useRepoData();
-  const hasGraph = !!state.graphData;
 
   // Auto-load when navigating directly to a repo URL
   useEffect(() => {
     if (!owner || !repo) return;
-    const current = state.repoInfo;
-    const isLoading = !['idle', 'error', 'done'].includes(state.loadState.phase);
+    const current = getAppState().repoInfo;
+    const isLoading = !['idle', 'error', 'done'].includes(getAppState().loadState.phase);
     if (isLoading) return;
     if (current?.owner === owner && current?.repo === repo) return;
     loadRepo(`https://github.com/${owner}/${repo}`);
@@ -107,7 +108,7 @@ function RepoPage() {
       {/* Compact search bar — relative + z-20 so its dropdown overlays the canvas below */}
       <div className="relative z-20 flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm">
         <div className="flex-1 min-w-0"><RepoSearch compact={true} /></div>
-        <SessionsPanel variant="popover" filterRepoRef={state.repoInfo?.fullName ?? state.localPath ?? undefined} />
+        <SessionsPanel variant="popover" filterRepoRef={repoInfo?.fullName ?? localPath ?? undefined} />
       </div>
 
       {/* Repo metadata */}
@@ -128,17 +129,17 @@ function RepoPage() {
 // ─── Root shell ────────────────────────────────────────────────────────────────
 
 function AppShell() {
-  const { state } = useAppContext();
+  const theme = useAppSelector((s) => s.theme);
   const { pathname } = useLocation();
   // Whole-app zoom everywhere except the IDE, which uses per-panel scoped zoom.
   useAppZoom(pathname !== '/ide');
 
   useEffect(() => {
     const root = document.documentElement;
-    root.setAttribute('data-theme', state.theme);
-    if (state.theme === 'dark') root.classList.add('dark');
+    root.setAttribute('data-theme', theme);
+    if (theme === 'dark') root.classList.add('dark');
     else root.classList.remove('dark');
-  }, [state.theme]);
+  }, [theme]);
 
   const [showPolicyModal, setShowPolicyModal] = useState<boolean>(() => !hasAcceptedPolicy());
   const [legalTab, setLegalTab] = useState<LegalTab | null>(null);
@@ -164,7 +165,7 @@ function AppShell() {
 
       <Toaster
         position="bottom-right"
-        theme={state.theme}
+        theme={theme}
         richColors
         closeButton
       />

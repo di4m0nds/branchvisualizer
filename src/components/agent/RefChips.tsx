@@ -4,6 +4,7 @@
 // red/strikethrough = failed (deleted, binary, over budget).
 
 import { AlertTriangle, FileText, Folder } from 'lucide-react';
+import { openPathInNvim } from '@/hooks/useOpenInNvim';
 import { cn } from '@/lib/utils';
 import type { MessageRef } from '@/types/session';
 
@@ -19,9 +20,12 @@ export default function RefChips({ refs }: { refs: MessageRef[] }) {
         return (
           <span
             key={`${r.path}:${r.note ?? ''}`}
-            title={`${r.path}${r.note ? ` — ${r.note}` : ''}`}
+            role={r.kind === 'file' && !isErr ? 'button' : undefined}
+            onClick={r.kind === 'file' && !isErr ? () => openPathInNvim(r.path) : undefined}
+            title={`${r.path}${r.note ? ` — ${r.note}` : ''}${r.kind === 'file' && !isErr ? ' — click to open in nvim' : ''}`}
             className={cn(
               'inline-flex items-center gap-1 max-w-56 rounded-full border px-2 py-0.5 text-[10px] font-mono',
+              r.kind === 'file' && !isErr && 'cursor-pointer hover:bg-primary/20',
               isErr
                 ? 'border-red-400/40 bg-red-400/10 text-red-400/90'
                 : isTrunc

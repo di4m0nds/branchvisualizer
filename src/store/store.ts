@@ -45,11 +45,7 @@ export function useAppDispatch(): typeof dispatch {
   return dispatch;
 }
 
-/**
- * Legacy shim, behavior-identical to the old context hook: re-renders on every
- * state change. Fine for cheap/cold components; hot paths should migrate to
- * `useAppSelector`.
- */
-export function useAppContext(): { state: AppState; dispatch: typeof dispatch } {
-  return { state: useAppSelector((s) => s), dispatch };
-}
+// NOTE: the legacy `useAppContext()` shim (subscribe-to-everything) is gone.
+// Components subscribe to narrow slices via `useAppSelector` and read
+// non-reactively in handlers via `getAppState()`. An ESLint rule bans the
+// shim's name so it can't come back.

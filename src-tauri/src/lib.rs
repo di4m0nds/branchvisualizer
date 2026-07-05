@@ -1,10 +1,14 @@
 mod antigravity;
+mod assets;
 mod claude_code;
 mod docker;
+mod exec;
 mod fs;
 mod git;
 mod keys;
 mod pty;
+mod sandbox;
+mod system;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,16 +34,28 @@ pub fn run() {
       pty::write_pty,
       pty::resize_pty,
       pty::kill_pty,
+      pty::list_shells,
       fs::agent_read_file,
       fs::agent_write_file,
       fs::agent_list_dir,
       fs::agent_grep,
       fs::agent_run_command,
       fs::agent_read_file_bytes,
+      fs::read_attachment,
       fs::walk_tree,
       fs::get_provider_key,
       fs::check_cli_provider,
       fs::provider_update,
+      assets::asset_root,
+      assets::asset_list,
+      assets::asset_read,
+      assets::asset_write,
+      assets::asset_delete,
+      assets::asset_rename,
+      assets::asset_import,
+      assets::write_export,
+      exec::exec_stream,
+      exec::exec_kill,
       antigravity::antigravity_run,
       antigravity::antigravity_kill,
       antigravity::antigravity_check,
@@ -56,6 +72,16 @@ pub fn run() {
       docker::docker_kill,
       docker::docker_action,
       docker::docker_exec,
+      docker::docker_inspect,
+      sandbox::sandbox_status,
+      sandbox::sandbox_build,
+      sandbox::sandbox_ensure,
+      sandbox::sandbox_exec,
+      sandbox::sandbox_teardown,
+      system::system_snapshot,
+      system::system_processes,
+      system::system_ports,
+      system::system_kill,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
@@ -68,6 +94,8 @@ pub fn run() {
         claude_code::kill_all_children();
         antigravity::kill_all_children();
         docker::kill_all_children();
+        exec::kill_all_children();
+        sandbox::teardown_all();
       }
     });
 }

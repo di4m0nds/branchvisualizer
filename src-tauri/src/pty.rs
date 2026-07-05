@@ -206,8 +206,97 @@ pub fn kill_pty(state: State<'_, PtyState>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// A shell the user can pick for new terminal tabs (Settings → terminal, and
+/// the terminal dock's "+" menu).
+#[derive(Clone, Serialize)]
+pub struct ShellInfo {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+}
+
+/// Enumerate shells available on this machine, platform-aware. The system
+/// default is always first; the rest are existence-checked and deduped by
+/// path, so the UI never offers a shell that would fail to spawn.
+#[tauri::command]
+pub fn list_shells() -> Vec<ShellInfo> {
+    let mut shells: Vec<ShellInfo> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut push = |shells: &mut Vec<ShellInfo>, id: &str, label: String, path: String| {
+        if seen.insert(path.clone()) {
+            shells.push(ShellInfo { id: id.to_string(), label, path });
+        }
+    };
+
+    #[cfg(not(windows))]
+    {
+        let default = default_shell();
+        let default_name = std::path::Path::new(&default)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&default)
+            .to_string();
+        push(&mut shells, "default", format!("System default ({default_name})"), default.clone());
+        for (id, label, candidates) in [
+            ("bash", "Bash", &["/bin/bash", "/usr/bin/bash"][..]),
+            ("zsh", "Zsh", &["/usr/bin/zsh", "/bin/zsh", "/usr/local/bin/zsh"][..]),
+            ("fish", "Fish", &["/usr/bin/fish", "/usr/local/bin/fish"][..]),
+            ("sh", "sh (POSIX)", &["/bin/sh"][..]),
+        ] {
+            if let Some(path) = candidates.iter().find(|p| std::path::Path::new(p).is_file()) {
+                push(&mut shells, id, label.to_string(), (*path).to_string());
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let default = default_shell();
+        push(&mut shells, "default", format!("System default ({default})"), default.clone());
+        for (id, label, bin) in [
+            ("powershell", "PowerShell", "powershell.exe"),
+            ("pwsh", "PowerShell 7 (pwsh)", "pwsh.exe"),
+            ("cmd", "Command Prompt", "cmd.exe"),
+            ("wsl", "WSL", "wsl.exe"),
+        ] {
+            if let Some(path) = find_on_path(bin) {
+                push(&mut shells, id, label.to_string(), path.to_string_lossy().into_owned());
+            }
+        }
+        // Git Bash lives outside PATH in the default installer layout.
+        for candidate in [
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ] {
+            if std::path::Path::new(candidate).is_file() {
+                push(&mut shells, "gitbash", "Git Bash".to_string(), candidate.to_string());
+            }
+        }
+    }
+
+    shells
+}
+
+#[cfg(not(windows))]
 fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// Windows: prefer PowerShell (better interactive UX), else %COMSPEC%, else cmd.
+#[cfg(windows)]
+fn default_shell() -> String {
+    if find_on_path("powershell.exe").is_some() {
+        return "powershell.exe".to_string();
+    }
+    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+}
+
+#[cfg(windows)]
+fn find_on_path(bin: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(bin))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Whether a shell binary path is a login shell that accepts `-l`.
@@ -220,10 +309,14 @@ fn is_login_shell(shell: &str) -> bool {
 }
 
 /// Resolve a usable working directory: the requested cwd if it exists, else
-/// $HOME, else `/`. Prevents an invalid path from silently killing the child.
+/// the home dir (HOME / USERPROFILE), else the filesystem root. Prevents an
+/// invalid path from silently killing the child.
 fn resolve_cwd(cwd: &str) -> String {
     if !cwd.is_empty() && std::path::Path::new(cwd).is_dir() {
         return cwd.to_string();
     }
-    std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+    let fallback = if cfg!(windows) { "C:\\" } else { "/" };
+    crate::fs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| fallback.to_string())
 }

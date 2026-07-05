@@ -2,7 +2,7 @@ import { useState, lazy, Suspense } from 'react';
 import { Link, useParams, useMatch } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Settings } from 'lucide-react';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector, useAppDispatch } from '@/store/store';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -16,8 +16,9 @@ const SettingsPanel = lazy(() => import('@/components/settings/SettingsPanel'));
 // ─── Theme toggle ─────────────────────────────────────────────────────────
 
 function ThemeToggle() {
-  const { state, dispatch } = useAppContext();
-  const isDark = state.theme === 'dark';
+  const dispatch = useAppDispatch();
+  const theme = useAppSelector((s) => s.theme);
+  const isDark = theme === 'dark';
 
   function toggle() {
     const next = isDark ? 'light' : 'dark';
@@ -41,8 +42,10 @@ function ThemeToggle() {
 // ─── Repo stats chips ─────────────────────────────────────────────────────
 
 function RepoStats() {
-  const { state } = useAppContext();
-  const { graphData, allCommits, branches, tags } = state;
+  const graphData = useAppSelector((s) => s.graphData);
+  const allCommits = useAppSelector((s) => s.allCommits);
+  const branches = useAppSelector((s) => s.branches);
+  const tags = useAppSelector((s) => s.tags);
   const onRepoPage = useMatch('/:owner/:repo');
   // Hide stats when no repo is loaded or user is on the home page
   if (!graphData || !onRepoPage) return null;

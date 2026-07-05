@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { renderGraph, graphWidth, graphHeight } from '@/graph/renderer';
 import { composeToGraphData } from '@/lib/runtimeGraph';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
 import type { ComposeService } from '@/types/runtime';
 
 // Static canvas render of the compose service-dependency DAG, reusing the git
 // graph engine via the compose→Commit adapter. No interaction/animation — one
 // fit-to-view draw, redrawn on resize/theme (keeps it cheap; see §4.1).
 export default function ServiceGraph({ services }: { services: ComposeService[] }) {
-  const { state } = useAppContext();
-  const theme = state.theme;
+  const theme = useAppSelector((s) => s.theme);
   const graphData = useMemo(() => composeToGraphData(services), [services]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);

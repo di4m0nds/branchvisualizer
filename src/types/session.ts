@@ -4,7 +4,7 @@
 // pinned rules, and conversation. This is the state the harness renders in the
 // IDE chrome and injects into the agent each turn (M4).
 
-import type { RepoSource } from './index';
+import type { ModelRef, RepoSource } from './index';
 
 export type AccessLevel = 'supervised' | 'auto_accept' | 'full_access';
 export type BuildMode = 'direct' | 'planning';
@@ -70,6 +70,15 @@ export interface SessionContext {
    *  `--permission-mode bypassPermissions` to the CLI for every subsequent
    *  turn until the session is reset. Undefined ↔ false. */
   cliBypass?: boolean;
+  /** Podman runtime sandbox: when enabled, the agent's `run_command` executes
+   *  inside an isolated container (session root bind-mounted at the same
+   *  path). `network` toggles container network access. Undefined ↔ disabled.
+   *  Persisted with the session context. */
+  sandbox?: { enabled: boolean; network: boolean };
+  /** Knowledge-base integration toggles (project notes). `autoInject` prepends
+   *  pinned notes to each turn; `agentWrites` exposes the save_knowledge tool.
+   *  Undefined ↔ both enabled. */
+  kb?: { autoInject: boolean; agentWrites: boolean };
 }
 
 // ─── Conversation ────────────────────────────────────────────────────────────
@@ -84,13 +93,13 @@ export interface AgentBlock {
   data?: Record<string, unknown>;
 }
 
-/** An `@path` workspace reference attached to a user message. */
+/** An `@path` / `@kb:` / `@diagram:` reference attached to a user message. */
 export interface MessageRef {
-  /** The token as typed, e.g. `@src/lib/fuzzy.ts`. */
+  /** The token as typed, e.g. `@src/lib/fuzzy.ts` or `@kb:coding-standards`. */
   token: string;
-  /** Workspace-relative path the token resolved to. */
+  /** Workspace-relative path (files/folders) or slug/name (notes/diagrams). */
   path: string;
-  kind: 'file' | 'folder';
+  kind: 'file' | 'folder' | 'note' | 'diagram';
   status: 'ok' | 'truncated' | 'error';
   /** Human-readable detail for truncated/error refs ("first 1200 lines", "not found"). */
   note?: string;
@@ -106,6 +115,10 @@ export interface AgentMessage {
   hiddenText?: string;
   /** Resolved `@path` references, rendered as chips on the user bubble. */
   refs?: MessageRef[];
+  /** Marks an autonomous goal-run internal prompt (planning / task driver /
+   *  verify fix). The chat renders these as a compact, collapsible chip instead
+   *  of a full user bubble, so the transcript isn't dominated by driver text. */
+  driver?: { kind: 'goal_plan' | 'goal_retry' | 'goal_task' | 'goal_verify_fix'; label: string };
   /** Structured blocks parsed from assistant output. Populated once the turn
    *  settles; kept empty during streaming (blocks are derived at render time
    *  from `text`/`thinking` so the hot streaming path never re-parses). */
@@ -121,6 +134,19 @@ export interface AgentMessage {
   /** How long this message took to produce, in ms (assistant only). Rendered as
    *  a per-message footer alongside the finish time. */
   durationMs?: number;
+  /** Token usage for the turn that produced this message (assistant only) —
+   *  cumulative across the turn's tool-loop iterations. Feeds cost telemetry. */
+  usage?: { input: number; output: number; modelId?: string };
+  /** Files attached to a user message. `base64` payloads are dropped at
+   *  persistence time (metadata chips survive; bytes don't). */
+  attachments?: {
+    kind: 'image' | 'document';
+    mime: string;
+    name: string;
+    sizeBytes: number;
+    base64?: string;
+    path?: string;
+  }[];
 }
 
 export type TerminalId = string;
@@ -140,6 +166,28 @@ export interface PlanComment {
   resolved?: boolean;
 }
 
+/** Per-session model + sampling configuration. Lives on `Session` (routing
+ *  state, like `cwd`) rather than `SessionContext` (which mirrors the injected
+ *  `<session_context>` block). Every session owns its provider/model choice —
+ *  changing one session never affects another. Absent fields fall back to the
+ *  global cost prefs / provider defaults. */
+export interface SessionModelConfig {
+  model: ModelRef;
+  /** Sampling temperature (API providers only; CLI providers ignore it).
+   *  Undefined = provider default. */
+  temperature?: number;
+  /** Per-session override of the global max-output-tokens cost pref. */
+  maxOutputTokens?: number;
+  /** Per-session override of the global history-window cost pref. */
+  historyWindow?: number;
+  /** Per-session override of the global retry policy. */
+  maxRetries?: number;
+  /** Per-session override of the global turn timeout (ms; 0 = off). */
+  turnTimeoutMs?: number;
+  /** Per-session ≈USD cost cap (overrides the global session cap). */
+  costLimitUSD?: number | null;
+}
+
 export interface Session {
   id: string;
   title: string;
@@ -150,6 +198,10 @@ export interface Session {
   repoRef: string;
   /** Working directory the agent's tools operate in (local repos only). */
   cwd: string | null;
+  /** This session's model/provider selection. Healed at load time (older blobs
+   *  get the then-current global model), copied from the global default at
+   *  creation time. */
+  modelConfig?: SessionModelConfig;
   context: SessionContext;
   messages: AgentMessage[];
   terminals: TerminalId[];
@@ -159,6 +211,9 @@ export interface Session {
    *  can tell the user the transcript is incomplete rather than trimming
    *  silently. */
   historyTrimmed?: boolean;
+  /** Set on sessions created by (and driving) a goal run — the chat header
+   *  badges them and the transcript doubles as the run's log. */
+  goalId?: string;
   /** User annotations on the implementation plan (Plan view). */
   planComments?: PlanComment[];
   /** Edited-in-place plan text, keyed to the plan message it revises. */

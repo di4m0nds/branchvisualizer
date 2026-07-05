@@ -12,9 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from package.json "packageManager" (pnpm@9.15.4);
+      # specifying it here too triggers ERR_PNPM_BAD_PM_VERSION.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -55,6 +55,29 @@ jobs:
             patchelf \
             build-essential \
             libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check
+
+  # The only regression guard for the `cfg(windows)` code paths (shell
+  # selection, cmd /C, USERPROFILE, .cmd shim spawning) — Linux builds never
+  # compile them.
+  rust-windows:
+    name: Rust Windows (cargo test · check)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 

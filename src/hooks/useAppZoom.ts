@@ -31,7 +31,11 @@ const listeners = new Set<() => void>();
 
 function apply(): void {
   if (typeof document !== 'undefined') {
-    (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = String(current);
+    // Respect route-level enablement: on /ide body zoom must stay 1 (the IDE
+    // uses per-panel scoped zoom; body zoom distorts the graph canvas and
+    // xterm). Without this guard, setZoom from the Settings slider re-applied
+    // body zoom even while disabled.
+    (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = String(enabled ? current : 1);
   }
 }
 function persist(): void {
@@ -82,13 +86,25 @@ export function useAppZoom(active = true) {
   useEffect(() => {
     installGlobal();
     enabled = active;
-    if (active) {
-      apply();               // re-apply the persisted zoom
-    } else if (typeof document !== 'undefined') {
-      (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = '1';
-    }
+    apply(); // applies `current` when enabled, 1 when not
     return () => { enabled = true; apply(); };
   }, [active]);
+  const zoom = useSyncExternalStore(subscribe, getZoom, getZoom);
+  return {
+    zoom,
+    setZoom,
+    zoomIn: () => zoomBy(ZOOM_STEP),
+    zoomOut: () => zoomBy(-ZOOM_STEP),
+    reset: resetZoom,
+  };
+}
+
+/**
+ * Read/control the zoom VALUE without touching route-level enablement — for UI
+ * like the Settings slider, which can render on any route (including /ide,
+ * where mounting `useAppZoom()` would wrongly re-enable body zoom).
+ */
+export function useAppZoomControls() {
   const zoom = useSyncExternalStore(subscribe, getZoom, getZoom);
   return {
     zoom,

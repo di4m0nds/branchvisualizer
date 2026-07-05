@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { invoke, isTauri } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver } from './shared';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -32,15 +32,7 @@ async function checkCli(): Promise<CliProbePayload | null> {
   return invoke<CliProbePayload>('check_cli_provider', { name: 'codex' }).catch(() => null);
 }
 
-async function resolveKey(): Promise<string | null> {
-  const stored = await getProviderKey('openai');
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'openai' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_OPENAI_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('openai', () => import.meta.env.VITE_OPENAI_API_KEY);
 
 // ─── Adapters ─────────────────────────────────────────────────────────────
 
@@ -58,7 +50,14 @@ function toOpenAIInput(system: string, msgs: NeutralMessage[]): OaiInputItem[] {
     for (const c of m.content) {
       switch (c.type) {
         case 'text':
-          if (c.text) items.push({ role: m.role, content: [{ type: 'text', text: c.text }] });
+          if (c.text) {
+            // Images ride along as input_image data URLs on user turns
+            // (PDFs unsupported here — capability-gated in the composer).
+            const images = (m.role === 'user' ? (m.attachments ?? []) : [])
+              .filter((a) => a.kind === 'image' && a.base64)
+              .map((a) => ({ type: 'input_image', image_url: `data:${a.mime};base64,${a.base64}` } as unknown as OaiTextItem));
+            items.push({ role: m.role, content: [...images, { type: 'text', text: c.text }] });
+          }
           break;
         case 'tool_use':
           items.push({ type: 'function_call', call_id: c.id, name: c.name, arguments: JSON.stringify(c.input) });

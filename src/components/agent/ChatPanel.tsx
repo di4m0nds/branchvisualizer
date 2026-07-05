@@ -1,35 +1,57 @@
 import { memo, useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { openPathInNvim } from '@/hooks/useOpenInNvim';
+import { resolveTaskModel } from '@/lib/agent/modelRouting';
+import { attachmentSupportFor } from '@/lib/agent/providers';
+import { invoke, isTauri } from '@/lib/platform';
+import { maybeGenerateTitle } from '@/lib/agent/autoTitle';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowDownToLine, Check, ChevronDown, Loader2, PanelLeftClose, PanelLeftOpen, Square } from 'lucide-react';
+import { ArrowDownToLine, Check, ChevronDown, Goal, Loader2, PanelLeftClose, PanelLeftOpen, Paperclip, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMaximizedPanel, usePanelZoom } from '@/hooks/usePanelFocus';
 import { PanelMaximizeButton } from '@/components/ide/FocusablePanel';
-import { registerChatSender } from '@/hooks/useSendToChat';
+import { registerChatPrefiller, registerChatSender } from '@/hooks/useSendToChat';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/services/toast';
 import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
 import { buildChatFontFamily } from '@/lib/terminalFont';
 import { useRepoData } from '@/hooks/useRepoData';
 import AgentBlocks from './AgentBlocks';
+import GoalDriverChip from './cards/GoalDriverChip';
 import AtMentionMenu from './AtMentionMenu';
 import AttachedPlanStrip from './AttachedPlanStrip';
 import ChatTimeline from './ChatTimeline';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 import MessageActions from './MessageActions';
 import QuestionsDialog from './QuestionsDialog';
 import RefChips from './RefChips';
+import { useAutosizeTextarea } from '@/hooks/useAutosizeTextarea';
 import LogDensityToggle from '@/components/ide/LogDensityToggle';
 import { cachedTree, useWorkspaceTree, type TreeEntry } from '@/hooks/useWorkspaceTree';
 import { fuzzyFilter } from '@/lib/fuzzy';
 import {
-  formatReferencedFiles, indexTree, parseRefTokens, resolveRefs, toMessageRefs,
+  formatDiagrams, formatKbNotes, formatReferencedFiles, indexTree, parseDiagramTokens,
+  parseKbTokens, parseRefTokens, resolveDiagramRefs, resolveKbRefs, resolveRefs, toMessageRefs,
 } from '@/lib/agent/references';
+import { kbIndexText, loadKb, pinnedNotesBlock, useKbIndex } from '@/lib/kb/kbStore';
+import { loadDiagrams, useDiagramIndex } from '@/lib/diagrams/diagramStore';
+import { startGoal } from '@/lib/goals/executor';
+import { setRightView } from '@/hooks/useSetRightView';
+import { getPrompt } from '@/lib/agent/prompts';
 import {
   deriveSteps, filterBlocksByDensity, parseQuestions, extractTag, plainTextForCopy, composeStreamingBlocks, type AgentQuestion,
 } from './blocks';
 import { formatTime, formatFull, formatDuration } from '@/lib/time';
-import type { AgentTransport } from '@/lib/agent/transport';
-import { createTransportFor } from '@/lib/agent/providers';
+import { useAgentTransport } from '@/hooks/useAgentTransport';
+import {
+  approvePlan as approvePlanAction,
+  approveCliBypass as approveCliBypassAction,
+  resumePendingAction,
+  planAwaitingApproval,
+  cliApprovalHintFor,
+  type RunTurnOptions,
+} from '@/lib/agent/planActions';
 import { runAgentTurn, type PendingAction } from '@/lib/agent/loop';
+import { registerActiveTurn } from '@/lib/agent/activeTurns';
 import type { AgentMessage, MessageRef, Session } from '@/types/session';
 import type { LogDensity } from '@/types';
 
@@ -40,12 +62,63 @@ function escapeRegExp(s: string): string {
 }
 function renderUserText(text: string, refs?: MessageRef[]): React.ReactNode {
   if (!refs?.length) return text;
-  const tokens = [...new Set(refs.map((r) => r.token))].sort((a, b) => b.length - a.length);
+  const byToken = new Map(refs.map((r) => [r.token, r]));
+  const tokens = [...byToken.keys()].sort((a, b) => b.length - a.length);
   const parts = text.split(new RegExp(`(${tokens.map(escapeRegExp).join('|')})`, 'g'));
-  return parts.map((part, i) =>
-    tokens.includes(part)
-      ? <span key={i} className="text-primary font-mono text-[13px]">{part}</span>
-      : part,
+  return parts.map((part, i) => {
+    const ref = byToken.get(part);
+    if (!ref) return part;
+    const clickable = ref.kind === 'file' && ref.status !== 'error';
+    return (
+      <span
+        key={i}
+        role={clickable ? 'button' : undefined}
+        onClick={clickable ? () => openPathInNvim(ref.path) : undefined}
+        title={clickable ? `${ref.path} — click to open in nvim` : ref.path}
+        className={cn('text-primary font-mono text-[13px]', clickable && 'cursor-pointer hover:underline decoration-dotted underline-offset-2')}
+      >
+        {part}
+      </span>
+    );
+  });
+}
+
+// ─── Chat title (click to rename) ────────────────────────────────────────────
+
+function ChatTitle({ sessionId, title }: { sessionId: string; title: string }) {
+  const dispatch = useAppDispatch();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+
+  const commit = () => {
+    const clean = draft.trim();
+    if (clean && clean !== title) dispatch({ type: 'RENAME_SESSION', id: sessionId, title: clean });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-full max-w-[380px] text-center text-[12px] font-medium bg-muted/40 border border-border rounded px-2 py-0.5 text-foreground focus:outline-none focus:border-ring"
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => { setDraft(title); setEditing(true); }}
+      title="Click to rename this session"
+      className="max-w-[380px] truncate text-[12px] font-medium text-foreground/90 hover:text-foreground px-2 py-0.5 rounded hover:bg-accent/30 transition-colors"
+    >
+      {title}
+    </button>
   );
 }
 
@@ -89,7 +162,7 @@ function PendingActionCard({
 // structured content. A hover toolbar (copy / revert) appears once settled.
 // `action_log` messages (the CLI's tool steps) drop the header for a tighter,
 // log-like rhythm.
-const MessageView = memo(function MessageView({ msg, density, interactive, busy, animateIn, cliApprovalHint, onOpenQuestions, onRevert, onApproveCliBypass, onPendingAction, onRetry, registerRef }: {
+const MessageView = memo(function MessageView({ msg, density, interactive, busy, animateIn, cliApprovalHint, onOpenQuestions, onRevert, onApproveCliBypass, onPendingAction, onRetry, onPreviewImage, registerRef }: {
   msg: AgentMessage;
   density: LogDensity;
   interactive: boolean;
@@ -105,9 +178,12 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
   onApproveCliBypass: () => void;
   onPendingAction: (decision: 'approve' | 'reject') => void;
   onRetry: () => void;
+  /** Open the hoisted lightbox seeded with this message's images. */
+  onPreviewImage: (images: LightboxImage[], index: number) => void;
   registerRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
   const isUser = msg.role === 'user';
+  const isDriver = isUser && !!msg.driver;
   const isActionLog = msg.blocks.length > 0 && msg.blocks.every((b) => b.type === 'action_log');
   const showActions = !isActionLog && !msg.streaming;
   // While streaming, `blocks` is intentionally empty (the loop defers parsing);
@@ -138,14 +214,14 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
       initial={animateIn ? { opacity: 0, y: 8 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
-      className={cn('group flex flex-col gap-1.5 scroll-mt-3', isUser ? 'items-end' : 'items-start')}
+      className={cn('group flex flex-col gap-1.5 scroll-mt-3', isUser && !isDriver ? 'items-end' : 'items-start')}
       // Offscreen messages skip layout/paint; the intrinsic-size hint keeps the
       // scrollbar stable. Streaming messages opt out so growth is measured live
       // (the stick-to-bottom ResizeObserver watches the content box).
       style={msg.streaming ? undefined : { contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
     >
       {/* Role header: dot + name + timestamp */}
-      {!isActionLog && (
+      {!isActionLog && !isDriver && (
         <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70">
           <span className={cn('w-1.5 h-1.5 rounded-full', isUser ? 'bg-primary/70' : 'bg-emerald-400/70')} />
           <span>{isUser ? 'You' : 'Agent'}</span>
@@ -159,16 +235,53 @@ const MessageView = memo(function MessageView({ msg, density, interactive, busy,
       {/* Bubble */}
       <div className={cn(
         'max-w-full min-w-0 text-sm',
-        isUser
-          ? 'rounded-2xl rounded-tr-sm bg-primary/5 border border-primary/10 px-3.5 py-2.5'
-          : isActionLog
-            ? 'w-full'
+        isDriver
+          ? 'w-full'
+          : isUser
+            ? 'rounded-2xl rounded-tr-sm bg-primary/5 border border-primary/10 px-3.5 py-2.5'
             : 'w-full',
       )}>
-        {isUser
+        {isDriver
+          ? <GoalDriverChip driver={msg.driver!} text={msg.text} />
+          : isUser
           ? (
             <div className="min-w-0">
               {msg.refs && msg.refs.length > 0 && <RefChips refs={msg.refs} />}
+              {msg.attachments && msg.attachments.length > 0 && (() => {
+                // Thumbnails for images whose base64 is still in memory (the
+                // payload is stripped at persistence — after a reload they
+                // fall back to name chips). Clicking opens the lightbox
+                // seeded with every previewable image of this message.
+                const previewable: LightboxImage[] = msg.attachments
+                  .filter((a) => a.kind === 'image' && a.base64)
+                  .map((a) => ({ src: `data:${a.mime};base64,${a.base64}`, name: a.name }));
+                return (
+                  <div className="flex flex-wrap gap-1.5 mt-1 justify-end">
+                    {msg.attachments.map((a, i) => {
+                      const previewIdx = previewable.findIndex((p) => p.name === a.name);
+                      return a.kind === 'image' && a.base64 ? (
+                        <button
+                          key={i}
+                          onClick={() => onPreviewImage(previewable, Math.max(0, previewIdx))}
+                          title={`${a.name} — click to preview`}
+                          className="rounded-md border border-border/60 overflow-hidden hover:ring-2 hover:ring-primary/40 transition-shadow"
+                        >
+                          <img
+                            src={`data:${a.mime};base64,${a.base64}`}
+                            alt={a.name}
+                            className="w-16 h-16 object-cover"
+                            draggable={false}
+                          />
+                        </button>
+                      ) : (
+                        <span key={i} className="px-1.5 py-0.5 rounded-full border border-border/60 bg-muted/30 text-[9px] font-mono text-muted-foreground self-center" title={a.path ?? a.name}>
+                          📎 {a.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               <p className="whitespace-pre-wrap break-words text-foreground/90 leading-relaxed">
                 {renderUserText(msg.text, msg.refs)}
               </p>
@@ -229,6 +342,9 @@ export default function ChatPanel({ session }: { session: Session }) {
   const chatFontFamily = buildChatFontFamily(chatFont);
   const chatBgClass = chatBackground === 'none' ? '' : `chat-bg-${chatBackground}`;
   const [input, setInput] = useState('');
+  type Attachment = NonNullable<AgentMessage['attachments']>[number];
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
   // @-mention state: the token under the caret (menu open while non-null) and
@@ -239,11 +355,15 @@ export default function ChatPanel({ session }: { session: Session }) {
   const [timelineOpen, setTimelineOpen] = useState(true);
   const [activeMsgId, setActiveMsgId] = useState<string | undefined>();
   const approvalResolver = useRef<((ok: boolean) => void) | null>(null);
-  const transportRef = useRef<AgentTransport | null>(null);
+  // Transport creation + caching (keyed on provider/model/context-size) lives
+  // in the hook; `getTransport` is identity-stable.
+  const { getTransport } = useAgentTransport();
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Grow the composer with its content up to ~4 lines, then scroll.
+  useAutosizeTextarea(composerRef, input, { minPx: 56, maxPx: 112 });
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [atBottom, setAtBottom] = useState(true);
   const [unread, setUnread] = useState(0);
@@ -264,20 +384,49 @@ export default function ChatPanel({ session }: { session: Session }) {
   // fires once per question message via autoOpenedRef.
   const [activeQuestions, setActiveQuestions] = useState<{ messageId: string; list: AgentQuestion[] } | null>(null);
   const autoOpenedRef = useRef<string | null>(null);
+  // Single hoisted image lightbox — composer thumbnails and sent-message
+  // thumbnails both open it, seeded with their image set.
+  const [lightbox, setLightbox] = useState<{ images: LightboxImage[]; index: number } | null>(null);
+  const openImagePreview = useCallback(
+    (images: LightboxImage[], index: number) => setLightbox({ images, index }),
+    [],
+  );
 
   // Always read the freshest session from state (props may be a stale snapshot).
   const live = useAppSelector((s) => s.sessions.find((x) => x.id === session.id)) ?? session;
   const turns = useMemo(() => deriveSteps(live.messages), [live.messages]);
 
+  // Owning project: enables the knowledge base (pinned-note injection, @kb:
+  // mentions, knowledge tools) — all project-level, shared across sessions.
+  const project = useAppSelector(
+    (s) => s.projects.find((p) => p.id === session.projectId) ?? null,
+  );
+  const kbIndex = useKbIndex(project);
+  const diagramIndex = useDiagramIndex(project);
+  useEffect(() => {
+    if (!project) return;
+    void loadKb(project);
+    void loadDiagrams(project);
+  }, [project]);
+
   // ── @-mention wiring: lazy workspace tree + fuzzy matches for the menu ──
   const { entries: treeEntries, loading: treeLoading } = useWorkspaceTree(live.cwd, atToken !== null);
   const atMatches = useMemo(() => {
     if (!atToken) return [];
-    const byPath = new Map(treeEntries.map((e) => [e.path, e]));
-    return fuzzyFilter(atToken.query, treeEntries.map((e) => e.path), 12)
+    // Knowledge-base notes and diagrams join the menu as synthetic
+    // `kb:<slug>` / `diagram:<kebab-name>` entries.
+    const kbEntries: TreeEntry[] = kbIndex.map((n) => ({
+      path: `kb:${n.slug}`, name: n.title, isDir: false, sizeBytes: 0, depth: 0,
+    }));
+    const diagramEntries: TreeEntry[] = diagramIndex.map((d) => ({
+      path: `diagram:${d.name.toLowerCase().replace(/\s+/g, '-')}`, name: d.name, isDir: false, sizeBytes: 0, depth: 0,
+    }));
+    const all = [...treeEntries, ...kbEntries, ...diagramEntries];
+    const byPath = new Map(all.map((e) => [e.path, e]));
+    return fuzzyFilter(atToken.query, all.map((e) => e.path), 12)
       .map((p) => byPath.get(p))
       .filter((e): e is TreeEntry => !!e);
-  }, [atToken, treeEntries]);
+  }, [atToken, treeEntries, kbIndex, diagramIndex]);
   useEffect(() => { setAtIndex(0); }, [atToken?.query]);
 
   // The @-token under the caret: `@` at start-of-text or after whitespace,
@@ -288,7 +437,8 @@ export default function ChatPanel({ session }: { session: Session }) {
     if (at < 0) return null;
     if (at > 0 && !/\s/.test(before[at - 1])) return null;
     const query = before.slice(at + 1);
-    if (!/^[A-Za-z0-9_./\\-]*$/.test(query)) return null;
+    // ':' admitted for the `kb:`/`diagram:` namespaces.
+    if (!/^[A-Za-z0-9_./\\:-]*$/.test(query)) return null;
     return { start: at, query };
   }, []);
 
@@ -359,33 +509,17 @@ export default function ChatPanel({ session }: { session: Session }) {
     }, 0);
   }, [dispatch, session.id]);
 
-  // Approve the CLI approval card: grant session-scoped bypass, then RESUME
-  // silently. The model already has the full conversation (incl. the original
-  // request), so we drive it with a short continuation prompt and `display:
-  // false` — no duplicate user bubble; it just picks up where it stopped with
-  // full permissions.
+  // Approval drivers (CLI-bypass grant + silent resume, pending-action
+  // approve/reject) live in planActions — these wrappers only bind the
+  // session/dispatch and keep memoized identities for MessageView.
   const approveCliBypass = useCallback(() => {
-    dispatch({ type: 'SET_SESSION_CLI_BYPASS', sessionId: session.id, bypass: true });
-    // The dispatch above only takes effect on the next render, so patch the
-    // context for THIS immediate resume too — otherwise permissionMode would
-    // still compute to `acceptEdits` and the command would need approval again.
-    runTurn(
-      'Permission granted for commands. Continue and complete the previous request.',
-      { display: false, contextPatch: { cliBypass: true } },
-    );
+    approveCliBypassAction(session.id, dispatch, runTurn);
     // runTurn declared below; TS hoisting keeps this valid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, session.id]);
 
-  // Approve/reject a prose <pending_action> the model proposed in supervised
-  // mode. The turn already ended, so we continue it with a short follow-up
-  // (silent — no duplicate user bubble), mirroring the CLI-bypass resume.
   const handlePendingAction = useCallback((decision: 'approve' | 'reject') => {
-    if (decision === 'approve') {
-      runTurn('✅ Approved the pending action above. Proceed and carry it out now.', { display: false });
-    } else {
-      runTurn('❌ Rejected the pending action above. Do not run it — suggest an alternative or ask how to proceed.', { display: false });
-    }
+    resumePendingAction(decision, runTurn);
     // runTurn is a hoisted function declaration below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -473,10 +607,15 @@ export default function ChatPanel({ session }: { session: Session }) {
   // post follow-up messages. If busy, stage the text in the composer instead of
   // starting an overlapping turn.
   useEffect(() => {
-    return registerChatSender(session.id, (text) => {
+    const unSend = registerChatSender(session.id, (text) => {
       if (busy) setInput((prev) => (prev ? `${prev}\n${text}` : text));
       else runTurn(text);
     });
+    const unPrefill = registerChatPrefiller(session.id, (text) => {
+      setInput((prev) => (prev ? `${prev}\n${text}` : text));
+      composerRef.current?.focus();
+    });
+    return () => { unSend(); unPrefill(); };
     // runTurn is stable (hoisted); re-bind on busy so the guard stays current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id, busy]);
@@ -499,38 +638,37 @@ export default function ChatPanel({ session }: { session: Session }) {
     else if (repoInfo) loadRepo(`https://github.com/${repoInfo.fullName}`).catch(() => { });
   }
 
-  async function runTurn(
-    text: string,
-    opts?: {
-      display?: boolean;
-      contextPatch?: Partial<Session['context']>;
-      hiddenText?: string;
-      refs?: MessageRef[];
-      /** Rebuild the API conversation only from messages BEFORE this id — used
-       *  by Retry, whose truncate dispatch hasn't landed in `state` yet. */
-      messagesUpTo?: string;
-    },
-  ) {
+  async function runTurn(text: string, opts?: RunTurnOptions) {
     if (!text || busy) return;
     setBusy(true);
     // Fresh abort controller per turn — Stop button aborts this one.
     abortRef.current = new AbortController();
+    // Surface this turn in the Monitor panel's live list (with a Stop handle).
+    const unregisterTurn = registerActiveTurn({
+      sessionId: session.id,
+      projectId: live.projectId,
+      title: live.title,
+      startedAt: Date.now(),
+      source: 'chat',
+      stop: () => abortRef.current?.abort(),
+    });
     try {
-      const { providerId, modelId, context } = getAppState().currentModel;
-      const ctx = context ?? 'standard';
-      if (
-        !transportRef.current
-        || transportRef.current.id !== providerId
-        || transportRef.current.modelId !== modelId
-        || (transportRef.current.contextSize ?? 'standard') !== ctx
-      ) {
-        transportRef.current = await createTransportFor(providerId, modelId, ctx);
-      }
-      const ts = new Date().toISOString();
       // Re-read the freshest session at call time (build mode may have flipped).
       // A `contextPatch` lets a just-dispatched change (e.g. cliBypass) apply to
       // THIS turn before the store re-render lands.
+      const { currentModel, providerStatus } = getAppState();
       let base = getAppState().sessions.find((s) => s.id === session.id) ?? live;
+      // Per-session model: each session owns its provider/model selection
+      // (falling back to the global default for un-migrated state). Per-task
+      // routing may still redirect planning turns to a cheaper model; it falls
+      // back to THIS session's model when the routed provider isn't connected.
+      const sessionModel = base.modelConfig?.model ?? currentModel;
+      const liveMode = opts?.contextPatch?.buildMode
+        ?? base.context.buildMode
+        ?? live.context.buildMode;
+      const { model } = resolveTaskModel(liveMode === 'planning' ? 'planning' : 'main', sessionModel, providerStatus);
+      const transport = await getTransport(model.providerId, model.modelId, model.context);
+      const ts = new Date().toISOString();
       if (opts?.messagesUpTo) {
         const idx = base.messages.findIndex((m) => m.id === opts.messagesUpTo);
         if (idx >= 0) base = { ...base, messages: base.messages.slice(0, idx) };
@@ -538,13 +676,36 @@ export default function ChatPanel({ session }: { session: Session }) {
       const current = opts?.contextPatch
         ? { ...base, context: { ...base.context, ...opts.contextPatch } }
         : base;
+      // Knowledge-base injection: pinned notes + a one-line index prepended to
+      // the turn's hiddenText (in-band, so CLI providers see it too; stripped
+      // at persistence). Toggle lives in the Agent Settings drawer.
+      let hiddenText = opts?.hiddenText;
+      if (project && (current.context.kb?.autoInject ?? true)) {
+        try {
+          const [pinnedBlock, indexText] = await Promise.all([
+            pinnedNotesBlock(project),
+            kbIndexText(project),
+          ]);
+          if (pinnedBlock || indexText) {
+            const kbBlock = [
+              getPrompt('kb_injection_header'),
+              '<project_knowledge>',
+              ...(pinnedBlock ? [pinnedBlock] : []),
+              ...(indexText ? [`<note_index>\n${indexText}\n</note_index>`] : []),
+              '</project_knowledge>',
+            ].join('\n');
+            hiddenText = hiddenText ? `${kbBlock}\n\n${hiddenText}` : kbBlock;
+          }
+        } catch { /* KB must never block a turn */ }
+      }
       await runAgentTurn(current, text, {
-        transport: transportRef.current,
+        transport,
         dispatch,
+        project: project ?? undefined,
         requestApproval,
         onSideEffect,
         signal: abortRef.current.signal,
-      }, ts, { display: opts?.display, hiddenText: opts?.hiddenText, refs: opts?.refs });
+      }, ts, { display: opts?.display, hiddenText, refs: opts?.refs, attachments: opts?.attachments });
     } catch (e) {
       // Aborts flow through the loop's clean-stop path; anything reaching here
       // is a real error.
@@ -553,6 +714,7 @@ export default function ChatPanel({ session }: { session: Session }) {
         toast.error('Agent error', { description: e instanceof Error ? e.message : String(e) });
       }
     } finally {
+      unregisterTurn();
       abortRef.current = null;
       setBusy(false);
     }
@@ -579,6 +741,58 @@ export default function ChatPanel({ session }: { session: Session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, live.messages, dispatch, session.id]);
 
+  // ── Attachments (images + PDF; provider-capability gated) ────────────────
+  // Capability follows the SESSION's provider (per-session model config).
+  const attachSupport = attachmentSupportFor(useAppSelector(
+    (sel) => sel.sessions.find((s) => s.id === session.id)?.modelConfig?.model.providerId
+      ?? sel.currentModel.providerId,
+  ));
+  const canAttach = isTauri() && (attachSupport.image || attachSupport.pdf || attachSupport.pathPassthrough);
+
+  async function pickAttachments() {
+    if (!canAttach || attaching) return;
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const exts = [
+      ...(attachSupport.image || attachSupport.pathPassthrough ? ['png', 'jpg', 'jpeg', 'gif', 'webp'] : []),
+      ...(attachSupport.pdf || attachSupport.pathPassthrough ? ['pdf'] : []),
+    ];
+    const picked = await open({ multiple: true, filters: [{ name: 'Attachments', extensions: exts }] });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    setAttaching(true);
+    try {
+      const next: Attachment[] = [...attachments];
+      for (const path of paths) {
+        const name = path.split(/[/\\]/).pop() ?? path;
+        const isPdf = /\.pdf$/i.test(name);
+        const maxBytes = isPdf ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+        try {
+          const data = await invoke<{ base64: string; sizeBytes: number; mime: string }>(
+            'read_attachment', { path, maxBytes },
+          );
+          const total = next.reduce((n, a) => n + a.sizeBytes, 0) + data.sizeBytes;
+          if (total > 20 * 1024 * 1024) {
+            toast.error('Attachment limit', { description: 'Total attachments exceed 20 MB.' });
+            break;
+          }
+          next.push({
+            kind: isPdf ? 'document' : 'image',
+            mime: data.mime,
+            name,
+            sizeBytes: data.sizeBytes,
+            base64: data.base64,
+            path,
+          });
+        } catch (e) {
+          toast.error(`Couldn't attach ${name}`, { description: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      setAttachments(next);
+    } finally {
+      setAttaching(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
@@ -601,31 +815,65 @@ export default function ChatPanel({ session }: { session: Session }) {
         setResolvingRefs(0);
       }
     }
-    runTurn(text, { hiddenText, refs });
+    // @kb:<slug> notes and @diagram:<name> diagrams — separate namespaces
+    // resolved against the project stores; travel via the same hiddenText
+    // channel (which is what reaches CLI providers too).
+    if (project) {
+      const kbParsed = parseKbTokens(text);
+      if (kbParsed.length > 0) {
+        try {
+          const kbResolved = await resolveKbRefs(project, kbParsed);
+          const block = formatKbNotes(kbResolved);
+          if (block) hiddenText = hiddenText ? `${hiddenText}\n\n${block}` : block;
+          refs = [...(refs ?? []), ...toMessageRefs(kbResolved)];
+        } catch { /* never block sending */ }
+      }
+      const diagramParsed = parseDiagramTokens(text);
+      if (diagramParsed.length > 0) {
+        try {
+          const diagramResolved = await resolveDiagramRefs(project, diagramParsed);
+          const block = formatDiagrams(diagramResolved);
+          if (block) hiddenText = hiddenText ? `${hiddenText}\n\n${block}` : block;
+          refs = [...(refs ?? []), ...toMessageRefs(diagramResolved)];
+        } catch { /* never block sending */ }
+      }
+    }
+    // First user message of the session → optionally generate a better title
+    // with the routed `title` model (fire-and-forget; heuristic title already
+    // applied by the reducer, so failures cost nothing).
+    if (!live.messages.some((m) => m.role === 'user')) {
+      const { currentModel, providerStatus, sessions } = getAppState();
+      const sessionModel = sessions.find((s) => s.id === session.id)?.modelConfig?.model ?? currentModel;
+      void maybeGenerateTitle(session.id, text, sessionModel, providerStatus, dispatch);
+    }
+    const outAttachments = attachments.length ? attachments : undefined;
+    setAttachments([]);
+    runTurn(text, { hiddenText, refs, attachments: outAttachments });
   }
 
+  // Plan-approval driver + derivations live in planActions (pure, testable).
   function approvePlan() {
-    // Planning mode: approve → switch to direct execution → replay as instruction.
-    dispatch({ type: 'SET_BUILD_MODE', sessionId: live.id, mode: 'direct' });
-    runTurn('The plan is approved. Proceed with the implementation, executing the steps in order.');
+    approvePlanAction(live.id, dispatch, runTurn);
   }
 
-  // Show the plan-approval affordance when the last assistant turn produced a plan
-  // while in planning mode.
-  const last = live.messages[live.messages.length - 1];
-  const showApprovePlan =
-    live.context.buildMode === 'planning'
-    && !busy
-    && !!last
-    && last.role === 'assistant'
-    && !last.streaming
-    && last.blocks.some((b) => b.type === 'plan');
+  // Autonomous goal mode: the composer text becomes the goal; a dedicated
+  // session + executor take over (Monitor → Goals is the dashboard).
+  function runAsGoal() {
+    const goal = input.trim();
+    if (!goal || !project) return;
+    setInput('');
+    // Seed the goal with THIS session's model so the picker selection carries
+    // over (goals otherwise fell back to the global default).
+    const { currentModel, sessions } = getAppState();
+    const sessionModel = sessions.find((s) => s.id === session.id)?.modelConfig?.model ?? currentModel;
+    startGoal(project, goal, dispatch, { model: sessionModel });
+    setRightView('monitor');
+    toast.success('Goal started', { description: 'Planning… track it in Monitor → Goals.' });
+  }
 
-  // Planning-mode approval hint — surfaced on any `cli_approval_needed` card so
-  // users understand approving unblocks the CLI writing the plan file.
-  const cliApprovalHint = live.context.buildMode === 'planning'
-    ? 'Approving will let the CLI finish writing your plan file.'
-    : undefined;
+  const last = live.messages[live.messages.length - 1];
+  const showApprovePlan = planAwaitingApproval(live, busy);
+  const cliApprovalHint = cliApprovalHintFor(live);
 
   return (
     // ── Layout: header · (timeline | messages) · working pill · composer · dialogs
@@ -640,7 +888,13 @@ export default function ChatPanel({ session }: { session: Session }) {
           {timelineOpen ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
           <span className="text-[11px] font-medium hidden sm:inline">Timeline</span>
         </button>
-        <div className="ml-auto flex items-center gap-1">
+
+        {/* Session title — click to rename */}
+        <div className="flex-1 min-w-0 flex justify-center">
+          <ChatTitle sessionId={live.id} title={live.title} />
+        </div>
+
+        <div className="flex items-center gap-1">
           <LogDensityToggle />
           <PanelMaximizeButton id="chat" />
         </div>
@@ -730,6 +984,7 @@ export default function ChatPanel({ session }: { session: Session }) {
                     onApproveCliBypass={approveCliBypass}
                     onPendingAction={handlePendingAction}
                     onRetry={retryLastTurn}
+                    onPreviewImage={openImagePreview}
                     registerRef={registerRef}
                   />
                 );
@@ -822,8 +1077,59 @@ export default function ChatPanel({ session }: { session: Session }) {
         maximized ? 'px-8' : 'px-3',
       )}>
         <div className="pointer-events-none absolute -top-6 left-0 right-0 h-6 bg-gradient-to-t from-background to-transparent" />
+        {attachments.length > 0 && (
+          <div className={cn('flex flex-wrap items-center gap-1.5 pb-2', maximized && 'max-w-5xl mx-auto')}>
+            {attachments.map((a, i) => {
+              if (a.kind === 'image' && a.base64) {
+                // Image attachments preview as thumbnails; click opens the
+                // lightbox seeded with every image currently attached.
+                const images: LightboxImage[] = attachments
+                  .filter((x) => x.kind === 'image' && x.base64)
+                  .map((x) => ({ src: `data:${x.mime};base64,${x.base64}`, name: x.name }));
+                const idx = images.findIndex((img) => img.name === a.name);
+                return (
+                  <span key={`${a.name}-${i}`} className="relative group/thumb">
+                    <button
+                      onClick={() => openImagePreview(images, Math.max(0, idx))}
+                      title={`${a.name} · ${(a.sizeBytes / 1024 / 1024).toFixed(1)}MB — click to preview`}
+                      className="block rounded-md border border-border overflow-hidden hover:ring-2 hover:ring-primary/40 transition-shadow"
+                    >
+                      <img
+                        src={`data:${a.mime};base64,${a.base64}`}
+                        alt={a.name}
+                        className="w-12 h-12 object-cover"
+                        draggable={false}
+                      />
+                    </button>
+                    <button
+                      onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full border border-border bg-background text-muted-foreground hover:text-foreground opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+                      title="Remove attachment"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              }
+              return (
+                <span key={`${a.name}-${i}`} className="flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-muted/30 text-[10px] font-mono text-muted-foreground">
+                  <Paperclip className="w-3 h-3" />
+                  <span className="max-w-[160px] truncate" title={a.path ?? a.name}>{a.name}</span>
+                  <span className="text-muted-foreground/60">{(a.sizeBytes / 1024 / 1024).toFixed(1)}MB</span>
+                  <button
+                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="hover:text-foreground"
+                    title="Remove attachment"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div className={cn(
-          'relative flex items-stretch gap-2 rounded-xl border bg-muted/10 p-1.5 transition-colors',
+          'relative flex items-end gap-2 rounded-xl border bg-muted/10 p-1.5 transition-colors',
           'border-border/70 focus-within:border-primary/50 focus-within:bg-muted/20',
           maximized && 'max-w-5xl mx-auto',
         )}>
@@ -839,6 +1145,16 @@ export default function ChatPanel({ session }: { session: Session }) {
               />
             )}
           </AnimatePresence>
+          <button
+            onClick={() => void pickAttachments()}
+            disabled={!canAttach || attaching || busy}
+            title={canAttach
+              ? 'Attach images or PDFs for the model'
+              : 'The selected provider does not accept file attachments'}
+            className="self-end mb-2 p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-30 transition-colors"
+          >
+            {attaching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+          </button>
           <textarea
             ref={composerRef}
             value={input}
@@ -873,7 +1189,8 @@ export default function ChatPanel({ session }: { session: Session }) {
               : showApprovePlan ? 'Approve the plan, or type feedback to revise it…'
                 : 'Message the agent…  (@ to attach files, Enter to send, Shift+Enter for newline)'}
             disabled={busy}
-            className="flex-1 h-14 resize-none rounded-lg bg-transparent px-2.5 py-2 text-sm
+            rows={1}
+            className="flex-1 min-h-[56px] max-h-[112px] resize-none rounded-lg bg-transparent px-2.5 py-2 text-sm
                        focus:outline-none disabled:opacity-60 placeholder:text-muted-foreground/50"
           />
           {busy ? (
@@ -882,7 +1199,7 @@ export default function ChatPanel({ session }: { session: Session }) {
               variant="destructive"
               title="Stop the agent"
               aria-label="Stop"
-              className="h-14 rounded-lg px-5 flex items-center gap-1.5 self-stretch"
+              className="h-11 rounded-lg px-5 flex items-center gap-1.5 self-end mb-0.5"
             >
               <Square className="w-4 h-4 fill-current" />
               <span className="hidden sm:inline">Stop</span>
@@ -891,20 +1208,31 @@ export default function ChatPanel({ session }: { session: Session }) {
             <Button
               onClick={approvePlan}
               title="Approve the plan and start implementing"
-              className="h-14 rounded-lg px-5 flex items-center gap-1.5 self-stretch bg-emerald-600 hover:bg-emerald-500 text-white"
+              className="h-11 rounded-lg px-5 flex items-center gap-1.5 self-end mb-0.5 bg-emerald-600 hover:bg-emerald-500 text-white"
             >
               <Check className="w-4 h-4" />
               <span className="hidden sm:inline">Approve implementation</span>
               <span className="sm:hidden">Approve</span>
             </Button>
           ) : (
-            <Button
-              onClick={send}
-              disabled={!input.trim()}
-              className="h-14 rounded-lg px-5 self-stretch"
-            >
-              Send
-            </Button>
+            <div className="flex items-center gap-1.5 self-end mb-0.5">
+              <Button
+                onClick={runAsGoal}
+                disabled={!input.trim() || !project}
+                variant="outline"
+                title="Run as goal: the agent plans this objective into tasks and executes them autonomously (Monitor → Goals tracks progress)"
+                className="h-11 rounded-lg px-3"
+              >
+                <Goal className="w-4 h-4" />
+              </Button>
+              <Button
+                onClick={send}
+                disabled={!input.trim()}
+                className="h-11 rounded-lg px-5"
+              >
+                Send
+              </Button>
+            </div>
           )}
         </div>
       </div>
@@ -916,6 +1244,13 @@ export default function ChatPanel({ session }: { session: Session }) {
         onSubmit={(text) => { setActiveQuestions(null); runTurn(text); }}
         onDismiss={() => setActiveQuestions(null)}
       />
+      {lightbox && (
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

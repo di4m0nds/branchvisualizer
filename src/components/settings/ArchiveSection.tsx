@@ -3,11 +3,12 @@
 // is gated by ConfirmDialog. Restore is instant and toasts on completion.
 
 import { useMemo, useState } from 'react';
+import { closeSession } from '@/lib/sessionLifecycle';
 import { ArchiveRestore, FolderGit2, MessageSquare, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import { useAppContext } from '@/store/AppContext';
+import { useAppDispatch, useAppSelector } from '@/store/store';
 import { toast } from '@/services/toast';
 import { lastActivity } from '@/lib/sessionStatus';
 import type { Project, Session } from '@/types/session';
@@ -31,28 +32,30 @@ function Row({ children, active = false }: { children: React.ReactNode; active?:
 }
 
 export default function ArchiveSection() {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const projects = useAppSelector((s) => s.projects);
+  const sessions = useAppSelector((s) => s.sessions);
   const [pending, setPending] = useState<PendingAction>(null);
 
   const archivedProjects = useMemo(
-    () => state.projects.filter((p) => p.archived),
-    [state.projects],
+    () => projects.filter((p) => p.archived),
+    [projects],
   );
   const archivedThreads = useMemo(
-    () => state.sessions.filter((s) => s.archived),
-    [state.sessions],
+    () => sessions.filter((s) => s.archived),
+    [sessions],
   );
   const projectById = useMemo(
-    () => new Map(state.projects.map((p) => [p.id, p])),
-    [state.projects],
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
   );
   const threadCountByProject = useMemo(() => {
     const map = new Map<string, number>();
-    for (const s of state.sessions) {
+    for (const s of sessions) {
       map.set(s.projectId, (map.get(s.projectId) ?? 0) + 1);
     }
     return map;
-  }, [state.sessions]);
+  }, [sessions]);
 
   const restoreProject = (p: Project) => {
     dispatch({ type: 'ARCHIVE_PROJECT', id: p.id, archived: false });
@@ -71,7 +74,7 @@ export default function ArchiveSection() {
         toast.success('Project deleted', { description: pending.name });
         break;
       case 'delete-thread':
-        dispatch({ type: 'CLOSE_SESSION', id: pending.id });
+        closeSession(pending.id);
         toast.success('Thread deleted', { description: pending.title });
         break;
       case 'bulk-delete-projects':
@@ -79,7 +82,7 @@ export default function ArchiveSection() {
         toast.success(`Deleted ${pending.ids.length} archived project${pending.ids.length === 1 ? '' : 's'}`);
         break;
       case 'bulk-delete-threads':
-        for (const id of pending.ids) dispatch({ type: 'CLOSE_SESSION', id });
+        for (const id of pending.ids) closeSession(id);
         toast.success(`Deleted ${pending.ids.length} archived thread${pending.ids.length === 1 ? '' : 's'}`);
         break;
     }

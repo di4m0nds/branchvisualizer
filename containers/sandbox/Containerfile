@@ -1,0 +1,38 @@
+# ─── code-agent sandbox image ─────────────────────────────────────────────────
+# Isolated execution environment for the AI agent's `run_command` tool.
+# Built once (`podman build -t code-agent-sandbox:latest .` or via the
+# "Build image" button in the session bar); one long-lived container per
+# project root runs `sleep infinity` and receives `podman exec` calls.
+#
+# Kept deliberately lean: common build/dev tooling only. Extend it for your
+# stack (Rust, Go, JVM, …) — see docs/SANDBOX.md.
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        build-essential \
+        pkg-config \
+        python3 \
+        python3-pip \
+        python3-venv \
+        ripgrep \
+        jq \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 20 LTS (nodesource) — agents constantly need npm/npx.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm@9 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# The app overrides this with `sleep infinity` when it creates the container;
+# kept as the default CMD so a manual `podman run` behaves the same way.
+CMD ["sleep", "infinity"]

@@ -1,4 +1,4 @@
-import { useAppContext } from '../store/AppContext';
+import { useAppSelector } from '../store/store';
 import { useRepoData } from '../hooks/useRepoData';
 import { formatCount, formatDateDMY } from '@/lib/utils';
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -15,9 +15,11 @@ function timeUntil(date: Date): string {
 }
 
 export default function RepoHeader() {
-  const { state } = useAppContext();
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const rateLimit = useAppSelector((s) => s.rateLimit);
+  const loadState = useAppSelector((s) => s.loadState);
+  const filter = useAppSelector((s) => s.filter);
   const { loadRepo } = useRepoData();
-  const { repoInfo, rateLimit, loadState, filter } = state;
   const [refreshing, setRefreshing] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);

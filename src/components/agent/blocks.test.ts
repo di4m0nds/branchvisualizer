@@ -49,6 +49,29 @@ describe('parseAgentBlocks — self-closing + hydration', () => {
     expect(steps[0].description).toBe('Look at `src/**/auth.ts` — inspect **all** middleware');
   });
 
+  it('derives a preview + markdown fallback for a markdown-body plan', () => {
+    const text =
+      '<plan># Improve the footer\n\n1. Find footer files\n2. Restyle\n3. Verify build</plan>';
+    const plan = parseAgentBlocks(text).find((b) => b.type === 'plan');
+    expect(plan?.data?.planTitle).toBe('Improve the footer');
+    expect(plan?.data?.derivedStepCount).toBe(3);
+    expect(plan?.data?.derivedStepTitles).toEqual(['Find footer files', 'Restyle', 'Verify build']);
+    expect(String(plan?.data?.markdownFallback)).toContain('Find footer files');
+    expect(plan?.data?.steps).toEqual([]);
+  });
+
+  it('hydrates a goal_plan block into tasks (no raw JSON dump)', () => {
+    const text =
+      'Plan below.\n<goal_plan>[{"id":"t1","title":"Find files","deps":[]},' +
+      '{"id":"t2","title":"Restyle","deps":["t1"],"needsApproval":true}]</goal_plan>';
+    const blocks = parseAgentBlocks(text);
+    const gp = blocks.find((b) => b.type === 'goal_plan');
+    expect(gp).toBeDefined();
+    const tasks = gp!.data?.tasks as Array<{ id: string; title: string }>;
+    expect(tasks.map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(blocks.some((b) => b.type === 'text' && b.raw.includes('"t1"'))).toBe(false);
+  });
+
   it('hydrates agent_status files/commands (no raw XML leak)', () => {
     const text =
       '<agent_status><state>working</state>' +

@@ -237,6 +237,136 @@ export function toMessageRefs(resolved: ResolvedRef[]): MessageRef[] {
   return resolved.map(({ token, path, kind, status, note }) => ({ token, path, kind, status, note }));
 }
 
+// ─── Knowledge-base references (@kb:<slug>) ──────────────────────────────────
+// A separate namespace from workspace paths: `@kb:` tokens resolve against the
+// project's note index (slug or exact title), and inline the note body into
+// the same hiddenText channel — which is what makes them work for CLI
+// providers too.
+
+const KB_TOKEN_RE = /(^|\s)@kb:([A-Za-z0-9-]+)/g;
+/** Per-note cap for inlined @kb: bodies. */
+export const KB_NOTE_CAP_BYTES = 24 * 1024;
+
+export interface ParsedKbRef {
+  token: string;
+  slug: string;
+}
+
+export function parseKbTokens(text: string): ParsedKbRef[] {
+  const out: ParsedKbRef[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(KB_TOKEN_RE)) {
+    const slug = m[2];
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    out.push({ token: `@kb:${slug}`, slug });
+  }
+  return out;
+}
+
+/** Resolve @kb: tokens to note bodies. Never throws — unknown slugs come back
+ *  as error chips the model can see. */
+export async function resolveKbRefs(
+  project: import('@/types/session').Project,
+  parsed: ParsedKbRef[],
+): Promise<ResolvedRef[]> {
+  if (parsed.length === 0) return [];
+  const { findNote, loadKb, readNoteBody } = await import('../kb/kbStore');
+  await loadKb(project);
+  const out: ResolvedRef[] = [];
+  for (const ref of parsed) {
+    const note = findNote(project, ref.slug);
+    if (!note) {
+      out.push({ token: ref.token, path: ref.slug, kind: 'note', status: 'error', note: 'no such note' });
+      continue;
+    }
+    let body = await readNoteBody(project, note.id).catch(() => '');
+    let status: ResolvedRef['status'] = 'ok';
+    let noteText: string | undefined;
+    if (body.length > KB_NOTE_CAP_BYTES) {
+      body = body.slice(0, KB_NOTE_CAP_BYTES);
+      status = 'truncated';
+      noteText = `first ${KB_NOTE_CAP_BYTES / 1024} KB`;
+    }
+    out.push({ token: ref.token, path: note.slug, kind: 'note', status, note: noteText, body });
+  }
+  return out;
+}
+
+// ─── Diagram references (@diagram:<name>) ────────────────────────────────────
+// Resolve against the project's Excalidraw diagrams; the inlined payload is
+// the structural serialization (nodes/edges/labels), not raw scene JSON.
+
+const DIAGRAM_TOKEN_RE = /(^|\s)@diagram:([A-Za-z0-9-]+)/g;
+
+export interface ParsedDiagramRef {
+  token: string;
+  name: string;
+}
+
+export function parseDiagramTokens(text: string): ParsedDiagramRef[] {
+  const out: ParsedDiagramRef[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(DIAGRAM_TOKEN_RE)) {
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ token: `@diagram:${name}`, name });
+  }
+  return out;
+}
+
+/** Resolve @diagram: tokens to serialized structure. Never throws. */
+export async function resolveDiagramRefs(
+  project: import('@/types/session').Project,
+  parsed: ParsedDiagramRef[],
+): Promise<ResolvedRef[]> {
+  if (parsed.length === 0) return [];
+  const { diagramText } = await import('../diagrams/diagramStore');
+  const out: ResolvedRef[] = [];
+  for (const ref of parsed) {
+    const body = await diagramText(project, ref.name).catch(() => null);
+    if (!body) {
+      out.push({ token: ref.token, path: ref.name, kind: 'diagram', status: 'error', note: 'no such diagram' });
+      continue;
+    }
+    out.push({ token: ref.token, path: ref.name, kind: 'diagram', status: 'ok', body });
+  }
+  return out;
+}
+
+/** Format resolved diagrams as a prompt block. */
+export function formatDiagrams(resolved: ResolvedRef[]): string {
+  const diagrams = resolved.filter((r) => r.kind === 'diagram');
+  if (diagrams.length === 0) return '';
+  const parts = diagrams.map((r) =>
+    r.status === 'error'
+      ? `<diagram name="${r.path}" error="${r.note ?? 'unavailable'}" />`
+      : r.body ?? '');
+  return [
+    'The user attached the following project diagrams (Excalidraw) as context. Node/edge lines describe the drawn structure — treat labeled boxes as components and arrows as relationships/data flow.',
+    '<referenced_diagrams>',
+    ...parts,
+    '</referenced_diagrams>',
+  ].join('\n');
+}
+
+/** Format resolved notes as a prompt block (companion to formatReferencedFiles). */
+export function formatKbNotes(resolved: ResolvedRef[]): string {
+  const notes = resolved.filter((r) => r.kind === 'note');
+  if (notes.length === 0) return '';
+  const parts = notes.map((r) =>
+    r.status === 'error'
+      ? `<note slug="${r.path}" error="${r.note ?? 'unavailable'}" />`
+      : `<note slug="${r.path}"${r.status === 'truncated' ? ' truncated="true"' : ''}>\n${r.body ?? ''}\n</note>`);
+  return [
+    'The user attached the following project knowledge-base notes as context.',
+    '<referenced_notes>',
+    ...parts,
+    '</referenced_notes>',
+  ].join('\n');
+}
+
 /**
  * Format resolved refs as the prompt block prepended to the user's message.
  * Returns `''` when there is nothing to say (no refs).

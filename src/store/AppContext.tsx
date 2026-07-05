@@ -1,11 +1,11 @@
 import { useEffect, type ReactNode } from 'react';
-import { getAppState, useAppSelector } from './store';
+import { dispatch, getAppState, useAppSelector } from './store';
 import { persistSessions, persistState } from './reducer';
+import { configureGitHub } from '@/lib/github';
 
-// Re-export so the store swap is invisible to the ~40 existing call sites.
-// New/hot components should import `useAppSelector` from '@/store/store'.
+// Back-compat re-export; prefer importing directly from '@/store/store'.
 // eslint-disable-next-line react-refresh/only-export-components -- intentional back-compat re-export; hooks live in store.ts
-export { useAppContext, useAppDispatch, useAppSelector, getAppState } from './store';
+export { useAppDispatch, useAppSelector, getAppState } from './store';
 
 /**
  * No longer a context provider — state lives in the external store (see
@@ -13,6 +13,15 @@ export { useAppContext, useAppDispatch, useAppSelector, getAppState } from './st
  * selectors of exactly the keys each write watches.
  */
 export function AppProvider({ children }: { children: ReactNode }) {
+  // Wire the GitHub client once: token read live from the store per request,
+  // rate-limit updates dispatched so the UI counter stays current everywhere.
+  useEffect(() => {
+    configureGitHub({
+      getToken: () => getAppState().token,
+      onRateLimit: (rateLimit) => dispatch({ type: 'SET_RATE_LIMIT', rateLimit }),
+    });
+  }, []);
+
   // Persist model choice + pinned rules + UI prefs on change (cheap; localStorage).
   const currentModel = useAppSelector((s) => s.currentModel);
   const pinnedRules = useAppSelector((s) => s.pinnedRules);

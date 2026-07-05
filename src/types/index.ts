@@ -1,5 +1,5 @@
 import type {
-  AccessLevel, BuildMode, PinnedRule, PlanComment, Project, ReasoningBudget, Session, SessionContext, SessionStatus, AgentMessage,
+  AccessLevel, BuildMode, PinnedRule, PlanComment, Project, ReasoningBudget, Session, SessionContext, SessionModelConfig, SessionStatus, AgentMessage,
 } from './session';
 import type { ContextSizeId, ProbeResult } from '@/lib/agent/transport';
 
@@ -231,6 +231,9 @@ export type AppAction =
   | { type: 'SET_PANE_TAB'; pane: 0 | 1 | 2 | 3; tab: TabId }
   | { type: 'SET_GRAPH_DIRECTION'; direction: GraphDirection }
   | { type: 'SET_SHOW_CHECKPOINTS'; show: boolean }
+  /** Swap in a rebuilt graph (checkpoint toggle). The rebuild itself runs
+   *  outside the reducer (rAF in useShowCheckpoints) — dispatch stays cheap. */
+  | { type: 'SET_GRAPH_DATA'; graphData: GraphData; allCommits: Commit[] }
   | { type: 'SET_LOG_DENSITY'; density: LogDensity }
   | { type: 'SET_TERMINAL_FONT'; family: string | null }
   | { type: 'SET_CHAT_FONT'; family: string | null }
@@ -271,6 +274,11 @@ export type AppAction =
   | { type: 'REMOVE_PLAN_COMMENT'; sessionId: string; commentId: string }
   | { type: 'SET_PLAN_DRAFT'; sessionId: string; draft: Session['planDraft'] }
   // ── Model + provider status ──
+  /** Set one session's model (per-session config; never touches other sessions). */
+  | { type: 'SET_SESSION_MODEL'; sessionId: string; model: ModelRef }
+  /** Patch one session's model config (temperature, max output tokens, …). */
+  | { type: 'PATCH_SESSION_MODEL_CONFIG'; sessionId: string; patch: Partial<SessionModelConfig> }
+  /** Set the app-global default model (used to seed NEW sessions). */
   | { type: 'SET_MODEL'; model: ModelRef }
   | { type: 'SET_PROVIDER_STATUS'; providerId: string; status: ProbeResult }
   | { type: 'SET_SERVED_MODEL'; key: string; model: string }

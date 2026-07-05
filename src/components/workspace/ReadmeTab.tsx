@@ -1,40 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
-import { useAppContext } from '@/store/AppContext';
-import { fetchREADME, setToken } from '@/lib/github';
+import { useAppSelector } from '@/store/store';
+import { fetchREADME } from '@/lib/github';
+import { useAsyncResource } from '@/hooks/useAsyncResource';
 
 export default function ReadmeTab() {
-  const { state } = useAppContext();
-  const { repoInfo, token, theme } = state;
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const theme = useAppSelector((s) => s.theme);
 
-  const [html, setHtml] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadedForRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!repoInfo) return;
-    const key = `${repoInfo.owner}/${repoInfo.repo}`;
-    if (loadedForRef.current === key) return;
-    loadedForRef.current = key;
-
-    setToken(token);
-    setLoading(true);
-    setError(null);
-
-    fetchREADME(repoInfo.owner, repoInfo.repo)
-      .then(content => {
-        if (content === '') {
-          setHtml('<p class="no-readme">This repository has no README.</p>');
-        } else {
-          setHtml(content);
-        }
-      })
-      .catch(e => {
-        setError(e.message);
-        loadedForRef.current = null;
-      })
-      .finally(() => setLoading(false));
-  }, [repoInfo, token]);
+  const { data, loading, error } = useAsyncResource(
+    () => fetchREADME(repoInfo!.owner, repoInfo!.repo),
+    [repoInfo?.owner, repoInfo?.repo],
+    { enabled: !!repoInfo, scope: 'readme' },
+  );
+  const html = data === '' ? '<p class="no-readme">This repository has no README.</p>' : data;
 
   if (!repoInfo) {
     return (

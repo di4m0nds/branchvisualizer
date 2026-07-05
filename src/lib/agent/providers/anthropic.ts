@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { invoke, isTauri } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver, probeWithKey } from './shared';
 import type {
   AgentRequest, AgentTransport, ContextSizeId, ModelInfo, NeutralContent, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -15,43 +14,62 @@ const PROBE_MODEL = 'claude-haiku-4-5-20251001';
 // contextTokens is the STANDARD size; the 1M variant lives in contextOptions.
 const MODELS: ModelInfo[] = [
   { id: 'claude-fable-5',    label: 'Fable 5',    defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
-  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
-  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
+  { id: 'claude-opus-4-8',   label: 'Opus 4.8',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
+  { id: 'claude-opus-4-7',   label: 'Opus 4.7',   defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_OR_1M },
   { id: 'claude-haiku-4-5',  label: 'Haiku 4.5',  defaultTier: 'paid', contextTokens: 200_000, contextOptions: STD_ONLY },
 ];
 
-async function resolveKey(): Promise<string | null> {
-  const stored = await getProviderKey('anthropic');
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'anthropic' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_ANTHROPIC_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('anthropic', () => import.meta.env.VITE_ANTHROPIC_API_KEY);
 
 // ─── Adapters between neutral and Anthropic shapes ────────────────────────
 
 type AnthropicContent = Anthropic.MessageParam['content'];
 
 function toAnthropicMessages(msgs: NeutralMessage[]): Anthropic.MessageParam[] {
-  return msgs.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }));
+  const out = msgs.map((m) => ({ role: m.role, content: toAnthropicContent(m.content, m.attachments) }));
+  // Prompt-caching hygiene: mark the end of the SECOND-TO-LAST user message as
+  // a cache breakpoint. Everything up to it is a stable prefix across turns
+  // (system prompt has its own breakpoint), so each new turn re-reads the
+  // conversation at cache-read prices instead of full input price.
+  const userIdxs = out.reduce<number[]>((acc, m, i) => (m.role === 'user' ? [...acc, i] : acc), []);
+  const anchor = userIdxs.length >= 2 ? userIdxs[userIdxs.length - 2] : -1;
+  if (anchor >= 0 && Array.isArray(out[anchor].content)) {
+    const blocks = out[anchor].content as unknown as Array<Record<string, unknown>>;
+    const last = blocks[blocks.length - 1];
+    if (last && (last.type === 'text' || last.type === 'tool_result')) {
+      last.cache_control = { type: 'ephemeral' };
+    }
+  }
+  return out;
 }
 
-function toAnthropicContent(items: NeutralContent[]): AnthropicContent {
-  return items.map((c) => {
+function toAnthropicContent(items: NeutralContent[], attachments?: NeutralAttachment[]): AnthropicContent {
+  const blocks: unknown[] = [];
+  // Attachments lead the message (image/document blocks), text follows. Only
+  // in-memory attachments (with base64) are sendable — persisted metadata-only
+  // ones from a previous app run are skipped.
+  for (const a of attachments ?? []) {
+    if (!a.base64) continue;
+    if (a.kind === 'image') {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: a.base64 } });
+    } else if (a.mime === 'application/pdf') {
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.base64 } });
+    }
+  }
+  for (const c of items) {
     switch (c.type) {
-      case 'text': return { type: 'text', text: c.text } as const;
-      case 'tool_use': return { type: 'tool_use', id: c.id, name: c.name, input: c.input } as const;
-      case 'tool_result': return {
-        type: 'tool_result', tool_use_id: c.toolUseId, content: c.content, is_error: c.isError ?? false,
-      } as const;
+      case 'text': blocks.push({ type: 'text', text: c.text }); break;
+      case 'tool_use': blocks.push({ type: 'tool_use', id: c.id, name: c.name, input: c.input }); break;
+      case 'tool_result':
+        blocks.push({ type: 'tool_result', tool_use_id: c.toolUseId, content: c.content, is_error: c.isError ?? false });
+        break;
       // Thinking blocks aren't part of the API request surface — they only appear
       // in responses. Round-tripping them from prior turns is the model's job.
-      case 'thinking': return { type: 'text', text: '' } as const;
+      case 'thinking': blocks.push({ type: 'text', text: '' }); break;
     }
-  }) as unknown as AnthropicContent;
+  }
+  return blocks as unknown as AnthropicContent;
 }
 
 function fromAnthropicMessage(msg: Anthropic.Message): NeutralResponse {
@@ -99,6 +117,8 @@ class AnthropicTransport implements AgentTransport {
       tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })),
       output_config: { effort: req.effort },
       ...(req.thinking ? { thinking: { type: 'adaptive' } } : {}),
+      // Temperature can't be combined with extended thinking (API rejects it).
+      ...(req.temperature !== undefined && !req.thinking ? { temperature: req.temperature } : {}),
     };
 
     const stream = this.client.messages.stream(
@@ -118,7 +138,7 @@ class AnthropicTransport implements AgentTransport {
 
 // ─── Provider ────────────────────────────────────────────────────────────
 
-import type { NeutralMessage } from '../transport';
+import type { NeutralAttachment, NeutralMessage } from '../transport';
 
 export const anthropicProvider: Provider = {
   id: 'anthropic',
@@ -127,9 +147,7 @@ export const anthropicProvider: Provider = {
   models: () => MODELS,
 
   async probe(): Promise<ProbeResult> {
-    const key = await resolveKey();
-    if (!key) return { state: 'not_detected', tier: 'unknown', label: 'ANTHROPIC_API_KEY not set' };
-    try {
+    return probeWithKey(resolveKey, 'ANTHROPIC_API_KEY not set', async (key) => {
       // A tiny count_tokens probe: cheap, exposes rate-limit headers.
       const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
       const resp = await client.messages.countTokens({
@@ -138,20 +156,17 @@ export const anthropicProvider: Provider = {
       });
       // If we can count tokens, the key is live. Anthropic doesn't cleanly expose
       // tier via the SDK — call it "paid" (developer key). Free tier = console-only.
-      return { state: 'connected', tier: 'paid', label: `key ok · ${resp.input_tokens ?? '?'} tok probe` };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { state: 'detected', tier: 'unknown', label: 'key present but request failed', error: msg };
-    }
+      return { tier: 'paid', label: `key ok · ${resp.input_tokens ?? '?'} tok probe` };
+    });
   },
 
   async createTransport(modelId: string, context: ContextSizeId = 'standard'): Promise<AgentTransport> {
     const key = await resolveKey();
     if (!key) throw new Error('Anthropic API key not found. Set ANTHROPIC_API_KEY.');
-    // The 1M-context header is defensive/legacy: current models (Opus 4.8/4.7,
-    // Sonnet 4.6, Fable 5) serve 1M at standard pricing on the direct API, so
-    // this is effectively a no-op there. The context toggle here is mostly
-    // informational — the header just makes the intent explicit.
+    // 1M context on the direct API is a beta gated to Sonnet 4.x / Fable 5
+    // (see MODELS: only those expose STD_OR_1M). The header opts into the beta;
+    // for models that don't advertise 1M the picker never offers it, so this
+    // path is only reached for models that can serve it.
     const client = new Anthropic({
       apiKey: key,
       dangerouslyAllowBrowser: true,

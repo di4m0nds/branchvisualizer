@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useAppContext } from '@/store/AppContext';
+import { useAppSelector } from '@/store/store';
+import { useAsyncResource } from '@/hooks/useAsyncResource';
 import {
   fetchWorkflowRuns,
   fetchWorkflowJobs,
   fetchWorkflowArtifacts,
   fetchCommitCheckRuns,
   fetchCommitStatus,
-  setToken,
   type WorkflowRun,
   type WorkflowJob,
   type WorkflowJobStep,
@@ -346,14 +346,12 @@ function RunDetailPanel({
   runId,
   owner,
   repo,
-  token,
   detailCache,
   onLoad,
 }: {
   runId: number;
   owner: string;
   repo: string;
-  token: string;
   detailCache: Map<number, RunDetail>;
   onLoad: (id: number, detail: RunDetail) => void;
 }) {
@@ -363,7 +361,6 @@ function RunDetailPanel({
     if (detailCache.has(runId)) return;
     // Seed loading state
     onLoad(runId, { jobs: [], artifacts: [], loading: true, error: null });
-    setToken(token);
     Promise.all([
       fetchWorkflowJobs(owner, repo, runId),
       fetchWorkflowArtifacts(owner, repo, runId),
@@ -433,7 +430,6 @@ function WorkflowRunRow({
   animate,
   owner,
   repo,
-  token,
   detailCache,
   onDetailLoad,
 }: {
@@ -441,7 +437,6 @@ function WorkflowRunRow({
   animate: boolean;
   owner: string;
   repo: string;
-  token: string;
   detailCache: Map<number, RunDetail>;
   onDetailLoad: (id: number, detail: RunDetail) => void;
 }) {
@@ -518,7 +513,6 @@ function WorkflowRunRow({
           runId={run.id}
           owner={owner}
           repo={repo}
-          token={token}
           detailCache={detailCache}
           onLoad={onDetailLoad}
         />
@@ -673,14 +667,12 @@ function Spinner() {
 type ActiveTab = 'runs' | 'checks';
 
 export default function CIStatusTab() {
-  const { state } = useAppContext();
-  const { repoInfo, token, selectedNode, selectedNodes } = state;
+  const repoInfo = useAppSelector((s) => s.repoInfo);
+  const token = useAppSelector((s) => s.token);
+  const selectedNode = useAppSelector((s) => s.selectedNode);
+  const selectedNodes = useAppSelector((s) => s.selectedNodes);
 
   const [tab, setTab] = useState<ActiveTab>('runs');
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
-  const [animateItems, setAnimateItems] = useState(false);
-  const [loadingRuns, setLoadingRuns] = useState(false);
-  const [errorRuns, setErrorRuns] = useState<string | null>(null);
 
   // Per-run drill-down cache: Map<runId, RunDetail>
   const [detailCache, setDetailCache] = useState<Map<number, RunDetail>>(new Map());
@@ -692,8 +684,7 @@ export default function CIStatusTab() {
   // Per-commit checks: Map<sha, CommitChecks>
   const [checksMap, setChecksMap] = useState<Map<string, CommitChecks>>(new Map());
 
-  const runsLoadedFor = useRef<string | null>(null);
-  const fetchingSet   = useRef<Set<string>>(new Set()); // SHAs currently in-flight
+  const fetchingSet = useRef<Set<string>>(new Set()); // SHAs currently in-flight
 
   // Determine active SHAs to show in Checks tab.
   // Multi-select takes priority; else single selected node.
@@ -710,27 +701,22 @@ export default function CIStatusTab() {
   const isMulti = activeSHAs.length > 1;
 
   // ── Fetch workflow runs ────────────────────────────────────────────────
-  useEffect(() => {
-    if (!repoInfo) return;
-    const key = `${repoInfo.owner}/${repoInfo.repo}`;
-    if (runsLoadedFor.current === key) return;
-    runsLoadedFor.current = key;
-
-    setToken(token);
-    setLoadingRuns(true);
-    setErrorRuns(null);
-    setAnimateItems(false);
-
-    fetchWorkflowRuns(repoInfo.owner, repoInfo.repo)
-      .then(({ runs: r }) => { setRuns(r); setAnimateItems(true); })
-      .catch(e => { setErrorRuns(e.message); runsLoadedFor.current = null; })
-      .finally(() => setLoadingRuns(false));
-  }, [repoInfo, token]);
+  const {
+    data: runsData,
+    loading: loadingRuns,
+    error: errorRuns,
+    reload: reloadRuns,
+  } = useAsyncResource(
+    () => fetchWorkflowRuns(repoInfo!.owner, repoInfo!.repo),
+    [repoInfo?.owner, repoInfo?.repo],
+    { enabled: !!repoInfo, scope: 'ci-runs' },
+  );
+  const runs: WorkflowRun[] = runsData?.runs ?? [];
+  const animateItems = !loadingRuns && runsData != null;
 
   // ── Fetch checks for all active SHAs not yet cached ───────────────────
   useEffect(() => {
     if (!repoInfo || activeSHAs.length === 0) return;
-    setToken(token);
 
     for (const { sha, subject } of activeSHAs) {
       if (checksMap.has(sha) || fetchingSet.current.has(sha)) continue;
@@ -763,7 +749,7 @@ export default function CIStatusTab() {
         .finally(() => fetchingSet.current.delete(sha));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoInfo, token, activeSHAs.map(s => s.sha).join(',')]);
+  }, [repoInfo, activeSHAs.map(s => s.sha).join(',')]);
 
   // ── Auto-switch to Checks when selection changes ───────────────────────
   useEffect(() => {
@@ -773,21 +759,11 @@ export default function CIStatusTab() {
 
   // ── Refresh handler ────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
-    runsLoadedFor.current = null;
     fetchingSet.current.clear();
     setChecksMap(new Map());
     setDetailCache(new Map());
-    setRuns([]);
-    setAnimateItems(false);
-    if (!repoInfo) return;
-    setToken(token);
-    setLoadingRuns(true);
-    setErrorRuns(null);
-    fetchWorkflowRuns(repoInfo.owner, repoInfo.repo)
-      .then(({ runs: r }) => { setRuns(r); setAnimateItems(true); })
-      .catch(e => setErrorRuns(e.message))
-      .finally(() => setLoadingRuns(false));
-  }, [repoInfo, token]);
+    reloadRuns();
+  }, [reloadRuns]);
 
   if (!repoInfo) {
     return (
@@ -893,7 +869,6 @@ export default function CIStatusTab() {
                 animate={animateItems}
                 owner={repoInfo.owner}
                 repo={repoInfo.repo}
-                token={token}
                 detailCache={detailCache}
                 onDetailLoad={handleDetailLoad}
               />

@@ -15,7 +15,7 @@ export default function ToolRow({
 }: {
   icon?: React.ReactNode;
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   status?: 'ok' | 'error' | 'running';
   defaultOpen?: boolean;
   children: React.ReactNode;

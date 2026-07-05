@@ -4,6 +4,7 @@
 // validation (mirrors the pattern in RepoSearch.handleBrowse).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { closeSession } from '@/lib/sessionLifecycle';
 import { Link } from 'react-router-dom';
 import {
   Archive, ArrowDown10, ArrowDownAZ, Check, Eye, EyeOff, FolderPlus,
@@ -11,7 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
-import { useAppContext } from '@/store/AppContext';
+import { getAppState, useAppSelector, useAppDispatch } from '@/store/store';
 import { useRepoData } from '@/hooks/useRepoData';
 import { toast } from '@/services/toast';
 import { isTauri } from '@/lib/platform';
@@ -48,7 +49,10 @@ export default function ProjectsSidebar({
   railCollapsed?: boolean;
   onToggleRail?: () => void;
 } = {}) {
-  const { state, dispatch } = useAppContext();
+  const dispatch = useAppDispatch();
+  const sessions = useAppSelector((s) => s.sessions);
+  const projects = useAppSelector((s) => s.projects);
+  const activeSessionId = useAppSelector((s) => s.activeSessionId);
   const { loadLocalRepo } = useRepoData();
   const { collapsed, showArchived, sort, toggleCollapsed, setShowArchived, setSort } = useSidebarPrefs();
 
@@ -85,18 +89,18 @@ export default function ProjectsSidebar({
   // the tree — they remain in state, just not surfaced here.
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, Session[]>();
-    for (const s of state.sessions) {
+    for (const s of sessions) {
       if (!s.projectId) continue;
       const list = map.get(s.projectId);
       if (list) list.push(s); else map.set(s.projectId, [s]);
     }
     return map;
-  }, [state.sessions]);
+  }, [sessions]);
 
   // Filter archived + sort. Sort by most recent activity across the project's
   // threads (or createdAt as a fallback for empty projects).
   const visibleProjects = useMemo(() => {
-    const list = state.projects.filter((p) => showArchived || !p.archived);
+    const list = projects.filter((p) => showArchived || !p.archived);
     if (sort === 'name') {
       return [...list].sort((a, b) => a.name.localeCompare(b.name));
     }
@@ -112,7 +116,7 @@ export default function ProjectsSidebar({
       return latest;
     };
     return [...list].sort((a, b) => lastTouched(b) - lastTouched(a));
-  }, [state.projects, sessionsByProject, showArchived, sort]);
+  }, [projects, sessionsByProject, showArchived, sort]);
 
   const filtered = useSidebarSearch(visibleProjects, sessionsByProject, query, showArchived);
 
@@ -130,7 +134,7 @@ export default function ProjectsSidebar({
       if (typeof picked !== 'string') return;
       const canonical = normalizePath(picked);
 
-      const existing = state.projects.find((p) => normalizePath(p.path) === canonical);
+      const existing = projects.find((p) => normalizePath(p.path) === canonical);
       if (existing) {
         if (existing.archived) dispatch({ type: 'ARCHIVE_PROJECT', id: existing.id, archived: false });
         toast.info('Project already registered', { description: existing.name });
@@ -164,7 +168,7 @@ export default function ProjectsSidebar({
 
   function handleNewThread(project: Project) {
     const defaults = loadAgentDefaults();
-    const session = createSession(project, defaults);
+    const session = createSession(project, defaults, getAppState().currentModel);
     dispatch({ type: 'CREATE_SESSION', session });
     if (project.source === 'local' && session.cwd) {
       fetchStatus(session.cwd)
@@ -178,7 +182,7 @@ export default function ProjectsSidebar({
     }
   }
 
-  const orphanedCount = state.sessions.filter((s) => !s.projectId || !state.projects.some((p) => p.id === s.projectId)).length;
+  const orphanedCount = sessions.filter((s) => !s.projectId || !projects.some((p) => p.id === s.projectId)).length;
   const sortActive = SORT_OPTIONS.find((o) => o.id === sort) ?? SORT_OPTIONS[0];
   const SortIcon = sortActive.Icon;
 
@@ -277,7 +281,7 @@ export default function ProjectsSidebar({
       <div className="flex-1 overflow-y-auto p-1.5">
         {filtered.length === 0 ? (
           <p className="text-[11px] text-muted-foreground/60 px-2 py-4 leading-relaxed">
-            {state.projects.length === 0
+            {projects.length === 0
               ? <>No projects yet. Click the <span className="inline-flex align-middle mx-0.5"><FolderPlus className="w-3 h-3" /></span> above to add one from disk.</>
               : query.trim()
                 ? 'No projects or threads match your search.'
@@ -293,7 +297,7 @@ export default function ProjectsSidebar({
                 <ProjectGroup
                   project={project}
                   threads={threads}
-                  activeSessionId={state.activeSessionId}
+                  activeSessionId={activeSessionId}
                   collapsed={isCollapsed}
                   showArchived={showArchived}
                   onToggleCollapsed={() => toggleCollapsed(project.id)}
@@ -303,7 +307,7 @@ export default function ProjectsSidebar({
                   onNewThread={() => handleNewThread(project)}
                   onSelectThread={(id) => dispatch({ type: 'SET_ACTIVE_SESSION', id })}
                   onArchiveThread={(id, archived) => dispatch({ type: 'ARCHIVE_SESSION', id, archived })}
-                  onDeleteThread={(id) => dispatch({ type: 'CLOSE_SESSION', id })}
+                  onDeleteThread={(id) => closeSession(id)}
                   onRenameThread={(id, title) => dispatch({ type: 'RENAME_SESSION', id, title })}
                   onShowArchived={() => setShowArchived(true)}
                 />

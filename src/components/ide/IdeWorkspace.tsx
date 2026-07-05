@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import StatusBar from './StatusBar';
+import DebugPanel from './debug/DebugPanel';
 import { Link } from 'react-router-dom';
 import { getAppState, useAppDispatch, useAppSelector } from '@/store/store';
 import type { AppState } from '@/types';
@@ -13,6 +15,10 @@ import FocusablePanel from './FocusablePanel';
 import PlanView from './plan/PlanView';
 import RuntimePanel from './runtime/RuntimePanel';
 import LocalDocsTab from '@/components/workspace/LocalDocsTab';
+import KnowledgePanel from './kb/KnowledgePanel';
+import CanvasPanel from './canvas/CanvasPanel';
+import MonitorPanel from './monitor/MonitorPanel';
+import CommandPanel from './commands/CommandPanel';
 import { sessionProjectKey, type Session } from '@/types/session';
 import { latestPlanText, sessionHasPlan } from '@/lib/agent/plan';
 import { useActiveSession } from '@/hooks/useActiveSession';
@@ -21,10 +27,18 @@ import { registerRightViewSetter } from '@/hooks/useSetRightView';
 import { getCachedRepo } from '@/lib/repoCache';
 import { loadIdeLayout, saveIdeLayout, type IdeLayout } from '@/lib/ideLayout';
 import { useFocusedPanelZoom } from '@/hooks/useFocusedPanelZoom';
+import { getMaximizedPanel, setMaximizedPanel, type PanelId } from '@/hooks/usePanelFocus';
 import { usePanelShortcuts } from '@/hooks/usePanelShortcuts';
 import { registerShowPanel } from '@/hooks/usePanelVisibility';
+import { bootLoadActiveRuns, getGoalRuns } from '@/lib/goals/goalStore';
+import { probeIfStale } from '@/lib/agent/providers/probe';
+import { toast } from '@/services/toast';
 
 // ─── IDE workspace (fixed 3-zone chrome) ─────────────────────────────────────
+
+// Panel ids that live in the shared right column (one mounted at a time,
+// selected by `rightView`).
+const RIGHT_PANEL_IDS = ['workspace', 'plan', 'runtime', 'docs', 'debug', 'knowledge', 'canvas', 'monitor'] as const;
 
 // Does the app-global repo currently loaded match this session's repo?
 function matchesRef(state: AppState, s: Session): boolean {
@@ -45,10 +59,24 @@ export default function IdeWorkspace() {
   const [layout, setLayout] = useState<IdeLayout>(loadIdeLayout);
   const {
     sidebarWidth, midWidth, dockHeight, cfgCollapsed, bvCollapsed,
-    sidebarCollapsed, dockCollapsed, rightView,
+    sidebarCollapsed, dockCollapsed, rightView, cmdHeight, cmdCollapsed,
   } = layout;
   const setLayoutKey = <K extends keyof IdeLayout>(key: K, val: IdeLayout[K]) =>
     setLayout((l) => ({ ...l, [key]: val }));
+
+  // Right-column view switch that keeps the maximize state coherent. The right
+  // column mounts ONE FocusablePanel keyed by `rightView`; if the user switches
+  // tabs while that panel is maximized, `store.maximized` would still name the
+  // now-unmounted panel and the newly mounted one would render `hidden` (blank
+  // full-screen). Re-point maximize at the new view instead so the maximized
+  // experience follows the tab.
+  const switchRightView = useCallback((v: IdeLayout['rightView']) => {
+    setLayout((l) => ({ ...l, rightView: v }));
+    const max = getMaximizedPanel();
+    if (max && (RIGHT_PANEL_IDS as readonly string[]).includes(max)) {
+      setMaximizedPanel(v as PanelId);
+    }
+  }, []);
   // Stable toggle so the memoized TerminalDock's props don't change when this
   // component re-renders on streamed tokens.
   const toggleDockCollapsed = useCallback(
@@ -59,6 +87,7 @@ export default function IdeWorkspace() {
   const outerRowRef = useRef<HTMLDivElement>(null);  // sidebar | (middle+right) row
   const rootRowRef = useRef<HTMLDivElement>(null);   // middle|right row (existing handle)
   const agentStackRef = useRef<HTMLDivElement>(null); // chat/terminal stack (vertical handle)
+  const leftColRef = useRef<HTMLDivElement>(null);   // sidebar/command-panel column
 
   // Debounced persist so a drag (fires per mousemove) doesn't hammer localStorage.
   // Preserve `docsSidebarWidth` from disk on write: LocalDocsTab owns that
@@ -78,8 +107,8 @@ export default function IdeWorkspace() {
   useEffect(() => {
     // setLayoutKey closes over `setLayout` (from useState) which is stable, so
     // a single registration is safe for the panel's lifetime.
-    return registerRightViewSetter((v) => setLayoutKey('rightView', v));
-  }, []);
+    return registerRightViewSetter(switchRightView);
+  }, [switchRightView]);
 
   // Register the "make this panel visible" handler so keyboard shortcuts (and
   // any future cross-panel affordance) can uncollapse the sidebar/dock or
@@ -90,9 +119,23 @@ export default function IdeWorkspace() {
     return registerShowPanel((id) => {
       if (id === 'sidebar') setLayoutKey('sidebarCollapsed', false);
       else if (id === 'terminal') setLayoutKey('dockCollapsed', false);
-      else if (id === 'workspace' || id === 'plan' || id === 'runtime' || id === 'docs') setLayoutKey('rightView', id);
+      else if (id === 'commands') { setLayoutKey('sidebarCollapsed', false); setLayoutKey('cmdCollapsed', false); }
+      else if (id === 'workspace' || id === 'plan' || id === 'runtime' || id === 'docs' || id === 'debug'
+        || id === 'knowledge' || id === 'canvas' || id === 'monitor') switchRightView(id);
       // 'chat' is always mounted → no-op.
     });
+  }, [switchRightView]);
+
+  // Keep provider status fresh: probe once on boot (goal runs + task routing
+  // read it via resolveTaskModel) and re-probe when the window regains focus
+  // after being idle. The perceived "reconnect after idle" is provider-side
+  // cold start — nothing app-side holds a connection — but stale pips made it
+  // look like a lost connection.
+  useEffect(() => {
+    void probeIfStale();
+    const onFocus = () => void probeIfStale();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   // Ctrl +/-/0 on the focused panel. When the workspace is focused, delegate to
@@ -138,6 +181,24 @@ export default function IdeWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id]);
 
+  // Goal-run recovery: load checkpointed runs for any project with an active
+  // pointer, once per app launch. Runs that died mid-execution surface as
+  // paused in Monitor → Goals with a Resume button (auto-resume is opt-in by
+  // the user pressing it — never silently spend tokens on boot).
+  const goalBootRef = useRef(false);
+  useEffect(() => {
+    if (goalBootRef.current) return;
+    goalBootRef.current = true;
+    void bootLoadActiveRuns(getAppState().projects).then(() => {
+      const resumable = getGoalRuns().filter((r) => r.status === 'paused' || r.status === 'awaiting_plan_approval');
+      if (resumable.length > 0) {
+        toast.info(`${resumable.length} goal run${resumable.length === 1 ? '' : 's'} can resume`, {
+          description: 'Open Monitor → Goals to continue where they left off.',
+        });
+      }
+    });
+  }, []);
+
   // Auto-focus the Plan view whenever a NEW plan lands. Ref-guarded by the
   // plan's messageId so the user can manually flip back to Canvas/Runtime and
   // stay there — only a new plan (different id) re-triggers the swap.
@@ -146,10 +207,11 @@ export default function IdeWorkspace() {
   useEffect(() => {
     if (!planKey || planKey === lastAutoFocusedPlanRef.current) return;
     lastAutoFocusedPlanRef.current = planKey;
-    setLayoutKey('rightView', 'plan');
-  }, [planKey]);
+    switchRightView('plan');
+  }, [planKey, switchRightView]);
 
   return (
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
     <div ref={outerRowRef} className="flex flex-1 min-h-0 overflow-hidden">
       {/* Sidebar. Collapses to a fixed icon rail; otherwise resizable with hard
           px clamps so it stays usable at any drag width. */}
@@ -163,10 +225,41 @@ export default function IdeWorkspace() {
       ) : (
         <>
           <div
-            className="flex min-w-[180px] max-w-[420px] min-h-0"
+            ref={leftColRef}
+            className="flex flex-col min-w-[180px] max-w-[420px] min-h-0"
             style={{ flex: `0 0 ${sidebarWidth}%` }}
           >
-            <ProjectsSidebar onToggleRail={() => setLayoutKey('sidebarCollapsed', true)} />
+            <div className="flex-1 min-h-0 flex">
+              <ProjectsSidebar onToggleRail={() => setLayoutKey('sidebarCollapsed', true)} />
+            </div>
+            {/* Smart developer command panel — bottom-left, resizable. Local
+                projects only (needs a cwd to run in). */}
+            {active?.repoSource === 'local' && active.cwd && (
+              <>
+                {!cmdCollapsed && (
+                  <ResizeHandle
+                    direction="v"
+                    containerRef={leftColRef}
+                    size={100 - cmdHeight}
+                    onSizeChange={(s) => setLayoutKey('cmdHeight', 100 - s)}
+                    min={15}
+                    max={70}
+                  />
+                )}
+                <div
+                  className="flex flex-col min-h-0 flex-none"
+                  style={cmdCollapsed ? undefined : { flex: `0 0 ${cmdHeight}%` }}
+                >
+                  <CommandPanel
+                    key={sessionProjectKey(active)}
+                    root={active.cwd}
+                    sessionId={active.id}
+                    collapsed={cmdCollapsed}
+                    onToggleCollapsed={() => setLayoutKey('cmdCollapsed', !cmdCollapsed)}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           <ResizeHandle
@@ -191,15 +284,19 @@ export default function IdeWorkspace() {
             className="flex flex-col min-w-0 min-h-0 bg-muted/5"
             style={{ flex: `0 0 ${midWidth}%` }}
           >
-            <ChatConfigStrip
-              session={active}
-              collapsed={cfgCollapsed}
-              onToggle={() => setLayoutKey('cfgCollapsed', !cfgCollapsed)}
-            />
             <div ref={agentStackRef} className="flex flex-col flex-1 min-h-0">
-              {/* Chat pane (remainder) */}
-              <FocusablePanel id="chat" className="flex-1 min-h-0 overflow-hidden">
-                <ChatPanel key={active.id} session={active} />
+              {/* Chat pane (remainder). The config strip lives INSIDE the
+                  focusable panel so a maximized chat keeps the model picker,
+                  branch indicator, and session controls reachable. */}
+              <FocusablePanel id="chat" className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                <ChatConfigStrip
+                  session={active}
+                  collapsed={cfgCollapsed}
+                  onToggle={() => setLayoutKey('cfgCollapsed', !cfgCollapsed)}
+                />
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <ChatPanel key={active.id} session={active} />
+                </div>
               </FocusablePanel>
 
               {!dockCollapsed && (
@@ -250,37 +347,81 @@ export default function IdeWorkspace() {
               remains reachable to restore). ── */}
           <div className="flex flex-col flex-1 min-w-0 min-h-0 border-l border-border">
             {rightView === 'plan' ? (
-              <FocusablePanel id="plan" className="flex-1 min-h-0 overflow-hidden">
+              <FocusablePanel id="plan" applyScale className="flex-1 min-h-0 overflow-hidden">
                 <BvConfigStrip
                   collapsed={bvCollapsed}
                   onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
                   view={rightView}
-                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  onViewChange={switchRightView}
                   hasPlan={sessionHasPlan(active)}
                 />
                 <PlanView session={active} />
               </FocusablePanel>
             ) : rightView === 'runtime' ? (
-              <FocusablePanel id="runtime" className="flex-1 min-h-0 overflow-hidden">
+              <FocusablePanel id="runtime" applyScale className="flex-1 min-h-0 overflow-hidden">
                 <BvConfigStrip
                   collapsed={bvCollapsed}
                   onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
                   view={rightView}
-                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  onViewChange={switchRightView}
                   hasPlan={sessionHasPlan(active)}
                 />
                 <RuntimePanel />
               </FocusablePanel>
-            ) : rightView === 'docs' ? (
-              <FocusablePanel id="docs" className="flex-1 min-h-0 overflow-hidden">
+            ) : rightView === 'debug' ? (
+              <FocusablePanel id="debug" applyScale className="flex-1 min-h-0 overflow-hidden">
                 <BvConfigStrip
                   collapsed={bvCollapsed}
                   onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
                   view={rightView}
-                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  onViewChange={switchRightView}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <DebugPanel />
+              </FocusablePanel>
+            ) : rightView === 'docs' ? (
+              <FocusablePanel id="docs" applyScale className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={switchRightView}
                   hasPlan={sessionHasPlan(active)}
                 />
                 <LocalDocsTab />
+              </FocusablePanel>
+            ) : rightView === 'knowledge' ? (
+              <FocusablePanel id="knowledge" applyScale className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={switchRightView}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <KnowledgePanel key={active.projectId} session={active} />
+              </FocusablePanel>
+            ) : rightView === 'canvas' ? (
+              <FocusablePanel id="canvas" className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={switchRightView}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <CanvasPanel key={active.projectId} session={active} />
+              </FocusablePanel>
+            ) : rightView === 'monitor' ? (
+              <FocusablePanel id="monitor" applyScale className="flex-1 min-h-0 overflow-hidden">
+                <BvConfigStrip
+                  collapsed={bvCollapsed}
+                  onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
+                  view={rightView}
+                  onViewChange={switchRightView}
+                  hasPlan={sessionHasPlan(active)}
+                />
+                <MonitorPanel />
               </FocusablePanel>
             ) : (
               <FocusablePanel id="workspace" className="flex-1 min-h-0 overflow-hidden">
@@ -288,7 +429,7 @@ export default function IdeWorkspace() {
                   collapsed={bvCollapsed}
                   onToggle={() => setLayoutKey('bvCollapsed', !bvCollapsed)}
                   view={rightView}
-                  onViewChange={(v) => setLayoutKey('rightView', v)}
+                  onViewChange={switchRightView}
                   hasPlan={sessionHasPlan(active)}
                 />
                 {graphData ? (
@@ -306,6 +447,9 @@ export default function IdeWorkspace() {
           </div>
         </div>
       )}
+    </div>
+    {/* Machine vitals — expandable to the full system panel. */}
+    <StatusBar />
     </div>
   );
 }

@@ -32,3 +32,23 @@ export function subscribeOpenInNvim(
   bus.addEventListener('open-in-nvim', listener);
   return () => bus.removeEventListener('open-in-nvim', listener);
 }
+
+// ── Path-level convenience ──────────────────────────────────────────────────
+// Open any file mention in the ACTIVE session's nvim (used by FileLink, ref
+// chips, and @-token highlights). Only works for local sessions with a cwd.
+
+import { getAppState } from '@/store/store';
+import { toast } from '@/services/toast';
+
+export function openPathInNvim(path: string): boolean {
+  const { activeSessionId, sessions } = getAppState();
+  const session = sessions.find((s) => s.id === activeSessionId);
+  if (!session || session.repoSource !== 'local' || !session.cwd) return false;
+  // Absolute paths under the session root become root-relative for `:e`.
+  const rel = path.startsWith(session.cwd)
+    ? path.slice(session.cwd.length).replace(/^[/\\]/, '')
+    : path;
+  openInNvim(session.id, rel);
+  toast.info(`Opening ${rel.split(/[/\\]/).pop()} in nvim…`);
+  return true;
+}

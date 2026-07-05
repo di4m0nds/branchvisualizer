@@ -5,8 +5,8 @@ import type { Branch, Commit, CommitAuthor, RateLimit, RepoInfo, Tag } from '../
 import { cacheGet, cacheSet } from './cache';
 
 const API_BASE = 'https://api.github.com';
-const MAX_COMMITS_PER_BRANCH = 150; // pages × 100
-const MAX_BRANCHES = 40;
+// Fetch caps are user-tunable (Settings → General); read at fetch time.
+import { capOrInfinity, loadGraphLimits } from './graphLimits';
 
 // ─── Low-level fetch ───────────────────────────────────────────────────────
 
@@ -21,16 +21,18 @@ export class GitHubError extends Error {
   }
 }
 
-let _token = '';
-export function setToken(t: string): void { _token = t.trim(); }
-export function getToken(): string { return _token; }
+// ─── Client configuration ──────────────────────────────────────────────────
+// Configured once at app startup (AppProvider). `getToken` is read per request
+// so call sites never have to push the token before each fetch, and
+// `onRateLimit` fires after every API response so the UI counter stays live.
+export interface GitHubConfig {
+  getToken(): string;
+  onRateLimit?(rl: RateLimit): void;
+}
 
-// ─── Rate limit callback ───────────────────────────────────────────────────
-// Called after every API response so the UI can update the remaining count
-// in real-time without waiting for a full repo reload.
-let _onRateLimitUpdate: ((rl: RateLimit) => void) | null = null;
-export function setRateLimitCallback(fn: ((rl: RateLimit) => void) | null): void {
-  _onRateLimitUpdate = fn;
+let _config: GitHubConfig = { getToken: () => '' };
+export function configureGitHub(cfg: GitHubConfig): void {
+  _config = cfg;
 }
 
 async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: number } = {}): Promise<{ data: T; rateLimit: RateLimit | null }> {
@@ -45,13 +47,14 @@ async function apiFetch<T>(path: string, options: { cache?: boolean; cacheTtl?: 
   const headers: HeadersInit = {
     Accept: 'application/vnd.github.v3+json',
   };
-  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+  const token = _config.getToken().trim();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(url, { headers });
 
   const rateLimit = parseRateLimit(res);
   // Notify listener on every request so the UI stays live
-  if (rateLimit && _onRateLimitUpdate) _onRateLimitUpdate(rateLimit);
+  if (rateLimit) _config.onRateLimit?.(rateLimit);
 
   if (!res.ok) {
     if (res.status === 403) {
@@ -403,7 +406,7 @@ export async function fetchBranches(owner: string, repo: string, defaultBranch: 
     cacheTtl: 30_000,
   });
 
-  const branches = data.slice(0, MAX_BRANCHES).map((b): Branch => ({
+  const branches = data.slice(0, capOrInfinity(loadGraphLimits().githubBranches)).map((b): Branch => ({
     name: b.name,
     sha: b.commit.sha,
     isDefault: b.name === defaultBranch,
@@ -478,7 +481,8 @@ export async function fetchCommitsForBranch(
   let page = 1;
   const perPage = 100;
 
-  while (commits.length < MAX_COMMITS_PER_BRANCH) {
+  const maxCommits = capOrInfinity(loadGraphLimits().githubCommitsPerBranch);
+  while (commits.length < maxCommits) {
     const path = `/repos/${owner}/${repo}/commits?sha=${branchSha}&per_page=${perPage}&page=${page}`;
     const { data } = await apiFetch<GHCommit[]>(path, { cache: true, cacheTtl: 30_000 });
 
@@ -526,7 +530,7 @@ export async function fetchFullRepository(
   const allCommits: Commit[] = [];
   const knownShas = new Set<string>();
 
-  const branchesToFetch = branches.slice(0, MAX_BRANCHES);
+  const branchesToFetch = branches.slice(0, capOrInfinity(loadGraphLimits().githubBranches));
   const progressPerBranch = 55 / Math.max(branchesToFetch.length, 1);
 
   for (let i = 0; i < branchesToFetch.length; i++) {
@@ -541,7 +545,7 @@ export async function fetchFullRepository(
       owner, repo, branch.sha, knownShas,
       (n) => progressCb(
         `Fetching commits for ${branch.name}: ${n} found…`,
-        Math.round(baseProgress + (n / MAX_COMMITS_PER_BRANCH) * progressPerBranch),
+        Math.round(baseProgress + (n / Math.max(1, loadGraphLimits().githubCommitsPerBranch)) * progressPerBranch),
       ),
     );
     allCommits.push(...newCommits);
@@ -614,6 +618,19 @@ export async function fetchIssues(
 }
 
 // ─── File tree ────────────────────────────────────────────────────────────
+
+/** Resolve a branch's root tree SHA (input for fetchFileTree). */
+export async function fetchDefaultTreeSha(
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<string> {
+  const { data } = await apiFetch<{ commit: { commit: { tree: { sha: string } } } }>(
+    `/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`,
+    { cache: true, cacheTtl: 60_000 },
+  );
+  return data.commit.commit.tree.sha;
+}
 
 export async function fetchFileTree(
   owner: string,
@@ -1031,7 +1048,8 @@ export async function fetchREADME(
   const headers: HeadersInit = {
     Accept: 'application/vnd.github.html',
   };
-  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+  const token = _config.getToken().trim();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(url, { headers });
   if (!res.ok) {

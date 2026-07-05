@@ -5,6 +5,7 @@
 // `resolveKey()`, before env vars.
 
 import { invoke, isTauri } from './platform';
+import { log, swallow } from './log';
 
 const LS_KEY = 'code-agent:provider_keys';
 
@@ -14,20 +15,21 @@ function readLs(): Record<string, string> {
     const raw = localStorage.getItem(LS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
+  } catch (e) {
+    swallow('providerKeys', 'read localStorage keys')(e);
     return {};
   }
 }
 
 function writeLs(map: Record<string, string>): void {
   if (typeof localStorage === 'undefined') return;
-  try { localStorage.setItem(LS_KEY, JSON.stringify(map)); } catch { /* quota */ }
+  try { localStorage.setItem(LS_KEY, JSON.stringify(map)); } catch (e) { swallow('providerKeys', 'persist (quota)')(e); }
 }
 
 /** Resolve a manually-stored key for `provider`, or null. Desktop → keychain. */
 export async function getProviderKey(provider: string): Promise<string | null> {
   if (isTauri()) {
-    const k = await invoke<string | null>('get_secure_key', { provider }).catch(() => null);
+    const k = await invoke<string | null>('get_secure_key', { provider }).catch((e) => { swallow('providerKeys', `keychain read ${provider}`)(e); return null; });
     if (k) return k;
   }
   return readLs()[provider] ?? null;
@@ -36,7 +38,7 @@ export async function getProviderKey(provider: string): Promise<string | null> {
 /** Store (empty string clears) a provider key. Desktop → keychain, web → LS. */
 export async function setProviderKey(provider: string, key: string): Promise<void> {
   if (isTauri()) {
-    await invoke('set_secure_key', { provider, key }).catch(() => {});
+    await invoke('set_secure_key', { provider, key }).catch((e) => log.warn('providerKeys', `keychain write failed for ${provider} — key NOT saved`, e));
     return;
   }
   const map = readLs();

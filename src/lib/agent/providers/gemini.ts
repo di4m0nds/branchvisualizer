@@ -1,6 +1,5 @@
 import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from '@google/genai';
-import { invoke, isTauri } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver, probeWithKey } from './shared';
 import type {
   AgentRequest, AgentTransport, ModelInfo, NeutralContent, NeutralMessage, NeutralResponse,
   NeutralStopReason, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -16,15 +15,7 @@ const MODELS: ModelInfo[] = [
   { id: 'gemini-2.5-flash-lite',  label: 'Gemini 2.5 Flash-Lite', defaultTier: 'free', contextTokens: 1_000_000 },
 ];
 
-async function resolveKey(): Promise<string | null> {
-  const stored = await getProviderKey('gemini');
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'gemini' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_GEMINI_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('gemini', () => import.meta.env.VITE_GEMINI_API_KEY);
 
 // ─── Adapters ─────────────────────────────────────────────────────────────
 
@@ -32,6 +23,13 @@ function toGenaiContents(system: string, msgs: NeutralMessage[]): { systemInstru
   const contents: Content[] = [];
   for (const m of msgs) {
     const parts: Part[] = [];
+    // Attachments (images/PDFs) lead the user turn as inlineData parts.
+    for (const a of m.attachments ?? []) {
+      if (!a.base64) continue;
+      if (a.kind === 'image' || a.mime === 'application/pdf') {
+        parts.push({ inlineData: { mimeType: a.mime, data: a.base64 } });
+      }
+    }
     for (const c of m.content) {
       switch (c.type) {
         case 'text': if (c.text) parts.push({ text: c.text }); break;
@@ -75,6 +73,7 @@ class GeminiTransport implements AgentTransport {
         systemInstruction,
         tools: functionDecls.length ? [{ functionDeclarations: functionDecls }] : undefined,
         maxOutputTokens: req.maxTokens,
+        temperature: req.temperature,
         thinkingConfig: req.thinking ? { thinkingBudget: budget, includeThoughts: true } : undefined,
         abortSignal: req.signal,
       },
@@ -133,24 +132,15 @@ export const geminiProvider: Provider = {
   models: () => MODELS,
 
   async probe(): Promise<ProbeResult> {
-    const key = await resolveKey();
-    if (!key) return { state: 'not_detected', tier: 'unknown', label: 'GEMINI_API_KEY not set' };
-    try {
+    return probeWithKey(resolveKey, 'GEMINI_API_KEY not set', async (key) => {
       const client = new GoogleGenAI({ apiKey: key });
       // countTokens is the cheapest health probe.
       const resp = await client.models.countTokens({
         model: 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
       });
-      return {
-        state: 'connected',
-        tier: 'unknown',
-        label: `key ok · ${resp.totalTokens ?? '?'} tok probe`,
-      };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { state: 'detected', tier: 'unknown', label: 'key present but request failed', error: msg };
-    }
+      return { tier: 'unknown', label: `key ok · ${resp.totalTokens ?? '?'} tok probe` };
+    });
   },
 
   async createTransport(modelId: string): Promise<AgentTransport> {

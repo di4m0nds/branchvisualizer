@@ -1,5 +1,5 @@
 import { invoke, isTauri, listen } from '../../platform';
-import { getProviderKey } from '../../providerKeys';
+import { makeKeyResolver } from './shared';
 import type {
   AgentRequest, AgentTransport, ContextSizeId, ModelInfo, NeutralContent, NeutralMessage,
   NeutralResponse, NeutralUsage, ProbeResult, Provider, StreamCallbacks,
@@ -38,15 +38,7 @@ async function checkSdk(): Promise<AgProbePayload | null> {
 /** Resolve a Gemini Developer API key. Antigravity runs on google-genai, so it
  *  reuses the Gemini key — try a dedicated `antigravity` key first, then the
  *  shared `gemini` one, then the env fallbacks. */
-async function resolveKey(): Promise<string | null> {
-  const stored = (await getProviderKey('antigravity')) || (await getProviderKey('gemini'));
-  if (stored) return stored;
-  if (isTauri()) {
-    const k = await invoke<string | null>('get_provider_key', { name: 'antigravity' }).catch(() => null);
-    if (k) return k;
-  }
-  return import.meta.env.VITE_GEMINI_API_KEY ?? null;
-}
+const resolveKey = makeKeyResolver('antigravity', () => import.meta.env.VITE_GEMINI_API_KEY, ['gemini']);
 
 function newRunId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `ag-${Date.now()}-${Math.random().toString(36).slice(2)}`;
